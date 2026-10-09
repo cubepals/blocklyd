@@ -1,7 +1,7 @@
 {
   "clippy::too_many_lines": {
     "src/manager/reconcile.rs › impl Manager › fn reconcile_inner": {
-      "n": 181,
+      "n": 102,
       "reason": "Over the threshold when the check began, and not yet looked at."
     },
     "src/protocol/spec/validate.rs › impl WorkloadSpec › fn validate": {
@@ -11,7 +11,7 @@
   },
   "clippy::cognitive_complexity": {
     "src/manager/reconcile.rs › impl Manager › fn reconcile_inner": {
-      "n": 27,
+      "n": 26,
       "reason": "Over the threshold when the check began, and not yet looked at."
     },
     "src/protocol/spec/validate.rs › impl WorkloadSpec › fn validate": {
@@ -24,9 +24,9 @@
       "n": 8,
       "reason": "The split re-exports every part from protocol.rs so outsiders keep their paths, and the parts take shared types (FieldError, Proto, Resources) from protocol.rs."
     },
-    "src/manager.rs ↔ src/manager/logs.rs ↔ src/manager/node.rs ↔ src/metrics.rs": {
-      "n": 4,
-      "reason": "manager.rs re-exports lines_of and WorkloadSample from its parts, which use super::*; and metrics.rs reads the Manager that holds its Metrics."
+    "src/manager.rs ↔ src/metrics.rs": {
+      "n": 2,
+      "reason": "What is left of the manager.rs ↔ logs.rs ↔ node.rs ↔ metrics.rs cycle once manager.rs stopped re-exporting lines_of and WorkloadSample: metrics.rs reads the Manager that holds its Metrics."
     }
   }
 }

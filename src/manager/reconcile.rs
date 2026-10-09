@@ -52,22 +52,7 @@ impl Manager {
         let mut host_issues = Vec::new();
         let mut issues: HashMap<WorkloadId, Vec<Issue>> = HashMap::new();
         if from == Records::FromDisk {
-            let (records, bad) = self.store.load_all()?;
-            for b in bad {
-                host_issues
-                    .push(Issue::new(IssueCode::UnreadableRecord, format!("{}: {}", b.path.display(), b.problem)));
-            }
-            // What a crash left is settled before anything uses the data.
-            host_issues.extend(self.settle_leftovers(&records, &mut issues).await);
-            let resting = self.store.load_resting_ports();
-            let now_unix = now().unix_timestamp();
-            let mut state = self.state.lock().unwrap();
-            state.records = records.into_iter().map(|r| (r.id.clone(), r)).collect();
-            state.ports.restore_resting(
-                resting
-                    .into_iter()
-                    .map(|p| (p.protocol, p.port, Duration::from_secs((now_unix - p.released_at_unix).max(0) as u64))),
-            );
+            host_issues = self.load_from_disk(&mut issues).await?;
         }
 
         let network_labels = BTreeMap::from([
@@ -106,103 +91,26 @@ impl Manager {
         let mut adopted = 0u64;
         let records: Vec<WorkloadRecord> = self.state.lock().unwrap().records.values().cloned().collect();
         let mut seen = BTreeSet::new();
-        for mut record in records {
+        for record in records {
             seen.insert(record.id.clone());
             let found = by_workload.remove(&record.id).unwrap_or_default();
-            let (mine, strays): (Vec<_>, Vec<_>) = found.into_iter().partition(|c| c.name == record.container_name);
-            for s in strays {
-                issues
-                    .entry(record.id.clone())
-                    .or_default()
-                    .push(Issue::new(IssueCode::DuplicateContainer, format!("{} also claims this workload", s.name)));
+            if self.check_record(record, found, &mut issues).await? {
+                adopted += 1;
             }
-            let info = mine.into_iter().next();
-            match (record.phase, &info) {
-                (Phase::Creating, Some(c)) => {
-                    // The container was made; the record just didn't hear back.
-                    record.phase = Phase::Active;
-                    record.container_id = Some(c.id.clone());
-                    self.save_record(&record).await?;
-                    adopted += 1;
-                }
-                (Phase::Creating, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
-                    IssueCode::CreateIncomplete,
-                    "creation was interrupted before the container existed; PUT the spec again",
-                )),
-                (Phase::Active, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
-                    IssueCode::ContainerMissing,
-                    "the runtime no longer has this workload's container; PUT the spec to make it again",
-                )),
-                (Phase::Retained, Some(c)) => {
-                    // Compute exists though it was let go: the runtime is the truth.
-                    issues.entry(record.id.clone()).or_default().push(Issue::new(
-                        IssueCode::UnexpectedContainer,
-                        format!("{} exists for a decommissioned workload", c.name),
-                    ));
-                }
-                _ => {}
-            }
-            if let Some(c) = &info {
-                if c.labels.get(LABEL_DIGEST) != Some(&record.spec_digest) {
-                    issues.entry(record.id.clone()).or_default().push(Issue::new(
-                        IssueCode::DigestMismatch,
-                        "the container was made from a different spec than the record holds",
-                    ));
-                }
-                if let Some(labelled) =
-                    c.labels.get(LABEL_RECORD).and_then(|l| serde_json::from_str::<LabelRecord>(l).ok())
-                    && labelled.ports != record.ports
-                {
-                    issues.entry(record.id.clone()).or_default().push(Issue::new(
-                        IssueCode::PortMismatch,
-                        "the container publishes different ports than the record holds",
-                    ));
-                }
-            }
-            self.remember(&record.id, info).await;
         }
 
         // Containers with no record: rebuilt from their labels, so a lost state directory costs
         // nothing but this pass.
         for (id, containers) in by_workload {
             let Some(c) = containers.into_iter().next() else { continue };
-            let Some(label) = c.labels.get(LABEL_RECORD).and_then(|l| serde_json::from_str::<LabelRecord>(l).ok())
-            else {
-                host_issues.push(Issue::new(
-                    IssueCode::UnrecoverableContainer,
-                    format!("{} has no readable record label", c.name),
-                ));
-                continue;
-            };
-            let record = WorkloadRecord {
-                version: RECORD_VERSION,
-                id: id.clone(),
-                generation: label.generation,
-                phase: Phase::Active,
-                spec_digest: label.spec_digest,
-                spec: label.spec,
-                ports: label.ports,
-                container_name: c.name.clone(),
-                container_id: Some(c.id.clone()),
-                // A supersession isn't in the labels (Docker can't relabel a container); the
-                // control plane fences the copy again at its next heartbeat.
-                epoch: label.epoch,
-                superseded_by: None,
-                stop_requested_at: None,
-                running_boot: None,
-                restart_count: 0,
-                created_at: label.created_at,
-                updated_at: now_str(),
-            };
-            self.store.ensure_data_dir(&id, self.config.data_owner_ids())?;
-            self.save_record(&record).await?;
-            issues.entry(id.clone()).or_default().push(Issue::new(
-                IssueCode::RecordRebuilt,
-                "blocklyd's record was missing and was rebuilt from the container's labels",
-            ));
-            seen.insert(id.clone());
-            self.remember(&id, Some(c)).await;
-            adopted += 1;
+            match self.adopt(&id, c).await? {
+                Ok(issue) => {
+                    issues.entry(id.clone()).or_default().push(issue);
+                    seen.insert(id);
+                    adopted += 1;
+                }
+                Err(issue) => host_issues.push(issue),
+            }
         }
 
         // Ports: rebuilt from records, every pass, so the allocator can't drift from them.
@@ -254,6 +162,128 @@ impl Manager {
         }
         state.host_issues = host_issues;
         Ok((workloads, adopted))
+    }
+
+    /// Holds a record up against the containers found for it: completes a create its container
+    /// outlived, and notes in `issues` what doesn't match. Returns whether it completed one.
+    async fn check_record(
+        &self,
+        mut record: WorkloadRecord,
+        found: Vec<ContainerInfo>,
+        issues: &mut HashMap<WorkloadId, Vec<Issue>>,
+    ) -> Result<bool, NodeError> {
+        let mut completed = false;
+        let (mine, strays): (Vec<_>, Vec<_>) = found.into_iter().partition(|c| c.name == record.container_name);
+        for s in strays {
+            issues
+                .entry(record.id.clone())
+                .or_default()
+                .push(Issue::new(IssueCode::DuplicateContainer, format!("{} also claims this workload", s.name)));
+        }
+        let info = mine.into_iter().next();
+        match (record.phase, &info) {
+            (Phase::Creating, Some(c)) => {
+                // The container was made; the record just didn't hear back.
+                record.phase = Phase::Active;
+                record.container_id = Some(c.id.clone());
+                self.save_record(&record).await?;
+                completed = true;
+            }
+            (Phase::Creating, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
+                IssueCode::CreateIncomplete,
+                "creation was interrupted before the container existed; PUT the spec again",
+            )),
+            (Phase::Active, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
+                IssueCode::ContainerMissing,
+                "the runtime no longer has this workload's container; PUT the spec to make it again",
+            )),
+            (Phase::Retained, Some(c)) => {
+                // Compute exists though it was let go: the runtime is the truth.
+                issues.entry(record.id.clone()).or_default().push(Issue::new(
+                    IssueCode::UnexpectedContainer,
+                    format!("{} exists for a decommissioned workload", c.name),
+                ));
+            }
+            _ => {}
+        }
+        if let Some(c) = &info {
+            if c.labels.get(LABEL_DIGEST) != Some(&record.spec_digest) {
+                issues.entry(record.id.clone()).or_default().push(Issue::new(
+                    IssueCode::DigestMismatch,
+                    "the container was made from a different spec than the record holds",
+                ));
+            }
+            if let Some(labelled) = c.labels.get(LABEL_RECORD).and_then(|l| serde_json::from_str::<LabelRecord>(l).ok())
+                && labelled.ports != record.ports
+            {
+                issues.entry(record.id.clone()).or_default().push(Issue::new(
+                    IssueCode::PortMismatch,
+                    "the container publishes different ports than the record holds",
+                ));
+            }
+        }
+        self.remember(&record.id, info).await;
+        Ok(completed)
+    }
+
+    /// Gives a container with no record its record back, from its label, and remembers it.
+    /// Returns the workload's issue saying so, or the host's when the label can't be read.
+    async fn adopt(&self, id: &WorkloadId, c: ContainerInfo) -> Result<Result<Issue, Issue>, NodeError> {
+        let Some(label) = c.labels.get(LABEL_RECORD).and_then(|l| serde_json::from_str::<LabelRecord>(l).ok()) else {
+            let issue =
+                Issue::new(IssueCode::UnrecoverableContainer, format!("{} has no readable record label", c.name));
+            return Ok(Err(issue));
+        };
+        let record = WorkloadRecord {
+            version: RECORD_VERSION,
+            id: id.clone(),
+            generation: label.generation,
+            phase: Phase::Active,
+            spec_digest: label.spec_digest,
+            spec: label.spec,
+            ports: label.ports,
+            container_name: c.name.clone(),
+            container_id: Some(c.id.clone()),
+            // A supersession isn't in the labels (Docker can't relabel a container); the
+            // control plane fences the copy again at its next heartbeat.
+            epoch: label.epoch,
+            superseded_by: None,
+            stop_requested_at: None,
+            running_boot: None,
+            restart_count: 0,
+            created_at: label.created_at,
+            updated_at: now_str(),
+        };
+        self.store.ensure_data_dir(id, self.config.data_owner_ids())?;
+        self.save_record(&record).await?;
+        self.remember(id, Some(c)).await;
+        Ok(Ok(Issue::new(
+            IssueCode::RecordRebuilt,
+            "blocklyd's record was missing and was rebuilt from the container's labels",
+        )))
+    }
+
+    /// Reads the records and the port quarantine from disk in place of what memory holds, once
+    /// what a crash left is settled. Returns the host's issues: records it couldn't read, and what
+    /// it left for a human.
+    async fn load_from_disk(&self, issues: &mut HashMap<WorkloadId, Vec<Issue>>) -> Result<Vec<Issue>, NodeError> {
+        let (records, bad) = self.store.load_all()?;
+        let mut host_issues: Vec<Issue> = bad
+            .into_iter()
+            .map(|b| Issue::new(IssueCode::UnreadableRecord, format!("{}: {}", b.path.display(), b.problem)))
+            .collect();
+        // What a crash left is settled before anything uses the data.
+        host_issues.extend(self.settle_leftovers(&records, issues).await);
+        let resting = self.store.load_resting_ports();
+        let now_unix = now().unix_timestamp();
+        let mut state = self.state.lock().unwrap();
+        state.records = records.into_iter().map(|r| (r.id.clone(), r)).collect();
+        state.ports.restore_resting(
+            resting
+                .into_iter()
+                .map(|p| (p.protocol, p.port, Duration::from_secs((now_unix - p.released_at_unix).max(0) as u64))),
+        );
+        Ok(host_issues)
     }
 
     /// Settles what a crash left on disk: each record's restore that didn't get to finish
