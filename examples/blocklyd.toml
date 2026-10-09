@@ -1,0 +1,97 @@
+# blocklyd configuration. Unknown keys are refused, so a typo can't pass for a setting.
+# Every key but node_id, deployment_id and [api] has a default; the values below are those
+# defaults unless a comment says otherwise.
+
+# This host's stable name. Written on every container it makes; two nodes never share one.
+node_id = "fra-box-1"
+# The Blockly deployment this host serves. Containers of another deployment are never adopted.
+deployment_id = "staging"
+state_dir = "/var/lib/blocklyd"
+
+[api]
+# The mTLS workload API. Bind the private or WireGuard address, never a public one.
+listen = "10.0.0.5:7443"
+max_body_bytes = 2097152
+shutdown_grace_seconds = 30
+
+[api.tls]
+cert = "/etc/blocklyd/tls/node.pem"
+key = "/etc/blocklyd/tls/node.key"       # mode 0600, or blocklyd refuses to start
+client_ca = "/etc/blocklyd/tls/ca.pem"    # the CA's certificate only, never its key
+allowed_clients = ["control-plane.staging.blockly.internal"]
+
+[ops]
+# Plain HTTP /healthz, /readyz and /metrics, with no authentication: it names workloads. Loopback,
+# or a private address for a scraper on the private network (10/8, 172.16/12, 192.168/16,
+# 100.64/10, fc00::/7, fe80::/10). blocklyd refuses 0.0.0.0, :: and public addresses.
+listen = "127.0.0.1:7070"
+
+[docker]
+socket = "/var/run/docker.sock"
+network = "blockly-workloads"                  # created with inter-container traffic off
+pull_timeout_seconds = 1200
+
+[network]
+port_range = [42000, 42999]
+edge_ips = ["10.0.0.5"]                        # default 127.0.0.1: nothing exposed unless asked;
+                                               # in fleet mode, the address api.listen gives
+control_ips = ["10.0.0.5"]                     # default as edge_ips
+port_quarantine_seconds = 600
+
+[workloads]
+allowed_images = ["itzg/minecraft-server:", "docker.io/itzg/minecraft-server:"]
+user = "1000:1000"                             # never root: uid 0 or gid 0 is refused
+# data_owner = "101000:101000"                 # set when Docker remaps user namespaces; never root
+read_only_rootfs = true
+tmp_size_mb = 256
+default_pids_limit = 4096
+log_max_size_mb = 20
+log_max_files = 5
+oom_score_adj = 500
+trash_retention_hours = 24
+min_memory_mb = 256
+
+[capacity]
+reserved_memory_mb = 4096                      # default a sixteenth of the host's memory, at least
+                                               # 2048: a 64 GB box keeps 4 GB for itself
+# allocatable_memory_mb = 57344                # optional ceiling below total minus reserved
+min_free_disk_mb = 5120
+reserved_cpu_millis = 1000                     # kept for the host; placement counts the rest
+memory_overcommit = 1.0
+
+[intervals]
+resync_seconds = 30
+stats_seconds = 15
+disk_usage_seconds = 300
+
+[transfer]
+max_put_mb = 5115                              # default: R2's limit for one PUT, 5 GiB less 5 MiB;
+                                               # a larger archive goes in parts when they're offered
+
+# ─── Fleet mode ──────────────────────────────────────────────────────────────────────────────
+# A node that joins a fleet has no node_id and no [api.tls]: both come from enrollment. Delete
+# them above and add this section; `blocklyd join <token>` writes this form, with only
+# deployment_id and [fleet]. The control plane names the node, issues its certificates for a key
+# the node makes itself, and allows only its own client name to call the API. See
+# Cubepals' docs/fleet.md §3 ("Trust") and this repository's docs/protocol.md, "The control
+# plane's endpoint".
+#
+# In fleet mode these may be left out: blocklyd works them out from the host at each start, and
+# `blocklyd check-config` lists what it worked out. Set above, they override it.
+#   api.listen                    the host's one private address (10/8, 172.16/12, 192.168/16,
+#                                 100.64/10, or a WireGuard interface's), port 7443
+#   network.edge_ips, control_ips the address api.listen or fleet.api_address gives, else that one
+#   capacity.reserved_memory_mb   a sixteenth of the host's memory, at least 2048
+#
+# [fleet]
+# url = "https://fleet.internal.example:8443"     # the control plane's node endpoint
+# ca = "/etc/blocklyd/fleet-ca.pem"                  # the fleet CA's certificate, from provisioning:
+#                                                 # the only CA trusted, which enrollment must name
+# # One-time: the bk1. token `fleet.ts token` prints, or a bare one. Deleted once used, so it lives
+# # where blocklyd may write (systemd: ProtectSystem=strict).
+# enrollment_token_file = "/var/lib/blocklyd/enrollment-token"
+# heartbeat_seconds = 5
+# api_address = "10.0.0.5:7443"                    # where the control plane dials this node; default
+#                                                 # api.listen, and needed when that is 0.0.0.0
+# restart_requires_contact_seconds = 120          # the restart lease when the control plane names none
+# labels = { zone = "fsn1-dc14" }

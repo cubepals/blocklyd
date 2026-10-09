@@ -1,0 +1,4 @@
+{
+  "version": "0.3.0",
+  "reason": "blocklyd 0.3.0 didn't reconcile and get a heartbeat accepted within 120 s"
+}

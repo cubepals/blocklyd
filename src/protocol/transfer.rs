@@ -1,0 +1,272 @@
+//! Moving a workload's data: export to a presigned URL (in parts when it is large), restore from
+//! one or from a snapshot, local snapshots, and a snapshot's upload. It does not make or unpack
+//! archives: that is `crate::transfer`. Stopping, fencing and deleting are in `lifecycle.rs`.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use super::FieldError;
+use crate::ids::{SnapshotId, WorkloadId};
+
+/// `POST /v1/workloads/{id}/export`: the workload's data as a gzip tarball, PUT to a presigned
+/// URL. The URL is used once, and never stored or logged.
+#[derive(Clone, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ExportRequest {
+    pub url: String,
+    /// Sent with the PUT, as the store's presigning asked for (a content type, say).
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// The caller paused the workload's own saving (for Minecraft: `save-off`, `save-all
+    /// flush`), so its files are consistent while it runs. Without it only a stopped workload
+    /// exports.
+    #[serde(default)]
+    pub quiesced: bool,
+    /// Names at the top of the data the archive leaves out: what the image makes again when it
+    /// is missing (a server jar, the libraries it unpacks), so a move carries only the world.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Where the archive goes instead when it is larger than one PUT carries.
+    #[serde(default)]
+    pub parts: Option<PartsTarget>,
+}
+
+/// Top-level names a request may leave out of an archive: plain names, nothing that leads
+/// elsewhere.
+pub fn validate_exclude(exclude: &[String]) -> Result<(), Vec<FieldError>> {
+    let bad = |problem: &str| Err(vec![FieldError { field: "exclude".into(), problem: problem.into() }]);
+    if exclude.len() > 64 {
+        return bad("at most 64 names");
+    }
+    for name in exclude {
+        if name.is_empty() || name.len() > 255 || name == "." || name == ".." || name.contains(['/', '\0']) {
+            return bad("each is one plain name at the top of the data");
+        }
+    }
+    Ok(())
+}
+
+impl fmt::Debug for ExportRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExportRequest")
+            .field("url", &crate::fleet::client::redact(&self.url))
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .field("quiesced", &self.quiesced)
+            .field("exclude", &self.exclude)
+            .field("parts", &self.parts)
+            .finish()
+    }
+}
+
+/// An archive larger than one PUT carries goes to the store in parts, as its multipart upload:
+/// the control plane begins the upload and presigns a URL for each part, and finishes it with the
+/// parts the node reports. Every part but the last is `part_size` bytes, and the archive takes as
+/// many of `urls`, from the first, as it needs; a URL left over is never called.
+#[derive(Clone, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PartsTarget {
+    pub part_size: u64,
+    pub urls: Vec<String>,
+    /// Sent with every part's PUT.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+}
+
+impl PartsTarget {
+    pub fn validate(&self) -> Result<(), Vec<FieldError>> {
+        let mut errors = Vec::new();
+        let (min, max) = (crate::transfer::MIN_PART_BYTES, crate::transfer::MAX_PART_BYTES);
+        if !(min..=max).contains(&self.part_size) {
+            errors.push(FieldError {
+                field: "parts.partSize".into(),
+                problem: format!("between {min} and {max} bytes, as the store takes them"),
+            });
+        }
+        let most = crate::transfer::MAX_PARTS;
+        if self.urls.is_empty() || self.urls.len() as u64 > most {
+            errors.push(FieldError { field: "parts.urls".into(), problem: format!("1 to {most} of them") });
+        }
+        if errors.is_empty() { Ok(()) } else { Err(errors) }
+    }
+
+    /// How many bytes these parts carry at most.
+    pub fn capacity(&self) -> u64 {
+        self.part_size.saturating_mul(self.urls.len() as u64)
+    }
+}
+
+impl fmt::Debug for PartsTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PartsTarget")
+            .field("part_size", &self.part_size)
+            .field("urls", &self.urls.len())
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
+/// A part the node put: its number, from 1, and the ETag the store answered with, which the
+/// control plane needs to finish the upload.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct PutPart {
+    pub number: u64,
+    pub etag: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResponse {
+    pub size_bytes: u64,
+    /// Of the archive as uploaded: what a restore checks.
+    pub sha256: String,
+    /// `tar.gz`: paths relative to the data root, like every archive Blockly keeps.
+    pub format: String,
+    /// Directories, files and links in the archive.
+    pub entries: u64,
+    pub duration_ms: u64,
+    /// Present when the archive went in parts: what finishes the upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parts: Option<Vec<PutPart>>,
+}
+
+/// `POST /v1/workloads/{id}/restore`: replaces a stopped workload's data, from an archive at a
+/// presigned URL or from one of its own snapshots on this node.
+#[derive(Clone, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RestoreRequest {
+    #[serde(default)]
+    pub url: Option<String>,
+    /// The archive's sha256; a download that doesn't match is refused before anything changes.
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// A snapshot this node holds of the workload, instead of a URL.
+    #[serde(default)]
+    pub snapshot: Option<SnapshotId>,
+}
+
+impl RestoreRequest {
+    pub fn validate(&self) -> Result<(), Vec<FieldError>> {
+        match (&self.url, &self.snapshot) {
+            (Some(_), None) => Ok(()),
+            (None, Some(_)) if self.sha256.is_none() => Ok(()),
+            (None, Some(_)) => {
+                Err(vec![FieldError { field: "sha256".into(), problem: "is for an archive's URL".into() }])
+            }
+            _ => Err(vec![FieldError { field: "url".into(), problem: "send a url or a snapshot, one of them".into() }]),
+        }
+    }
+}
+
+impl fmt::Debug for RestoreRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RestoreRequest")
+            .field("url", &self.url.as_deref().map(crate::fleet::client::redact))
+            .field("sha256", &self.sha256)
+            .field("snapshot", &self.snapshot)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct RestoreResponse {
+    pub size_bytes: u64,
+    /// The archive's, for a restore from a URL; none for a snapshot.
+    pub sha256: Option<String>,
+    pub entries: u64,
+    /// Links, devices and the like, which are never unpacked.
+    pub skipped: u64,
+    pub unpacked_bytes: u64,
+    /// Where the data it replaced went (the trash, for its retention).
+    pub previous_data: Option<String>,
+    pub duration_ms: u64,
+}
+
+/// `POST /v1/workloads/{id}/snapshots`: a copy of the workload's data on this node, kept beside
+/// it. Sharing blocks with the data where the filesystem can, it takes moments and no space
+/// until the data changes. The id is the caller's: asking again with the same one returns the
+/// snapshot already made.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SnapshotRequest {
+    pub id: SnapshotId,
+    /// As for an export: the caller paused the workload's saving, so a running one may be copied.
+    #[serde(default)]
+    pub quiesced: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotView {
+    pub id: SnapshotId,
+    pub workload: WorkloadId,
+    /// The epoch of the copy it was taken from.
+    pub epoch: Option<u64>,
+    pub created_at: String,
+    /// The files' bytes. With shared blocks, most of them aren't new on disk.
+    pub size_bytes: u64,
+    pub files: u64,
+    pub method: crate::tree::Method,
+    /// The workload was running, with its saving paused, when it was taken.
+    pub quiesced: bool,
+    pub spec_digest: String,
+    pub duration_ms: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotResponse {
+    /// False when a snapshot with this id already existed; it is returned as it was made.
+    pub created: bool,
+    pub snapshot: SnapshotView,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotList {
+    pub snapshots: Vec<SnapshotView>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct SnapshotDeleteResponse {
+    pub existed: bool,
+}
+
+/// `POST /v1/workloads/{id}/snapshots/{snapshot}/upload`: the snapshot as a gzip tarball, PUT to
+/// a presigned URL. The snapshot doesn't change, so this needs no quiet and no epoch.
+#[derive(Clone, Deserialize, Serialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UploadRequest {
+    pub url: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
+    /// Where the archive goes instead when it is larger than one PUT carries.
+    #[serde(default)]
+    pub parts: Option<PartsTarget>,
+}
+
+impl fmt::Debug for UploadRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UploadRequest")
+            .field("url", &crate::fleet::client::redact(&self.url))
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .field("parts", &self.parts)
+            .finish()
+    }
+}

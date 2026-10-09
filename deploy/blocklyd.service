@@ -1,0 +1,71 @@
+# blocklyd as a systemd service (Cubepals' docs/fleet-operations.md, "Adding a node").
+#
+# The hardening below narrows what blocklyd's own process can touch. It cannot narrow what it
+# can do through the Docker socket, which is root-equivalent: that is limited only by blocklyd's
+# code (it asks Docker for nothing but hardened workload containers) and by who can call
+# its API (mutual TLS). See README, "Security model".
+#
+# The binary is /var/lib/blocklyd/bin/blocklyd, which /usr/local/bin/blocklyd links to: the state
+# directory is the one place this unit lets blocklyd write, so it can upgrade itself there with
+# nothing more opened up (src/cli/upgrade.rs).
+#
+# Fleet mode: provisioning writes the fleet CA to /etc/blocklyd/fleet-ca.pem and the one-time
+# enrollment token to /var/lib/blocklyd/enrollment-token (blocklyd deletes it once used, and /etc
+# is read-only to it here). The identity it enrolls with stays under /var/lib/blocklyd/identity.
+
+[Unit]
+Description=Blockly node daemon
+Documentation=https://github.com/cubepals/blocklyd
+# After, not Requires: blocklyd outlives Docker restarts, reports Docker as down, and resyncs.
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=exec
+# Refuses to start only on what it always refused (an invalid config, a state directory it can't
+# own); everything else doctor finds goes to the journal as a warning.
+ExecStartPre=/usr/local/bin/blocklyd doctor --preflight --config /etc/blocklyd/blocklyd.toml
+ExecStart=/usr/local/bin/blocklyd serve --config /etc/blocklyd/blocklyd.toml
+# After any stop: a blocklyd just upgraded to that exited before it came up is swapped back for
+# the one before it, which this runs. "-": there is none until the first upgrade.
+ExecStopPost=-/var/lib/blocklyd/bin/blocklyd.prev upgrade --exited --config /etc/blocklyd/blocklyd.toml
+Restart=always
+RestartSec=2
+# SIGTERM drains requests for up to shutdown_grace_seconds; workloads are not blocklyd's
+# children and keep running.
+KillSignal=SIGTERM
+TimeoutStopSec=45
+# Workloads (oom_score_adj 500) go before blocklyd when the host runs out of memory.
+OOMScoreAdjust=-500
+LimitNOFILE=65536
+
+StateDirectory=blocklyd
+StateDirectoryMode=0700
+ConfigurationDirectory=blocklyd
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/blocklyd /run/docker.sock /var/run/docker.sock
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# chown data directories to the workload user, remove trashed data it owns, kill a timed-out
+# exec by host pid.
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_KILL
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

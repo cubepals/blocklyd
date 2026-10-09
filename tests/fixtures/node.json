@@ -1,0 +1,10 @@
+{
+  "nodeId": "6f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+  "deploymentId": "staging",
+  "controlPlane": "https://fleet.internal.example:8443",
+  "allowedClients": [
+    "control-plane.staging.fleet"
+  ],
+  "enrolledAt": "2026-09-12T14:03:27.665190042Z",
+  "generation": 2
+}

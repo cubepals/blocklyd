@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Help with your server or account on cubepals.com
+    url: mailto:support@cubepals.com
+    about: Account and server problems go to support, who can look at your account.
+  - name: Report a security vulnerability
+    url: https://github.com/cubepals/blocklyd/security/advisories/new
+    about: Privately, never as a public issue.

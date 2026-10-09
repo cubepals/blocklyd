@@ -1,0 +1,35 @@
+# Monthly and grouped, as Cubepals' own: at most two pull requests per ecosystem a month, one for
+# minor and patch updates and one for majors. New releases wait a week (a month for majors) before
+# they are offered, so a broken or hijacked release has time to be pulled. Security fixes skip all
+# of that: they arrive when published.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+    groups:
+      cargo-security:
+        applies-to: security-updates
+        patterns: ['*']
+      cargo:
+        patterns: ['*']
+        update-types: [minor, patch]
+      cargo-major:
+        patterns: ['*']
+        update-types: [major]
+  # Actions have no semver levels to split by, so they come as one pull request.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ['*']

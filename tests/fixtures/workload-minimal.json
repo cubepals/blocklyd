@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "id": "w1",
+  "generation": 1,
+  "phase": "creating",
+  "spec": {
+    "image": "itzg/minecraft-server:2026.9.1-java21",
+    "entrypoint": null,
+    "env": {},
+    "secretNames": [],
+    "resources": {
+      "memoryMb": 3072,
+      "cpuMillis": null,
+      "cpuWeight": null,
+      "pidsLimit": null
+    },
+    "storage": {
+      "mountPath": "/data",
+      "sizeGb": 5
+    },
+    "ports": [],
+    "stop": {
+      "signal": "SIGTERM",
+      "timeoutSeconds": 90
+    },
+    "restart": {
+      "policy": "on-failure",
+      "maxRetries": 3
+    },
+    "labels": {}
+  },
+  "specDigest": "sha256:431a570aeec3f8f524675d78c950fe9d389976be51319d54a8b131aad0a1415b",
+  "ports": [],
+  "containerName": "blockly-staging-w1",
+  "containerId": null,
+  "stopRequestedAt": null,
+  "restartCount": 0,
+  "createdAt": "2026-10-01T08:00:03.104772391Z",
+  "updatedAt": "2026-10-01T08:00:03.104772391Z"
+}

@@ -1,0 +1,627 @@
+{
+  "components": {
+    "schemas": {
+      "Audience": {
+        "description": "Who must be able to reach a port: the edge (players, through the router) or the control\nplane (console, status ping). The host decides which of its addresses each audience uses.",
+        "enum": [
+          "edge",
+          "control"
+        ],
+        "type": "string"
+      },
+      "EnrollResponse": {
+        "properties": {
+          "allowedClients": {
+            "description": "Client names allowed to call the node's API.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "caPem": {
+            "type": "string"
+          },
+          "clientCertPem": {
+            "description": "clientAuth, for heartbeats; the same key.",
+            "type": "string"
+          },
+          "deploymentId": {
+            "type": "string"
+          },
+          "heartbeatSeconds": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "nodeId": {
+            "description": "The node's durable identity, issued by the control plane.",
+            "type": "string"
+          },
+          "serverCertPem": {
+            "description": "serverAuth, for the node's API; SAN `<nodeId>.nodes.<deployment>.fleet`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "deploymentId",
+          "serverCertPem",
+          "clientCertPem",
+          "caPem",
+          "allowedClients",
+          "heartbeatSeconds"
+        ],
+        "type": "object"
+      },
+      "ExecRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "description": "argv, never a shell string: blocklyd adds no shell. It runs inside the workload, as\nthe workload's user, with its limits; never on the host.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "timeoutSeconds": {
+            "default": 30,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "type": "object"
+      },
+      "ExportRequest": {
+        "additionalProperties": false,
+        "description": "`POST /v1/workloads/{id}/export`: the workload's data as a gzip tarball, PUT to a presigned\nURL. The URL is used once, and never stored or logged.",
+        "properties": {
+          "exclude": {
+            "default": [],
+            "description": "Names at the top of the data the archive leaves out: what the image makes again when it\nis missing (a server jar, the libraries it unpacks), so a move carries only the world.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "description": "Sent with the PUT, as the store's presigning asked for (a content type, say).",
+            "type": "object"
+          },
+          "parts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PartsTarget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Where the archive goes instead when it is larger than one PUT carries."
+          },
+          "quiesced": {
+            "default": false,
+            "description": "The caller paused the workload's own saving (for Minecraft: `save-off`, `save-all\nflush`), so its files are consistent while it runs. Without it only a stopped workload\nexports.",
+            "type": "boolean"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "Fence": {
+        "properties": {
+          "currentEpoch": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workload": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workload",
+          "currentEpoch"
+        ],
+        "type": "object"
+      },
+      "FenceRequest": {
+        "additionalProperties": false,
+        "description": "`POST /v1/workloads/{id}/fence`: the control plane says which epoch is current. A copy\nolder than it is stopped and never started again; a copy at or past it is left alone, so a\nlate or repeated fence is harmless.",
+        "properties": {
+          "currentEpoch": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "currentEpoch"
+        ],
+        "type": "object"
+      },
+      "HeartbeatResponse": {
+        "properties": {
+          "fences": {
+            "default": [],
+            "description": "Copies this node holds that a newer placement superseded. The node stops each and never\nstarts it again.",
+            "items": {
+              "$ref": "#/components/schemas/Fence"
+            },
+            "type": "array"
+          },
+          "heartbeatSeconds": {
+            "default": null,
+            "description": "A new interval, if the control plane wants one.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "leaseSeconds": {
+            "default": null,
+            "description": "The execution lease: for this long after sending the heartbeat, the node may restart a\nworkload that failed on its own, or resume one the host went down under. 0 for a node the\ncontrol plane holds lost.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lifecycle": {
+            "description": "The node as the control plane holds it: active, draining, lost or retired.",
+            "type": "string"
+          },
+          "renew": {
+            "default": false,
+            "description": "The node's certificates end soon: it should renew them.",
+            "type": "boolean"
+          },
+          "upgrade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpgradeOffer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A newer blocklyd to upgrade to: offered to one node of a region at a time."
+          }
+        },
+        "required": [
+          "lifecycle"
+        ],
+        "type": "object"
+      },
+      "PartsTarget": {
+        "additionalProperties": false,
+        "description": "An archive larger than one PUT carries goes to the store in parts, as its multipart upload:\nthe control plane begins the upload and presigns a URL for each part, and finishes it with the\nparts the node reports. Every part but the last is `part_size` bytes, and the archive takes as\nmany of `urls`, from the first, as it needs; a URL left over is never called.",
+        "properties": {
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "description": "Sent with every part's PUT.",
+            "type": "object"
+          },
+          "partSize": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "urls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "partSize",
+          "urls"
+        ],
+        "type": "object"
+      },
+      "PortSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "audience": {
+            "items": {
+              "$ref": "#/components/schemas/Audience"
+            },
+            "type": "array"
+          },
+          "containerPort": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/Proto",
+            "default": "tcp"
+          }
+        },
+        "required": [
+          "name",
+          "containerPort",
+          "audience"
+        ],
+        "type": "object"
+      },
+      "Proto": {
+        "enum": [
+          "tcp",
+          "udp"
+        ],
+        "type": "string"
+      },
+      "RenewResponse": {
+        "properties": {
+          "caPem": {
+            "type": "string"
+          },
+          "clientCertPem": {
+            "type": "string"
+          },
+          "serverCertPem": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "serverCertPem",
+          "clientCertPem",
+          "caPem"
+        ],
+        "type": "object"
+      },
+      "Resources": {
+        "additionalProperties": false,
+        "properties": {
+          "cpuMillis": {
+            "default": null,
+            "description": "CPU ceiling in thousandths of a core (CFS quota). Also what the JVM counts as its\nprocessors. Absent: no ceiling, weight only.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cpuWeight": {
+            "default": null,
+            "description": "Share of CPU under contention, relative (cgroup weight). Absent: proportional to memory.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryMb": {
+            "description": "Hard memory limit (no swap). Blockly's size: 3072 for a 3 GB server.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pidsLimit": {
+            "default": null,
+            "description": "Processes and threads. Absent: the host default (4096).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "memoryMb"
+        ],
+        "type": "object"
+      },
+      "RestartPolicy": {
+        "oneOf": [
+          {
+            "const": "no",
+            "description": "Never started again by the host: a crash stays a crash until the control plane acts.",
+            "type": "string"
+          },
+          {
+            "const": "on-failure",
+            "description": "Started again after a failing exit, up to `maxRetries` times (Blockly's Fly and Docker\nruntimes both use 3; 0 means never, not Docker's \"no limit\"). Never after a requested stop.\nAfter a restart of the host, a workload that was running when the host went down is\nresumed; after a restart of blocklyd alone, in the same boot, nothing is. In fleet mode\neither needs the execution lease, which the node takes only after applying the fences of\nthe heartbeat answer that grants it.",
+            "type": "string"
+          }
+        ]
+      },
+      "RestartSpec": {
+        "additionalProperties": false,
+        "description": "A field left out takes its value from `Default`, whether `restart` is absent or partial.",
+        "properties": {
+          "maxRetries": {
+            "default": 3,
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/RestartPolicy",
+            "default": "on-failure"
+          }
+        },
+        "type": "object"
+      },
+      "RestoreRequest": {
+        "additionalProperties": false,
+        "description": "`POST /v1/workloads/{id}/restore`: replaces a stopped workload's data, from an archive at a\npresigned URL or from one of its own snapshots on this node.",
+        "properties": {
+          "sha256": {
+            "default": null,
+            "description": "The archive's sha256; a download that doesn't match is refused before anything changes.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SnapshotId"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A snapshot this node holds of the workload, instead of a URL."
+          },
+          "url": {
+            "default": null,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Secret": {
+        "description": "A secret value: never logged, never persisted by blocklyd, never returned.",
+        "type": "string"
+      },
+      "SnapshotId": {
+        "description": "A local snapshot's id: the control plane's archive id (a UUID). It names a directory, so it is\nheld to a workload id's rules.",
+        "type": "string"
+      },
+      "SnapshotRequest": {
+        "additionalProperties": false,
+        "description": "`POST /v1/workloads/{id}/snapshots`: a copy of the workload's data on this node, kept beside\nit. Sharing blocks with the data where the filesystem can, it takes moments and no space\nuntil the data changes. The id is the caller's: asking again with the same one returns the\nsnapshot already made.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/SnapshotId"
+          },
+          "quiesced": {
+            "default": false,
+            "description": "As for an export: the caller paused the workload's saving, so a running one may be copied.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "type": "object"
+      },
+      "StopRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "timeoutSeconds": {
+            "default": null,
+            "description": "Overrides the spec's grace for this stop.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "StopSignal": {
+        "enum": [
+          "SIGTERM",
+          "SIGINT"
+        ],
+        "type": "string"
+      },
+      "StopSpec": {
+        "additionalProperties": false,
+        "description": "A field left out takes its value from `Default`, whether `stop` is absent or partial.",
+        "properties": {
+          "signal": {
+            "$ref": "#/components/schemas/StopSignal",
+            "default": "SIGTERM",
+            "description": "Sent first; the workload saves and exits on it (Blockly's image: `stop` on the console)."
+          },
+          "timeoutSeconds": {
+            "default": 90,
+            "description": "How long the workload gets after the signal before it is killed.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "Storage": {
+        "additionalProperties": false,
+        "properties": {
+          "mountPath": {
+            "description": "Where the workload's persistent data appears inside it (Blockly: `/data`).",
+            "type": "string"
+          },
+          "sizeGb": {
+            "description": "The size the control plane promised. Reported against measured usage; not enforced in v1\n(no per-directory quota on a plain filesystem).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mountPath",
+          "sizeGb"
+        ],
+        "type": "object"
+      },
+      "UpgradeOffer": {
+        "description": "The blocklyd the control plane wants the node to run, at `GET /fleet/v1/blocklyd`.",
+        "properties": {
+          "sha256": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "sha256"
+        ],
+        "type": "object"
+      },
+      "UploadRequest": {
+        "additionalProperties": false,
+        "description": "`POST /v1/workloads/{id}/snapshots/{snapshot}/upload`: the snapshot as a gzip tarball, PUT to\na presigned URL. The snapshot doesn't change, so this needs no quiet and no epoch.",
+        "properties": {
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "type": "object"
+          },
+          "parts": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PartsTarget"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Where the archive goes instead when it is larger than one PUT carries."
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "WorkloadSpec": {
+        "additionalProperties": false,
+        "properties": {
+          "entrypoint": {
+            "default": null,
+            "description": "Replaces the image's entrypoint; absent, the image starts as it was built to.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "type": "object"
+          },
+          "image": {
+            "description": "An image reference. Must match the host's `allowed_images` prefixes.",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {},
+            "type": "object"
+          },
+          "ports": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PortSpec"
+            },
+            "type": "array"
+          },
+          "resources": {
+            "$ref": "#/components/schemas/Resources"
+          },
+          "restart": {
+            "$ref": "#/components/schemas/RestartSpec",
+            "default": {
+              "maxRetries": 3,
+              "policy": "on-failure"
+            }
+          },
+          "secrets": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Secret"
+            },
+            "description": "Environment the workload needs but nobody else may see (Blockly: `RCON_PASSWORD`).",
+            "type": "object"
+          },
+          "stop": {
+            "$ref": "#/components/schemas/StopSpec",
+            "default": {
+              "signal": "SIGTERM",
+              "timeoutSeconds": 90
+            }
+          },
+          "storage": {
+            "$ref": "#/components/schemas/Storage"
+          }
+        },
+        "required": [
+          "image",
+          "resources",
+          "storage"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "blocklyd: what a node reads",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}

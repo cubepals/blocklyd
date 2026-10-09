@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "id": "0b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10",
+  "generation": 3,
+  "phase": "active",
+  "spec": {
+    "image": "itzg/minecraft-server:2026.9.1-java21",
+    "entrypoint": [
+      "/start",
+      "--nogui"
+    ],
+    "env": {
+      "EULA": "TRUE",
+      "MEMORY": "4608M",
+      "TYPE": "PAPER",
+      "VERSION": "1.21.8"
+    },
+    "secretNames": [
+      "RCON_PASSWORD"
+    ],
+    "resources": {
+      "memoryMb": 6144,
+      "cpuMillis": 3000,
+      "cpuWeight": 200,
+      "pidsLimit": 2048
+    },
+    "storage": {
+      "mountPath": "/data",
+      "sizeGb": 20
+    },
+    "ports": [
+      {
+        "name": "game",
+        "containerPort": 25565,
+        "protocol": "tcp",
+        "audience": [
+          "edge",
+          "control"
+        ]
+      },
+      {
+        "name": "voice",
+        "containerPort": 24454,
+        "protocol": "udp",
+        "audience": [
+          "edge"
+        ]
+      }
+    ],
+    "stop": {
+      "signal": "SIGINT",
+      "timeoutSeconds": 30
+    },
+    "restart": {
+      "policy": "no",
+      "maxRetries": 0
+    },
+    "labels": {
+      "blockly.server": "0b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10"
+    }
+  },
+  "specDigest": "sha256:254b6f6c3ff0511614e5d07d04385cfb70f94dd5f05864f59b18f7c3228136a2",
+  "ports": [
+    {
+      "name": "game",
+      "protocol": "tcp",
+      "containerPort": 25565,
+      "hostPort": 42017
+    },
+    {
+      "name": "voice",
+      "protocol": "udp",
+      "containerPort": 24454,
+      "hostPort": 42018
+    }
+  ],
+  "containerName": "blockly-staging-0b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10",
+  "containerId": "9f2c4be1d8a07e35c6b1f04a92d7e8c3b5a1f6e2d9c84b07a3e5f1c2d6b8a9e4",
+  "epoch": 7,
+  "supersededBy": 8,
+  "stopRequestedAt": "2026-10-06T09:12:44.512305117Z",
+  "runningBoot": "3c5e1a7d-92b4-4f0e-8d6a-1b2c3d4e5f60",
+  "restartCount": 2,
+  "createdAt": "2026-10-01T08:00:03.104772391Z",
+  "updatedAt": "2026-10-06T09:12:44.512305117Z"
+}

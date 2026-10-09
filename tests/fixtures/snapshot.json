@@ -1,0 +1,12 @@
+{
+  "id": "5d0e7c1a-3b9f-4e62-a8d4-7f1b2c3e4d5a",
+  "workload": "0b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10",
+  "epoch": 7,
+  "createdAt": "2026-10-05T22:00:01.287441903Z",
+  "sizeBytes": 734003200,
+  "files": 4211,
+  "method": "reflink",
+  "quiesced": true,
+  "specDigest": "sha256:254b6f6c3ff0511614e5d07d04385cfb70f94dd5f05864f59b18f7c3228136a2",
+  "durationMs": 312
+}

@@ -1,0 +1,193 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Weekly, so supply-chain sees a new RustSec advisory in a quiet week too, and contract sees a
+  # control plane that moved; and on demand.
+  schedule:
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: 1.94.1
+
+jobs:
+  # A change to nothing but prose skips the rest. `check` still reports, so it can stay required.
+  changes:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!*.md'
+              - '!.github/ISSUE_TEMPLATE/**'
+              - '!.github/CODEOWNERS'
+              - '!.github/pull_request_template.md'
+              - '!.github/dependabot.yml'
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
+          rustup override set "$RUST_VERSION"
+      # Keyed on the toolchain too: a new rustc can't reuse the old one's artifacts, and an exact
+      # key hit never saves, so without it a Rust bump would rebuild everything on every run until
+      # Cargo.lock changed. A Cargo.lock change starts from the last cache of the same Rust.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            target
+          key: test-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: test-${{ env.RUST_VERSION }}-
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      # One implementation of the structure rules for both repositories: Cubepals'
+      # scripts/check-structure.ts, which reads a repository that is one crate as this one, against
+      # structure-baseline.json here. --rust holds clippy's complexity lints to it too.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Structure
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/main/scripts/check-structure.ts \
+            -o "$RUNNER_TEMP/check-structure.ts"
+          bun "$RUNNER_TEMP/check-structure.ts"
+          bun "$RUNNER_TEMP/check-structure.ts" --rust
+      # As the runner's own user, not root: data goes to the test's user (tests/support). Every
+      # test binary runs even after one fails, so a failure can't hide the others.
+      - run: cargo test --locked --no-fail-fast
+      # Against the runner's own Docker daemon: hardening, limits, the OOM killer, isolation,
+      # restarts. They chown data directories, so Cargo's runner starts the test binary as root;
+      # Cargo itself, and so target/, stays the runner's.
+      - name: Docker integration tests
+        run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=sudo cargo test --locked --test docker -- --ignored --test-threads 2
+
+  supply-chain:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup override set "$RUST_VERSION"
+      # The release's own binary, not a build from source on every run.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      # Advisories (RustSec), licenses, banned crates and sources: deny.toml.
+      - run: cargo deny --locked check
+
+  contract:
+    # Cubepals' control plane, from its main, against this blocklyd, for real: enrollment over
+    # mutual TLS, placement, snapshots, restores, a daemon killed and back, a node held lost, a
+    # self-upgrade (apps/control/src/infra/fleet/fleet-runtime.e2e.test.ts there). A debug build,
+    # since only debug builds take BLOCKLYD_TEST_VERSION, which the upgrade test sets.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: blockly
+          POSTGRES_PASSWORD: blockly
+          POSTGRES_DB: blockly
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U blockly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://blockly:blockly@127.0.0.1:5432/blockly
+      S3_TEST_ENDPOINT: http://127.0.0.1:9000
+      # blocklyd hands data directories to the workloads' user, so it runs as root.
+      BLOCKLYD_SUDO: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: blocklyd
+      - uses: actions/checkout@v7
+        with:
+          repository: cubepals/cubepals
+          ref: main
+          path: cubepals
+      - name: Rust ${{ env.RUST_VERSION }}
+        working-directory: blocklyd
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup override set "$RUST_VERSION"
+      # As test's: the toolchain is in the key.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            blocklyd/target
+          key: contract-${{ env.RUST_VERSION }}-${{ hashFiles('blocklyd/Cargo.lock') }}
+          restore-keys: contract-${{ env.RUST_VERSION }}-
+      - run: cargo build --locked
+        working-directory: blocklyd
+      - name: Start an S3 store
+        run: >-
+          docker run -d --name s3 -p 9000:9000 -e RUSTFS_ACCESS_KEY=blockly-test
+          -e RUSTFS_SECRET_KEY=blockly-test-secret rustfs/rustfs:1.0.0 /data
+      - run: docker pull -q alpine:3.22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      # The node endpoint runs on Node, as in production.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.2
+      - run: bun install --frozen-lockfile
+        working-directory: cubepals
+      - run: bun test apps/control/src/infra/fleet/fleet-runtime.e2e.test.ts
+        working-directory: cubepals
+        env:
+          BLOCKLYD_BIN: ${{ github.workspace }}/blocklyd/target/debug/blocklyd
+
+  # The image a release publishes builds, and its binary is static. Pull requests only: on main,
+  # release.yml builds it.
+  image:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -t blocklyd .
+      - run: docker run --rm blocklyd --version
+
+  check:
+    needs: [changes, test, supply-chain, contract, image]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every part passed or was skipped
+        run: |
+          echo '${{ toJSON(needs) }}' | jq -e 'all(.[]; .result == "success" or .result == "skipped")'

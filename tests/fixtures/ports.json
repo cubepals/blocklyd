@@ -1,0 +1,12 @@
+[
+  {
+    "protocol": "tcp",
+    "port": 42003,
+    "releasedAtUnix": 1791277964
+  },
+  {
+    "protocol": "udp",
+    "port": 42004,
+    "releasedAtUnix": 1791277964
+  }
+]

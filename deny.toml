@@ -1,0 +1,51 @@
+# What blocklyd may depend on (`cargo deny check`, run in CI). blocklyd runs as root next to
+# Docker's socket on every node, so its dependencies are part of every node's attack surface.
+#
+# Lockfile policy: Cargo.lock is committed and every build and test runs with --locked. A
+# dependency changes only in a commit that changes Cargo.lock on purpose, and passes this check.
+
+[graph]
+targets = ["x86_64-unknown-linux-gnu", "x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]
+all-features = false
+
+[advisories]
+# RustSec. A known vulnerability, or a crate its authors withdrew, fails the build.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses only, so shipping blocklyd's binary to hosts carries no obligations beyond
+# its own license and the notices.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# blocklyd itself (FSL-1.1-ALv2, LICENSE.md; publish = false) isn't checked against the list above.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    # TLS is rustls with ring: no OpenSSL to patch on every host.
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+    { name = "aws-lc-rs" },
+    { name = "aws-lc-sys" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

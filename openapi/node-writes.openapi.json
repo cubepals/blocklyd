@@ -1,0 +1,2030 @@
+{
+  "components": {
+    "schemas": {
+      "CapacityView": {
+        "properties": {
+          "allocatableMemoryMb": {
+            "description": "Memory workloads may be given: total minus what the host keeps for itself.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "portsAllocated": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "portsTotal": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provisionedMemoryMb": {
+            "description": "Memory of every workload with compute, running or not.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runningMemoryMb": {
+            "description": "Memory of running workloads: what a start is admitted against.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "allocatableMemoryMb",
+          "runningMemoryMb",
+          "provisionedMemoryMb",
+          "portsTotal",
+          "portsAllocated"
+        ],
+        "type": "object"
+      },
+      "DaemonView": {
+        "description": "The blocklyd process itself, as distinct from the node it runs on.",
+        "properties": {
+          "cpuSeconds": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "rssBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "uptimeSeconds": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "startedAt",
+          "uptimeSeconds",
+          "rssBytes",
+          "cpuSeconds"
+        ],
+        "type": "object"
+      },
+      "DataOutcome": {
+        "oneOf": [
+          {
+            "const": "kept",
+            "description": "Left in place; the workload is `retained` and a PUT brings its compute back.",
+            "type": "string"
+          },
+          {
+            "const": "trashed",
+            "description": "Moved to the host's trash; purged after the retention (the last chance to undo).",
+            "type": "string"
+          },
+          {
+            "const": "absent",
+            "description": "There was no data.",
+            "type": "string"
+          }
+        ]
+      },
+      "DeleteResponse": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DataOutcome"
+          },
+          "existed": {
+            "description": "False when nothing by this id existed: a repeated delete is a no-op.",
+            "type": "boolean"
+          },
+          "removedContainer": {
+            "type": "boolean"
+          },
+          "trashPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "existed",
+          "removedContainer",
+          "data",
+          "trashPath"
+        ],
+        "type": "object"
+      },
+      "DockerView": {
+        "properties": {
+          "apiVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cgroupDriver": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cgroupVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "liveRestore": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reachable": {
+            "type": "boolean"
+          },
+          "securityOptions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "storageDriver": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "reachable",
+          "version",
+          "apiVersion",
+          "cgroupVersion",
+          "cgroupDriver",
+          "storageDriver",
+          "securityOptions",
+          "liveRestore"
+        ],
+        "type": "object"
+      },
+      "Endpoints": {
+        "properties": {
+          "control": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "edge": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "edge",
+          "control"
+        ],
+        "type": "object"
+      },
+      "EnrollRequest": {
+        "properties": {
+          "csrPem": {
+            "description": "PKCS#10, PEM. The key never leaves the node.",
+            "type": "string"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/NodeFacts"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "csrPem",
+          "facts"
+        ],
+        "type": "object"
+      },
+      "EnsureOutcome": {
+        "oneOf": [
+          {
+            "const": "created",
+            "description": "Nothing existed; now it does (stopped).",
+            "type": "string"
+          },
+          {
+            "const": "unchanged",
+            "description": "It already matched; nothing was touched.",
+            "type": "string"
+          },
+          {
+            "const": "replaced",
+            "description": "Made again for the new spec, keeping data and ports; started again if it was running.",
+            "type": "string"
+          }
+        ]
+      },
+      "EnsureResponse": {
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/EnsureOutcome"
+          },
+          "restarted": {
+            "type": "boolean"
+          },
+          "workload": {
+            "$ref": "#/components/schemas/WorkloadView"
+          }
+        },
+        "required": [
+          "outcome",
+          "restarted",
+          "workload"
+        ],
+        "type": "object"
+      },
+      "ErrorBody": {
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": true,
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
+      "ExecResponse": {
+        "properties": {
+          "durationMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exitCode": {
+            "description": "None when it timed out and was killed before reporting one.",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "killed": {
+            "description": "blocklyd killed the process (by its host pid) after the timeout. Docker alone can't:\nits API has no way to stop an exec (moby/moby#35703).",
+            "type": "boolean"
+          },
+          "stderr": {
+            "type": "string"
+          },
+          "stderrTruncated": {
+            "type": "boolean"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stdoutTruncated": {
+            "type": "boolean"
+          },
+          "timedOut": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "exitCode",
+          "stdout",
+          "stderr",
+          "stdoutTruncated",
+          "stderrTruncated",
+          "timedOut",
+          "killed",
+          "durationMs"
+        ],
+        "type": "object"
+      },
+      "ExitInfo": {
+        "properties": {
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "code": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "oomKilled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "oomKilled",
+          "at"
+        ],
+        "type": "object"
+      },
+      "ExportResponse": {
+        "properties": {
+          "durationMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entries": {
+            "description": "Directories, files and links in the archive.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "format": {
+            "description": "`tar.gz`: paths relative to the data root, like every archive Blockly keeps.",
+            "type": "string"
+          },
+          "parts": {
+            "description": "Present when the archive went in parts: what finishes the upload.",
+            "items": {
+              "$ref": "#/components/schemas/PutPart"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "sha256": {
+            "description": "Of the archive as uploaded: what a restore checks.",
+            "type": "string"
+          },
+          "sizeBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sizeBytes",
+          "sha256",
+          "format",
+          "entries",
+          "durationMs"
+        ],
+        "type": "object"
+      },
+      "FenceResponse": {
+        "properties": {
+          "changed": {
+            "description": "False when this copy wasn't older than the current epoch, or was already fenced.",
+            "type": "boolean"
+          },
+          "stopped": {
+            "description": "The copy was running and has been stopped.",
+            "type": "boolean"
+          },
+          "workload": {
+            "$ref": "#/components/schemas/WorkloadView"
+          }
+        },
+        "required": [
+          "changed",
+          "stopped",
+          "workload"
+        ],
+        "type": "object"
+      },
+      "FleetView": {
+        "properties": {
+          "certificateRenewedAt": {
+            "description": "When the node last renewed its certificates, in this run.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "controlPlane": {
+            "type": "string"
+          },
+          "heartbeatsFailed": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "heartbeatsOk": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "lastContactAgeSeconds": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastContactAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastLatencyMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "leaseRemainingSeconds": {
+            "description": "How long this node may still restart a failed workload on its own (see\n`fleet::heartbeat`). None until the control plane has granted a lease.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lifecycle": {
+            "description": "active, draining, lost or retired, as the control plane last said.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "controlPlane",
+          "lifecycle",
+          "lastContactAt",
+          "lastContactAgeSeconds",
+          "lastError",
+          "lastLatencyMs",
+          "heartbeatsOk",
+          "heartbeatsFailed",
+          "leaseRemainingSeconds",
+          "certificateRenewedAt"
+        ],
+        "type": "object"
+      },
+      "Health": {
+        "enum": [
+          "starting",
+          "healthy",
+          "unhealthy"
+        ],
+        "type": "string"
+      },
+      "HeartbeatRequest": {
+        "properties": {
+          "addresses": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeAddresses"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Where the node is reached now; the control plane follows a change."
+          },
+          "bootId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capacity": {
+            "$ref": "#/components/schemas/NodeCapacity"
+          },
+          "daemonVersion": {
+            "type": "string"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolVersions"
+          },
+          "reconciled": {
+            "description": "A full pass has looked since the runtime last didn't answer: the states below are current.",
+            "type": "boolean"
+          },
+          "runtimeUp": {
+            "description": "Docker answers.",
+            "type": "boolean"
+          },
+          "seq": {
+            "description": "Counts up within a session, so a late or replayed beat can be told apart.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sessionId": {
+            "description": "New each time blocklyd starts. Two sessions beating for one node id at once are two\nhosts with one identity.",
+            "type": "string"
+          },
+          "upgradeFailed": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpgradeFailure"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An upgrade this node gave up on, going back to the binary it had (cli/upgrade.rs)."
+          },
+          "workloads": {
+            "items": {
+              "$ref": "#/components/schemas/WorkloadReport"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodeId",
+          "sessionId",
+          "bootId",
+          "seq",
+          "daemonVersion",
+          "protocol",
+          "features",
+          "runtimeUp",
+          "reconciled",
+          "capacity",
+          "workloads",
+          "issues",
+          "addresses"
+        ],
+        "type": "object"
+      },
+      "Issue": {
+        "description": "Something reconciliation or an operation found that the control plane should know about.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "type": "object"
+      },
+      "ListResponse": {
+        "properties": {
+          "observedAt": {
+            "type": "string"
+          },
+          "workloads": {
+            "items": {
+              "$ref": "#/components/schemas/WorkloadView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "workloads",
+          "observedAt"
+        ],
+        "type": "object"
+      },
+      "Locate": {
+        "description": "Where an operator finds it on the host. Informational; never a contract.",
+        "properties": {
+          "containerId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "containerName": {
+            "type": "string"
+          },
+          "dataDir": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "containerName",
+          "containerId",
+          "dataDir"
+        ],
+        "type": "object"
+      },
+      "LogRecord": {
+        "anyOf": [
+          {
+            "properties": {
+              "line": {
+                "type": "string"
+              },
+              "stream": {
+                "type": "string"
+              },
+              "ts": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "ts",
+              "stream",
+              "line"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "event": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "event",
+              "reason"
+            ],
+            "type": "object"
+          }
+        ],
+        "description": "One line of `GET …/logs` (NDJSON): a log line, or the event that ends a stream."
+      },
+      "Method": {
+        "oneOf": [
+          {
+            "const": "reflink",
+            "description": "The copy shares the source's blocks until either changes: instant, and free until then.",
+            "type": "string"
+          },
+          {
+            "const": "copy",
+            "description": "Every byte was copied.",
+            "type": "string"
+          }
+        ]
+      },
+      "NodeAddresses": {
+        "description": "Where the node is reached, as its configuration says now.",
+        "properties": {
+          "api": {
+            "description": "blocklyd's API, `host:port`.",
+            "type": "string"
+          },
+          "control": {
+            "description": "Where the control plane reaches console and status ports.",
+            "type": "string"
+          },
+          "edge": {
+            "description": "Where the edge reaches game ports.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api",
+          "edge",
+          "control"
+        ],
+        "type": "object"
+      },
+      "NodeCapacity": {
+        "description": "Physical, reserved and allocated capacity, and what is actually used. Placement decides on\nthe control plane's own ledger; this is what the node sees, to check it against.",
+        "properties": {
+          "allocatableMemoryMb": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "cpus": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "diskAvailableBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "diskTotalBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "loadAverage": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "memoryTotalMb": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "minFreeDiskMb": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "portsAllocated": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "portsTotal": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provisionedMemoryMb": {
+            "description": "Memory of every workload that holds compute here, running or not.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reflink": {
+            "default": null,
+            "description": "The data's filesystem shares blocks between copies: snapshots are nearly free.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "reservedCpuMillis": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reservedMemoryMb": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "runningMemoryMb": {
+            "description": "Memory of running workloads: what a start is admitted against.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "snapshotBytes": {
+            "default": null,
+            "description": "What local snapshots hold on the data disk, as their files count it (shared blocks are\ncounted in full, so it overstates what reflinked snapshots really take).",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "usedCpuCores": {
+            "description": "Cores running workloads use, likewise.",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "usedMemoryBytes": {
+            "description": "The working set of running workloads, as the kernel counts it, from each one's latest\nsample. A workload that runs but hasn't been sampled yet is left out; null only while\nworkloads run and none has been.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "memoryTotalMb",
+          "reservedMemoryMb",
+          "allocatableMemoryMb",
+          "provisionedMemoryMb",
+          "runningMemoryMb",
+          "usedMemoryBytes",
+          "cpus",
+          "reservedCpuMillis",
+          "usedCpuCores",
+          "loadAverage",
+          "diskTotalBytes",
+          "diskAvailableBytes",
+          "minFreeDiskMb",
+          "snapshotBytes",
+          "reflink",
+          "portsTotal",
+          "portsAllocated"
+        ],
+        "type": "object"
+      },
+      "NodeFacts": {
+        "description": "What the node says about itself when it joins. The control plane records it; the token, not\nthese facts, decides whether the node may join.",
+        "properties": {
+          "apiAddress": {
+            "description": "Where the control plane dials this node's API.",
+            "type": "string"
+          },
+          "bootId": {
+            "description": "The kernel's boot id: a new one means the host rebooted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "capacity": {
+            "$ref": "#/components/schemas/NodeCapacity"
+          },
+          "controlIps": {
+            "items": {
+              "format": "ip",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "daemonVersion": {
+            "type": "string"
+          },
+          "edgeIps": {
+            "description": "Where the edge reaches game ports, and the control plane console and status ports.",
+            "items": {
+              "format": "ip",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "machineIdSha256": {
+            "description": "sha256 of /etc/machine-id. Two nodes with the same one are clones of one image.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolVersions"
+          }
+        },
+        "required": [
+          "hostname",
+          "bootId",
+          "machineIdSha256",
+          "daemonVersion",
+          "protocol",
+          "features",
+          "apiAddress",
+          "edgeIps",
+          "controlIps",
+          "capacity",
+          "labels"
+        ],
+        "type": "object"
+      },
+      "NodeHealth": {
+        "properties": {
+          "daemonVersion": {
+            "description": "blocklyd's version: what a control plane reads before relying on a feature.",
+            "type": "string"
+          },
+          "deploymentId": {
+            "type": "string"
+          },
+          "docker": {
+            "type": "boolean"
+          },
+          "features": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolVersions"
+          },
+          "reconciled": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "docker",
+          "reconciled",
+          "daemonVersion",
+          "protocol",
+          "features",
+          "nodeId",
+          "deploymentId"
+        ],
+        "type": "object"
+      },
+      "NodeStatus": {
+        "properties": {
+          "capacity": {
+            "$ref": "#/components/schemas/CapacityView"
+          },
+          "cpus": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "daemon": {
+            "$ref": "#/components/schemas/DaemonView"
+          },
+          "deploymentId": {
+            "type": "string"
+          },
+          "diskAvailableBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "diskPath": {
+            "type": "string"
+          },
+          "diskTotalBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "docker": {
+            "$ref": "#/components/schemas/DockerView"
+          },
+          "fleet": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FleetView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "In fleet mode: the control plane this node reports to, and when it last answered."
+          },
+          "hostname": {
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "kernel": {
+            "type": "string"
+          },
+          "loadAverage": {
+            "items": {
+              "format": "double",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "memoryAvailableBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryTotalBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "nodeId": {
+            "type": "string"
+          },
+          "reconcile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReconcileView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trashBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "workloadsByState": {
+            "additionalProperties": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "object"
+          }
+        },
+        "required": [
+          "nodeId",
+          "deploymentId",
+          "fleet",
+          "daemon",
+          "hostname",
+          "kernel",
+          "cpus",
+          "loadAverage",
+          "memoryTotalBytes",
+          "memoryAvailableBytes",
+          "diskPath",
+          "diskTotalBytes",
+          "diskAvailableBytes",
+          "trashBytes",
+          "capacity",
+          "workloadsByState",
+          "docker",
+          "reconcile",
+          "issues"
+        ],
+        "type": "object"
+      },
+      "PortView": {
+        "properties": {
+          "containerPort": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "endpoints": {
+            "$ref": "#/components/schemas/Endpoints",
+            "description": "`host:port` per audience, `[v6]:port` for IPv6: where the edge and the control plane\nreach this port. Blockly's `endpoint(handle, port, audience)`."
+          },
+          "hostPort": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/Proto"
+          }
+        },
+        "required": [
+          "name",
+          "protocol",
+          "containerPort",
+          "hostPort",
+          "endpoints"
+        ],
+        "type": "object"
+      },
+      "PowerResponse": {
+        "properties": {
+          "changed": {
+            "description": "False when it was already in the asked-for state: a repeat is a no-op, not an error.",
+            "type": "boolean"
+          },
+          "forced": {
+            "default": false,
+            "description": "For stop: the workload didn't exit within the grace and was killed.",
+            "type": "boolean"
+          },
+          "workload": {
+            "$ref": "#/components/schemas/WorkloadView"
+          }
+        },
+        "required": [
+          "changed",
+          "forced",
+          "workload"
+        ],
+        "type": "object"
+      },
+      "Proto": {
+        "enum": [
+          "tcp",
+          "udp"
+        ],
+        "type": "string"
+      },
+      "ProtocolVersions": {
+        "properties": {
+          "current": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "supported": {
+            "items": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "current",
+          "supported"
+        ],
+        "type": "object"
+      },
+      "PutPart": {
+        "description": "A part the node put: its number, from 1, and the ETag the store answered with, which the\ncontrol plane needs to finish the upload.",
+        "properties": {
+          "etag": {
+            "type": "string"
+          },
+          "number": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "number",
+          "etag"
+        ],
+        "type": "object"
+      },
+      "ReconcileView": {
+        "properties": {
+          "adopted": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "durationMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": "string"
+          },
+          "issues": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "workloads": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "finishedAt",
+          "durationMs",
+          "workloads",
+          "adopted",
+          "issues",
+          "error"
+        ],
+        "type": "object"
+      },
+      "RenewRequest": {
+        "description": "`POST /fleet/v1/nodes/{id}/renew`, over the node's current client certificate: a CSR for a new\nkey. The node keeps its id; only its certificates and key change.",
+        "properties": {
+          "csrPem": {
+            "type": "string"
+          },
+          "nodeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "nodeId",
+          "csrPem"
+        ],
+        "type": "object"
+      },
+      "Resources": {
+        "additionalProperties": false,
+        "properties": {
+          "cpuMillis": {
+            "default": null,
+            "description": "CPU ceiling in thousandths of a core (CFS quota). Also what the JVM counts as its\nprocessors. Absent: no ceiling, weight only.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cpuWeight": {
+            "default": null,
+            "description": "Share of CPU under contention, relative (cgroup weight). Absent: proportional to memory.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryMb": {
+            "description": "Hard memory limit (no swap). Blockly's size: 3072 for a 3 GB server.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "pidsLimit": {
+            "default": null,
+            "description": "Processes and threads. Absent: the host default (4096).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "memoryMb",
+          "cpuMillis",
+          "cpuWeight",
+          "pidsLimit"
+        ],
+        "type": "object"
+      },
+      "RestoreResponse": {
+        "properties": {
+          "durationMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entries": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "previousData": {
+            "description": "Where the data it replaced went (the trash, for its retention).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sha256": {
+            "description": "The archive's, for a restore from a URL; none for a snapshot.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sizeBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "skipped": {
+            "description": "Links, devices and the like, which are never unpacked.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unpackedBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sizeBytes",
+          "sha256",
+          "entries",
+          "skipped",
+          "unpackedBytes",
+          "previousData",
+          "durationMs"
+        ],
+        "type": "object"
+      },
+      "SnapshotDeleteResponse": {
+        "properties": {
+          "existed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "existed"
+        ],
+        "type": "object"
+      },
+      "SnapshotId": {
+        "description": "A local snapshot's id: the control plane's archive id (a UUID). It names a directory, so it is\nheld to a workload id's rules.",
+        "type": "string"
+      },
+      "SnapshotList": {
+        "properties": {
+          "snapshots": {
+            "items": {
+              "$ref": "#/components/schemas/SnapshotView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "snapshots"
+        ],
+        "type": "object"
+      },
+      "SnapshotResponse": {
+        "properties": {
+          "created": {
+            "description": "False when a snapshot with this id already existed; it is returned as it was made.",
+            "type": "boolean"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/SnapshotView"
+          }
+        },
+        "required": [
+          "created",
+          "snapshot"
+        ],
+        "type": "object"
+      },
+      "SnapshotView": {
+        "properties": {
+          "createdAt": {
+            "type": "string"
+          },
+          "durationMs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "epoch": {
+            "description": "The epoch of the copy it was taken from.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "files": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "$ref": "#/components/schemas/SnapshotId"
+          },
+          "method": {
+            "$ref": "#/components/schemas/Method"
+          },
+          "quiesced": {
+            "description": "The workload was running, with its saving paused, when it was taken.",
+            "type": "boolean"
+          },
+          "sizeBytes": {
+            "description": "The files' bytes. With shared blocks, most of them aren't new on disk.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "specDigest": {
+            "type": "string"
+          },
+          "workload": {
+            "$ref": "#/components/schemas/WorkloadId"
+          }
+        },
+        "required": [
+          "id",
+          "workload",
+          "epoch",
+          "createdAt",
+          "sizeBytes",
+          "files",
+          "method",
+          "quiesced",
+          "specDigest",
+          "durationMs"
+        ],
+        "type": "object"
+      },
+      "StatsView": {
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "cpuCores": {
+            "description": "Cores in use over the last sampling interval (1.0 = one full core).",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "cpuLimitMillis": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cpuSecondsTotal": {
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "cpuThrottledPeriods": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "dataUsedBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryLimitBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "memoryWorkingSetBytes": {
+            "description": "Usage minus inactive page cache: what the kernel would have to reclaim to fit.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "networkRxBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "networkTxBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pids": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pidsLimit": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/WorkloadState"
+          },
+          "uptimeSeconds": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "at",
+          "state",
+          "uptimeSeconds",
+          "cpuCores",
+          "cpuSecondsTotal",
+          "cpuThrottledPeriods",
+          "cpuLimitMillis",
+          "memoryBytes",
+          "memoryWorkingSetBytes",
+          "memoryLimitBytes",
+          "pids",
+          "pidsLimit",
+          "networkRxBytes",
+          "networkTxBytes",
+          "dataUsedBytes"
+        ],
+        "type": "object"
+      },
+      "StorageView": {
+        "properties": {
+          "measuredAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mountPath": {
+            "type": "string"
+          },
+          "sizeGb": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "usedBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "mountPath",
+          "sizeGb",
+          "usedBytes",
+          "measuredAt"
+        ],
+        "type": "object"
+      },
+      "UpgradeFailure": {
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WorkloadId": {
+        "description": "What the control plane calls a workload: Blockly's server id (a UUID) in practice, but any\nlowercase DNS label will do. The character set is the whole defence against path traversal\nand injection: a valid id is always one safe path component, one safe container-name suffix\nand one safe label value, so nothing downstream needs to escape it.",
+        "type": "string"
+      },
+      "WorkloadReport": {
+        "properties": {
+          "changedAt": {
+            "type": "string"
+          },
+          "epoch": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "generation": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "issues": {
+            "description": "What the node found wrong with the workload and can't mend itself: a restart refused for\nwant of room, data over the size its spec promised. Left out when there is none.",
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "lastFailureAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "memoryMb": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "ports": {
+            "additionalProperties": {
+              "format": "uint16",
+              "maximum": 65535,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "description": "Port name → host port.",
+            "type": "object"
+          },
+          "restartCount": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "specDigest": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/WorkloadState"
+          },
+          "supersededBy": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "epoch",
+          "supersededBy",
+          "state",
+          "specDigest",
+          "generation",
+          "memoryMb",
+          "restartCount",
+          "exit",
+          "lastFailureAt",
+          "changedAt",
+          "ports"
+        ],
+        "type": "object"
+      },
+      "WorkloadState": {
+        "description": "What a workload is doing, normalized. How it maps onto Blockly's `ObservedState`:\ncreated/stopped → stopped · running → running · stopping → stopping · crashed → crashed ·\nrestarting → starting (with `lastFailureAt`) · missing/retained → absent · creating → stopped\n· unknown → unknown · fenced → stopped (this copy lost its placement; the current one is\nelsewhere).",
+        "oneOf": [
+          {
+            "enum": [
+              "running"
+            ],
+            "type": "string"
+          },
+          {
+            "const": "creating",
+            "description": "Accepted; its container is being made.",
+            "type": "string"
+          },
+          {
+            "const": "created",
+            "description": "Made and never started, or started again since.",
+            "type": "string"
+          },
+          {
+            "const": "stopping",
+            "description": "A requested stop is in progress.",
+            "type": "string"
+          },
+          {
+            "const": "stopped",
+            "description": "Exited after a requested stop, or on its own with code 0.",
+            "type": "string"
+          },
+          {
+            "const": "crashed",
+            "description": "Exited on its own with a failure, or killed by the kernel for memory.",
+            "type": "string"
+          },
+          {
+            "const": "restarting",
+            "description": "The host is starting it again after a failure (restart policy).",
+            "type": "string"
+          },
+          {
+            "const": "missing",
+            "description": "blocklyd holds a record but the container is gone (the runtime lost it).",
+            "type": "string"
+          },
+          {
+            "const": "retained",
+            "description": "Compute removed on request, data kept (`DELETE ?data=keep`).",
+            "type": "string"
+          },
+          {
+            "const": "unknown",
+            "description": "The runtime can't be asked (Docker down).",
+            "type": "string"
+          },
+          {
+            "const": "fenced",
+            "description": "Superseded: the control plane placed this workload anew (a newer epoch, usually on another\nnode). This copy is stopped, never started again, and its data kept until deleted.",
+            "type": "string"
+          }
+        ]
+      },
+      "WorkloadView": {
+        "properties": {
+          "changedAt": {
+            "description": "When the state last changed, as the runtime recorded it (survives blocklyd restarts).",
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "epoch": {
+            "description": "The placement epoch this copy belongs to, if the control plane gave one.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "exit": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExitInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generation": {
+            "description": "Bumped each time the container is made again for a new spec.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "health": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Health"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/WorkloadId"
+          },
+          "image": {
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/Issue"
+            },
+            "type": "array"
+          },
+          "labels": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "lastFailureAt": {
+            "description": "When it last failed and the host started it again (Blockly's `failedAt`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locate": {
+            "$ref": "#/components/schemas/Locate"
+          },
+          "ports": {
+            "items": {
+              "$ref": "#/components/schemas/PortView"
+            },
+            "type": "array"
+          },
+          "resources": {
+            "$ref": "#/components/schemas/Resources"
+          },
+          "restartCount": {
+            "description": "Restarts the host made after failures since the last requested start or new spec. Kept\nacross restarts of blocklyd.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "secretNames": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "specDigest": {
+            "type": "string"
+          },
+          "startedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/WorkloadState"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageView"
+          },
+          "supersededBy": {
+            "description": "Set once a newer placement exists: the epoch that superseded this copy.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "updatedAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "generation",
+          "epoch",
+          "supersededBy",
+          "specDigest",
+          "image",
+          "state",
+          "health",
+          "exit",
+          "restartCount",
+          "lastFailureAt",
+          "startedAt",
+          "finishedAt",
+          "changedAt",
+          "ports",
+          "resources",
+          "storage",
+          "labels",
+          "secretNames",
+          "issues",
+          "locate",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "blocklyd: what a node writes",
+    "version": "1"
+  },
+  "openapi": "3.1.0",
+  "paths": {}
+}
