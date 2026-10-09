@@ -20,6 +20,7 @@ env:
 jobs:
   # A change to nothing but prose skips the rest. `check` still reports, so it can stay required.
   changes:
+    name: Find what changed
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -44,6 +45,7 @@ jobs:
               - '!.github/dependabot.yml'
 
   test:
+    name: Format, lint, tests and structure
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
@@ -91,6 +93,7 @@ jobs:
         run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=sudo cargo test --locked --test docker -- --ignored --test-threads 2
 
   supply-chain:
+    name: Dependency licences and advisories
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
@@ -110,6 +113,7 @@ jobs:
       - run: cargo deny --locked check
 
   contract:
+    name: Contract with the control plane
     # Cubepals' control plane, from its main, against this blocklyd, for real: enrollment over
     # mutual TLS, placement, snapshots, restores, a daemon killed and back, a node held lost, a
     # self-upgrade (apps/control/src/infra/fleet/fleet-runtime.e2e.test.ts there). A debug build,
@@ -184,6 +188,7 @@ jobs:
   # The image a release publishes builds, and its binary is static. Pull requests only: on main,
   # release.yml builds it.
   image:
+    name: Release image builds
     needs: changes
     if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
