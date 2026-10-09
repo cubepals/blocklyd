@@ -3,14 +3,12 @@
 //! - `token`: the enrollment token's two forms, the pasted `bk1.` one and the bare secret.
 //! - `enroll`: a one-time token plus a certificate request gives a durable identity.
 //! - `heartbeat`: the node's whole state, every few seconds; the answer can only fence.
-//! - `client`: the small HTTPS client both use, and the archive transfers too.
 //!
 //! Upgrading blocklyd itself when a heartbeat's answer offers it is `crate::cli::upgrade`.
 //!
 //! The control plane keeps the durable state (nodes, placements, epochs, backups). The node keeps
 //! only what it needs to act without it: its identity, its workloads' records, their data.
 
-pub mod client;
 pub mod enroll;
 pub mod heartbeat;
 pub mod identity;

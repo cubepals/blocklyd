@@ -10,6 +10,7 @@ pub mod doctor;
 pub mod durable;
 pub mod fleet;
 pub mod host;
+pub mod http_client;
 pub mod ids;
 pub mod infer;
 pub mod manager;

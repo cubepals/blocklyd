@@ -34,9 +34,9 @@ use super::reenroll::{Reenroll, reenroll};
 use super::service::{Service, Systemd};
 use crate::config::Config;
 use crate::doctor;
-use crate::fleet::client;
 use crate::fleet::identity::{Identity, write_atomic};
 use crate::fleet::token::JoinToken;
+use crate::http_client as client;
 use crate::infer::API_PORT;
 
 /// The paths as the host sees them; under `root` when one is given.

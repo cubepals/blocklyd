@@ -111,16 +111,16 @@ impl Manager {
         }
         one_put(packed.size_bytes, limit)?;
         let (body, length) =
-            crate::fleet::client::file_body(&spool).await.map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+            crate::http_client::file_body(&spool).await.map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
         let mut headers: Vec<(&str, String)> = extra_headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
         headers.push(("content-length", length.to_string()));
         let response =
-            crate::fleet::client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
+            crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
                 .await
                 .map_err(|e| NodeError::Transfer(format!("uploading the archive: {e}")))?;
         if !response.status().is_success() {
             let status = response.status();
-            let text = crate::fleet::client::read_body(response, 4096).await.unwrap_or_default();
+            let text = crate::http_client::read_body(response, 4096).await.unwrap_or_default();
             return Err(NodeError::Transfer(format!(
                 "the store refused the upload: HTTP {status}: {}",
                 String::from_utf8_lossy(&text).chars().take(300).collect::<String>()
@@ -243,11 +243,11 @@ impl Manager {
         // onto a disk already below it, and an archive that says how large it is must fit above
         // it. The rest is watched as it lands.
         self.check_disk()?;
-        let response = crate::fleet::client::send(
+        let response = crate::http_client::send(
             hyper::Method::GET,
             url,
             &[],
-            crate::fleet::client::empty(),
+            crate::http_client::empty(),
             tls,
             Duration::from_secs(3600),
         )
@@ -428,13 +428,13 @@ async fn put_part(
     length: u64,
     tls: Option<Arc<rustls::ClientConfig>>,
 ) -> Result<String, (String, bool)> {
-    let body = crate::fleet::client::file_range_body(spool, offset, length)
+    let body = crate::http_client::file_range_body(spool, offset, length)
         .await
         .map_err(|e| (format!("reading the spool: {e}"), false))?;
     let mut headers: Vec<(&str, String)> = extra_headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
     headers.push(("content-length", length.to_string()));
     let response =
-        crate::fleet::client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
+        crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
             .await
             .map_err(|e| (e.to_string(), e.is_transient()))?;
     let status = response.status();
@@ -442,7 +442,7 @@ async fn put_part(
     // A few bytes, but a store that stops sending them would hold the export forever: a stall is
     // a part the store failed to take, and it is sent again like one.
     let idle = crate::transfer::download_idle();
-    let text = tokio::time::timeout(idle, crate::fleet::client::read_body(response, 4096))
+    let text = tokio::time::timeout(idle, crate::http_client::read_body(response, 4096))
         .await
         .map_err(|_| (format!("the store's answer stopped: nothing arrived for {idle:?}"), true))?
         .unwrap_or_default();
@@ -486,7 +486,7 @@ impl Drop for RemoveOnDrop {
 /// TLS for a presigned URL: none for http (a local store), the system's roots for https.
 fn tls_for(url: &str) -> Result<Option<Arc<rustls::ClientConfig>>, NodeError> {
     if url.starts_with("https://") {
-        crate::fleet::client::public_tls().map(Some).map_err(NodeError::Transfer)
+        crate::http_client::public_tls().map(Some).map_err(NodeError::Transfer)
     } else if url.starts_with("http://") {
         Ok(None)
     } else {

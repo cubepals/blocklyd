@@ -221,7 +221,7 @@ impl Identity {
         let roots = load_certs(&self.dir.join("ca.pem"))?;
         let chain = load_certs(&self.client_cert_path())?;
         let key = load_key(&self.key_path())?;
-        super::client::tls_config(roots, Some((chain, key)), true)
+        crate::http_client::tls_config(roots, Some((chain, key)), true)
             .map_err(|e| IdentityError::Invalid(format!("client TLS: {e}")))
     }
 
@@ -315,7 +315,7 @@ impl Credentials {
         let url = format!("{}/fleet/v1/nodes/{}/renew", control_plane.trim_end_matches('/'), current.node_id());
         let request = RenewRequest { node_id: current.node_id().to_owned(), csr_pem: csr };
         let answer: RenewResponse =
-            super::client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
+            crate::http_client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
                 .await
                 .context("asking the control plane")?;
         let ca = load_certs(&current.dir.join("ca.pem")).context("reading the fleet CA")?;

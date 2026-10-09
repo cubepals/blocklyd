@@ -51,8 +51,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
-use crate::fleet::client;
 use crate::fleet::identity::{Identity, write_atomic};
+use crate::http_client as client;
 use crate::protocol::wire::{UpgradeFailure, UpgradeOffer};
 
 /// How long a new blocklyd has to reconcile and get a heartbeat accepted before it is put back.

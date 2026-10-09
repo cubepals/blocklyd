@@ -20,9 +20,9 @@ use hyper::Method;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use super::client;
 use super::identity::Credentials;
 use crate::cli::upgrade::Upgrader;
+use crate::http_client as client;
 use crate::ids::WorkloadId;
 use crate::manager::Manager;
 use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse};
