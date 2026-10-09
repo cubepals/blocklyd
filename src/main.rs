@@ -229,7 +229,7 @@ fn facts(config: &Config, fleet: &FleetConfig) -> blocklyd::protocol::wire::Node
         hostname: host.hostname,
         boot_id: blocklyd::host::boot_id(),
         machine_id_sha256: blocklyd::fleet::enroll::machine_id_sha256(),
-        daemon_version: blocklyd::fleet::daemon_version(),
+        daemon_version: blocklyd::upgrade::daemon_version(),
         protocol: blocklyd::protocol::ProtocolVersions::ours(),
         features: blocklyd::protocol::features(),
         api_address: fleet.api_address.unwrap_or(config.api.listen),

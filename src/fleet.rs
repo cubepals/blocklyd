@@ -8,7 +8,8 @@
 //!
 //! What a node and its control plane send each other is `protocol::wire`.
 //!
-//! Upgrading blocklyd itself when a heartbeat's answer offers it is `crate::upgrade`.
+//! Upgrading blocklyd itself when a heartbeat's answer offers it is `crate::upgrade`, which also
+//! says which version this one is.
 //!
 //! The control plane keeps the durable state (nodes, placements, epochs, backups). The node keeps
 //! only what it needs to act without it: its identity, its workloads' records, their data.
@@ -18,14 +19,3 @@ pub mod heartbeat;
 pub mod identity;
 pub(crate) mod token;
 pub use crate::protocol::wire;
-
-/// The version this blocklyd reports to the control plane, which offers an upgrade to an older one.
-/// A debug build reports BLOCKLYD_TEST_VERSION instead when it is set, so an end-to-end test can
-/// run a node that looks older than the blocklyd it is offered.
-pub fn daemon_version() -> String {
-    #[cfg(debug_assertions)]
-    if let Some(version) = std::env::var("BLOCKLYD_TEST_VERSION").ok().filter(|v| !v.is_empty()) {
-        return version;
-    }
-    env!("CARGO_PKG_VERSION").to_owned()
-}

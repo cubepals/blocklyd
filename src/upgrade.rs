@@ -50,7 +50,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
-use crate::fleet::identity::write_atomic;
+use crate::durable::write_atomic;
 use crate::http_client as client;
 use crate::protocol::wire::{UpgradeFailure, UpgradeOffer};
 
@@ -63,6 +63,17 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 /// plane has heard of a failure, and offers again only once an operator retries.
 const RETRY_AFTER: Duration = Duration::from_secs(60);
 const LINK: &str = "/usr/local/bin/blocklyd";
+
+/// The version this blocklyd reports to the control plane, which offers an upgrade to an older one.
+/// A debug build reports BLOCKLYD_TEST_VERSION instead when it is set, so an end-to-end test can
+/// run a node that looks older than the blocklyd it is offered.
+pub fn daemon_version() -> String {
+    #[cfg(debug_assertions)]
+    if let Some(version) = std::env::var("BLOCKLYD_TEST_VERSION").ok().filter(|v| !v.is_empty()) {
+        return version;
+    }
+    env!("CARGO_PKG_VERSION").to_owned()
+}
 
 /// Where the binaries and the upgrade's own state are.
 #[derive(Clone, Debug)]
@@ -149,7 +160,7 @@ pub(crate) async fn install(
             "the blocklyd downloaded says it is {printed}, not the {offered} offered"
         )));
     }
-    let trial = Trial { from: crate::fleet::daemon_version(), to: printed.clone(), sha256: sha256.to_owned() };
+    let trial = Trial { from: daemon_version(), to: printed.clone(), sha256: sha256.to_owned() };
     swap(layout, &trial)?;
     Ok(printed)
 }
@@ -383,7 +394,7 @@ pub struct Upgrader {
 impl Upgrader {
     pub fn new(state_dir: &Path, control_plane: &str, trial_ended: Arc<AtomicBool>, cancel: CancellationToken) -> Self {
         let layout = Layout::new(state_dir, Path::new("/"));
-        let version = crate::fleet::daemon_version();
+        let version = daemon_version();
         let trial = on_trial(&layout, &version);
         if let Some(trial) = &trial {
             info!(
@@ -665,7 +676,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let state = root.path().join("var/lib/blocklyd");
         let layout = layout(root.path());
-        let ours = Trial { to: crate::fleet::daemon_version(), ..trial() };
+        let ours = Trial { to: daemon_version(), ..trial() };
         script(&layout.next(), &ours.to);
         swap(&layout, &ours).unwrap();
 

@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{error, warn};
 
-use super::{Layout, TRIAL_SECONDS, on_trial};
+use super::{Layout, TRIAL_SECONDS, daemon_version, on_trial};
 
 /// How long after the process started a trial must have ended: startup, then the trial itself.
 pub(crate) const DEADLINE: Duration = Duration::from_secs(2 * TRIAL_SECONDS);
@@ -34,7 +34,7 @@ impl Backstop {
     /// Armed when `state_dir` names a trial for this binary, counting from `started`, when the
     /// process started.
     pub fn arm(state_dir: &Path, started: Instant) -> Self {
-        let version = crate::fleet::daemon_version();
+        let version = daemon_version();
         let mut backstop = Self::default();
         if on_trial(&Layout::new(state_dir, Path::new("/")), &version).is_none() {
             return backstop;
@@ -121,7 +121,7 @@ mod tests {
         swap(&layout, &trial("99.0.0".into())).unwrap();
         assert!(!Backstop::arm(&state, Instant::now()).armed, "a trial for another version");
         std::fs::write(layout.next(), "").unwrap();
-        swap(&layout, &trial(crate::fleet::daemon_version())).unwrap();
+        swap(&layout, &trial(daemon_version())).unwrap();
         let backstop = Backstop::arm(&state, Instant::now());
         // Ended at once: the thread finds it so when it wakes, and returns.
         backstop.ended().store(true, Ordering::SeqCst);

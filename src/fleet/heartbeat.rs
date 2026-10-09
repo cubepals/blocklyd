@@ -63,7 +63,7 @@ pub fn heartbeat_report(
         session_id: session.to_owned(),
         boot_id,
         seq,
-        daemon_version: crate::fleet::daemon_version(),
+        daemon_version: crate::upgrade::daemon_version(),
         protocol: ProtocolVersions::ours(),
         features: crate::protocol::features(),
         runtime_up: manager.docker_up(),
