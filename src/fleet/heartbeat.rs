@@ -11,7 +11,7 @@
 //! brings nothing back on its own.
 //!
 //! An answer may also offer a newer blocklyd, which the node installs and restarts into
-//! (cli/upgrade.rs); a beat accepted once reconciled ends the trial of one just installed.
+//! (upgrade.rs); a beat accepted once reconciled ends the trial of one just installed.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -21,11 +21,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use super::identity::Credentials;
-use crate::cli::upgrade::Upgrader;
 use crate::http_client as client;
 use crate::ids::WorkloadId;
 use crate::manager::Manager;
 use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse};
+use crate::upgrade::Upgrader;
 
 pub async fn run(
     manager: Arc<Manager>,

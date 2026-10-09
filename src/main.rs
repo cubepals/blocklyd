@@ -14,8 +14,6 @@ use tracing::{error, info, warn};
 
 use blocklyd::api::tls::ServerCert;
 use blocklyd::api::{self, AppState};
-use blocklyd::cli::upgrade::Upgrader;
-use blocklyd::cli::upgrade::backstop::Backstop;
 use blocklyd::config::{Config, FleetConfig, TlsConfig};
 use blocklyd::fleet::identity::{Credentials, Identity};
 use blocklyd::manager::Manager;
@@ -23,6 +21,8 @@ use blocklyd::metrics::Metrics;
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::runtime::docker::DockerRuntime;
 use blocklyd::store::Store;
+use blocklyd::upgrade::Upgrader;
+use blocklyd::upgrade::backstop::Backstop;
 use blocklyd::{certs, doctor, ports, reconcile};
 
 #[derive(Parser)]
@@ -176,11 +176,11 @@ fn main() -> ExitCode {
                 .map(|said| print!("{said}"))
         }
         Command::Upgrade { config, exited: true, .. } => {
-            let state_dir = blocklyd::cli::upgrade::stopped::state_dir(&config);
-            let layout = blocklyd::cli::upgrade::Layout::new(&state_dir, Path::new("/"));
+            let state_dir = blocklyd::upgrade::stopped::state_dir(&config);
+            let layout = blocklyd::upgrade::Layout::new(&state_dir, Path::new("/"));
             let var = |name: &str| std::env::var(name).ok();
             let (result, code, status) = (var("SERVICE_RESULT"), var("EXIT_CODE"), var("EXIT_STATUS"));
-            blocklyd::cli::upgrade::exited(&layout, result.as_deref(), code.as_deref(), status.as_deref())
+            blocklyd::upgrade::exited(&layout, result.as_deref(), code.as_deref(), status.as_deref())
                 .map(|said| eprint!("{said}"))
         }
         Command::Upgrade { config, no_restart, .. } => tokio::runtime::Builder::new_current_thread()
@@ -281,7 +281,7 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
     // Held until exit: a second blocklyd on this state directory refuses to start.
     let _lock = store.lock()?;
     // A start on trial after an upgrade ends itself if the trial hasn't ended long after it began,
-    // whatever the startup below does (cli/upgrade/backstop.rs). Armed once the state directory is
+    // whatever the startup below does (upgrade/backstop.rs). Armed once the state directory is
     // this process's alone: arming drops a trial left for another version.
     let backstop = Backstop::arm(&config.state_dir, boot);
     // Every create gives a data directory to the workloads' user, which takes root (CAP_CHOWN): a
@@ -393,7 +393,7 @@ async fn until_stopped(cancel: &CancellationToken) {
 }
 
 /// Fleet mode's own tasks: the heartbeat, and the trial a start after an upgrade is on until it
-/// reconciles and a heartbeat is accepted (cli/upgrade.rs).
+/// reconciles and a heartbeat is accepted (upgrade.rs).
 fn start_fleet(
     manager: &Arc<Manager>,
     identity: Identity,

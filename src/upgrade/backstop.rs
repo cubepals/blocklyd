@@ -93,7 +93,7 @@ fn due(ended: bool, elapsed: Duration) -> Due {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::upgrade::{Trial, swap};
+    use crate::upgrade::{Trial, swap};
 
     #[test]
     fn a_trial_not_ended_by_the_deadline_stops_the_process_and_one_ended_never_does() {

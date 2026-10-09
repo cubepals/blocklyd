@@ -25,3 +25,4 @@ pub mod store;
 pub mod tls;
 pub mod transfer;
 pub mod tree;
+pub mod upgrade;

@@ -4,7 +4,7 @@
 //! - `enroll`: a one-time token plus a certificate request gives a durable identity.
 //! - `heartbeat`: the node's whole state, every few seconds; the answer can only fence.
 //!
-//! Upgrading blocklyd itself when a heartbeat's answer offers it is `crate::cli::upgrade`.
+//! Upgrading blocklyd itself when a heartbeat's answer offers it is `crate::upgrade`.
 //!
 //! The control plane keeps the durable state (nodes, placements, epochs, backups). The node keeps
 //! only what it needs to act without it: its identity, its workloads' records, their data.
