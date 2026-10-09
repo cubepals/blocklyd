@@ -62,9 +62,9 @@ use crate::protocol::{
     Audience, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView, EnsureOutcome,
     EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse, FieldError,
     Issue, IssueCode, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse,
-    ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, SnapshotDeleteResponse, SnapshotList,
-    SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest, WorkloadSpec,
-    WorkloadState, WorkloadView,
+    ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, RestoreSource, SnapshotDeleteResponse,
+    SnapshotList, SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest,
+    WorkloadSpec, WorkloadState, WorkloadView,
 };
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,

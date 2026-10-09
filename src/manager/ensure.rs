@@ -139,7 +139,7 @@ impl Manager {
             entrypoint: spec.entrypoint.clone(),
             env,
             labels,
-            user: self.config.workloads.user.clone(),
+            user: self.config.workloads.user.to_string(),
             memory_bytes: r.memory_mb as i64 * 1024 * 1024,
             nano_cpus: r.cpu_millis.map(|m| m as i64 * 1_000_000),
             // Weight follows size unless asked otherwise: a 4 GB server gets Docker's default

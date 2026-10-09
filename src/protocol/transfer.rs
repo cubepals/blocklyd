@@ -168,15 +168,37 @@ pub struct RestoreRequest {
     pub snapshot: Option<SnapshotId>,
 }
 
-impl RestoreRequest {
-    pub fn validate(&self) -> Result<(), Vec<FieldError>> {
-        match (&self.url, &self.snapshot) {
-            (Some(_), None) => Ok(()),
-            (None, Some(_)) if self.sha256.is_none() => Ok(()),
+/// Where a restore takes its data from: a `RestoreRequest` that names exactly one.
+#[derive(Clone)]
+pub enum RestoreSource {
+    /// An archive at a presigned URL, checked against its sha256 when the request gives one.
+    Url { url: String, sha256: Option<String> },
+    /// One of the workload's snapshots on this node.
+    Snapshot(SnapshotId),
+}
+
+impl TryFrom<RestoreRequest> for RestoreSource {
+    type Error = Vec<FieldError>;
+
+    fn try_from(request: RestoreRequest) -> Result<Self, Self::Error> {
+        match (request.url, request.snapshot) {
+            (Some(url), None) => Ok(Self::Url { url, sha256: request.sha256 }),
+            (None, Some(snapshot)) if request.sha256.is_none() => Ok(Self::Snapshot(snapshot)),
             (None, Some(_)) => {
                 Err(vec![FieldError { field: "sha256".into(), problem: "is for an archive's URL".into() }])
             }
             _ => Err(vec![FieldError { field: "url".into(), problem: "send a url or a snapshot, one of them".into() }]),
+        }
+    }
+}
+
+impl fmt::Debug for RestoreSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Url { url, sha256 } => {
+                f.debug_struct("Url").field("url", &redact(url)).field("sha256", sha256).finish()
+            }
+            Self::Snapshot(snapshot) => f.debug_tuple("Snapshot").field(snapshot).finish(),
         }
     }
 }

@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 
 use super::check::Check;
-use crate::config::{Config, ConfigError};
+use crate::config::{Config, ConfigError, Mode};
 use crate::fleet::identity::Identity;
 
 /// The verdict, and the configuration when it loads.
@@ -40,12 +40,12 @@ pub fn check(path: &Path) -> (Check, Option<Config>) {
 /// What the file names exists and loads: TLS material standalone, the fleet CA and either an
 /// identity or a token in fleet mode.
 fn material(path: &Path, config: &Config) -> anyhow::Result<String> {
-    match (&config.fleet, &config.api.tls) {
-        (None, Some(tls)) => {
+    match config.mode()? {
+        Mode::Standalone(tls) => {
             crate::api::tls::server_config(tls)?;
             Ok(format!("{} is valid (node {}, deployment {})", path.display(), config.node_id, config.deployment_id))
         }
-        (Some(fleet), _) => {
+        Mode::Fleet(fleet) => {
             crate::tls::load_certs(&fleet.ca).context("fleet.ca")?;
             match Identity::load(&config.state_dir)? {
                 Some(identity) => Ok(format!(
@@ -64,7 +64,6 @@ fn material(path: &Path, config: &Config) -> anyhow::Result<String> {
                 }
             }
         }
-        (None, None) => unreachable!("validated"),
     }
 }
 

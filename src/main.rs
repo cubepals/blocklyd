@@ -14,7 +14,7 @@ use tracing::{error, info, warn};
 
 use blocklyd::api::tls::ServerCert;
 use blocklyd::api::{self, AppState};
-use blocklyd::config::{Config, FleetConfig, TlsConfig};
+use blocklyd::config::{Config, FleetConfig, Mode, TlsConfig};
 use blocklyd::fleet::identity::{Credentials, Identity};
 use blocklyd::manager::{Manager, Records};
 use blocklyd::metrics::Metrics;
@@ -288,14 +288,15 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
     // daemon that can't is refused here, rather than by every create that follows.
     store.check_ownable(config.data_owner_ids())?;
     // Fleet mode: the node's id and TLS material come from enrollment, before anything is served.
-    let (identity, tls_material): (Option<Identity>, TlsConfig) = match config.fleet.clone() {
-        Some(fleet) => {
+    let (identity, tls_material): (Option<Identity>, TlsConfig) = match config.mode()? {
+        Mode::Fleet(fleet) => {
+            let fleet = fleet.clone();
             let identity = blocklyd::fleet::enroll::ensure_identity(&config, &fleet, facts(&config, &fleet)).await?;
             config.node_id = identity.node_id().clone();
             let tls = identity.server_tls()?;
             (Some(identity), tls)
         }
-        None => (None, config.api.tls.clone().expect("validated")),
+        Mode::Standalone(tls) => (None, tls.clone()),
     };
     let config = Arc::new(config);
     let (tls, server_cert) = api::tls::reloadable_server_config(&tls_material).context("loading TLS material")?;

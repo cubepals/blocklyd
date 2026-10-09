@@ -139,11 +139,11 @@ impl Manager {
         request: RestoreRequest,
         epoch: Option<u64>,
     ) -> Result<RestoreResponse, NodeError> {
-        request.validate().map_err(NodeError::Invalid)?;
+        let source = RestoreSource::try_from(request).map_err(NodeError::Invalid)?;
         let lock = self.lock_for(&id);
         let _guard = lock.lock().await;
         let started = Instant::now();
-        let result = self.restore_locked(&id, request, epoch).await;
+        let result = self.restore_locked(&id, source, epoch).await;
         self.metrics.operation("restore", &result, started.elapsed());
         result
     }
@@ -151,7 +151,7 @@ impl Manager {
     async fn restore_locked(
         &self,
         id: &WorkloadId,
-        request: RestoreRequest,
+        source: RestoreSource,
         epoch: Option<u64>,
     ) -> Result<RestoreResponse, NodeError> {
         let started = Instant::now();
@@ -176,10 +176,9 @@ impl Manager {
         // What an earlier restore left unfinished is settled first, as a start would settle it.
         self.settle_restore(id).await?;
         let owner = self.config.data_owner_ids();
-        let made = match (&request.url, &request.snapshot) {
-            (Some(url), _) => self.unpack_from(id, url, request.sha256.as_deref(), &restoring, owner).await,
-            (None, Some(snapshot)) => self.copy_from_snapshot(id, snapshot, &restoring, owner).await,
-            (None, None) => unreachable!("validated"),
+        let made = match &source {
+            RestoreSource::Url { url, sha256 } => self.unpack_from(id, url, sha256.as_deref(), &restoring, owner).await,
+            RestoreSource::Snapshot(snapshot) => self.copy_from_snapshot(id, snapshot, &restoring, owner).await,
         };
         let made = match made {
             Ok(made) => made,
@@ -202,7 +201,7 @@ impl Manager {
             }
         };
         self.state.lock().unwrap().disk.remove(id);
-        tracing::info!(workload = %id, bytes = made.size_bytes, entries = made.entries, snapshot = ?request.snapshot, "restored");
+        tracing::info!(workload = %id, bytes = made.size_bytes, entries = made.entries, from = ?source, "restored");
         Ok(RestoreResponse {
             previous_data: previous.map(|p| p.to_string_lossy().into_owned()),
             duration_ms: started.elapsed().as_millis() as u64,
