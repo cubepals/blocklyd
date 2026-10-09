@@ -1,0 +1,7 @@
+# Text is stored with LF line endings, whatever the checkout.
+* text=auto eol=lf
+
+# Written by tools, never by hand: collapsed in pull request diffs and left out of the language
+# statistics. The specs are rewritten by `BLOCKLYD_WRITE_SCHEMA=1 cargo test --lib protocol::schema`.
+openapi/*.json linguist-generated
+Cargo.lock linguist-generated

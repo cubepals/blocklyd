@@ -1,0 +1,40 @@
+name: Bug
+description: Something blocklyd does wrong on a host.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen
+      placeholder: |
+        1. Join a host with the command from the control plane
+        2. Start a server on it
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: '`blocklyd --version`'
+    validations:
+      required: true
+  - type: textarea
+    id: host
+    attributes:
+      label: The host
+      description: 'What `blocklyd doctor` prints (Docker, cgroups, the clock), and the distribution: `grep PRETTY /etc/os-release`.'
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: '`journalctl -u blocklyd`, around when it happened. Leave out tokens, keys and addresses you keep private.'
+      render: text
