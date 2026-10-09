@@ -1,7 +1,7 @@
 # blocklyd protocol v1
 
 > The Rust types in [`src/protocol.rs`](../src/protocol.rs) and
-> [`src/fleet/wire.rs`](../src/fleet/wire.rs) are the source of truth; this page describes them.
+> [`src/protocol/wire.rs`](../src/protocol/wire.rs) are the source of truth; this page describes them.
 > The control plane's side is [`apps/control/src/infra/fleet`](https://github.com/cubepals/cubepals/tree/main/apps/control/src/infra/fleet), whose
 > TypeScript types are generated from them ([`src/protocol/schema.rs`](../src/protocol/schema.rs)).
 > Within v1 changes are additive: responses only grow, and a new request field is announced in
@@ -534,7 +534,7 @@ certificates before they end. All are HTTPS to `fleet.url`, trusting only the fl
 certificate (`fleet.ca`), TLS 1.3. The control plane's side is
 [`node-endpoint.ts`](https://github.com/cubepals/cubepals/blob/main/apps/control/src/infra/fleet/node-endpoint.ts) and
 [`registry.ts`](https://github.com/cubepals/cubepals/blob/main/apps/control/src/infra/fleet/registry.ts); the wire types are in
-[`src/fleet/wire.rs`](../src/fleet/wire.rs).
+[`src/protocol/wire.rs`](../src/protocol/wire.rs).
 
 ### What a joining host fetches
 
