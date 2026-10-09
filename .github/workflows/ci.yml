@@ -62,7 +62,7 @@ jobs:
       - name: The Dockerfile's Rust is the same
         env:
           RUST: ${{ steps.rust.outputs.version }}
-        run: grep -q "^FROM rust:$RUST-" Dockerfile || { grep '^FROM rust:' Dockerfile; exit 1; }
+        run: grep -q "^FROM public.ecr.aws/docker/library/rust:$RUST-" Dockerfile || { grep '^FROM ' Dockerfile; exit 1; }
       # Keyed on the toolchain too: a new rustc can't reuse the old one's artifacts, and an exact
       # key hit never saves, so without it a Rust bump would rebuild everything on every run until
       # Cargo.lock changed. A Cargo.lock change starts from the last cache of the same Rust.
