@@ -1,6 +1,7 @@
 //! A workload as the protocol shows it: its state, ports, storage and issues, built from what the
-//! core last recorded. It never asks the runtime; looking at a container is `observe`, and how a
-//! record and a container make a state is `derive_state`, both in `manager.rs`.
+//! core last recorded. It never asks the runtime; looking at a container is `observe`, in
+//! `manager.rs`, and how a record and a container make a state is `derive_state`, in
+//! `workload_state.rs`.
 
 use super::*;
 
