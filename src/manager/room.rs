@@ -43,13 +43,18 @@ impl Manager {
                     matches!(i.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused)
                 })
             })
-            .map(|r| r.spec.resources.memory_mb as u64)
+            .map(|r| u64::from(r.spec.resources.memory_mb))
             .sum()
     }
 
     pub(super) fn provisioned_memory_mb(&self) -> u64 {
         let state = self.state.lock().unwrap();
-        state.records.values().filter(|r| r.phase != Phase::Retained).map(|r| r.spec.resources.memory_mb as u64).sum()
+        state
+            .records
+            .values()
+            .filter(|r| r.phase != Phase::Retained)
+            .map(|r| u64::from(r.spec.resources.memory_mb))
+            .sum()
     }
 
     /// Fails unless the disk keeps its floor after `need` more bytes.

@@ -140,12 +140,14 @@ impl Manager {
             env,
             labels,
             user: self.config.workloads.user.to_string(),
-            memory_bytes: r.memory_mb as i64 * 1024 * 1024,
-            nano_cpus: r.cpu_millis.map(|m| m as i64 * 1_000_000),
+            memory_bytes: i64::from(r.memory_mb) * 1024 * 1024,
+            nano_cpus: r.cpu_millis.map(|m| i64::from(m) * 1_000_000),
             // Weight follows size unless asked otherwise: a 4 GB server gets Docker's default
             // 1024, a 3 GB one 768, an 8 GB one 2048. Contention is shared as the price is.
-            cpu_shares: r.cpu_weight.map_or_else(|| (r.memory_mb as i64 * 1024 / 4096).clamp(2, 262_144), i64::from),
-            pids_limit: r.pids_limit.unwrap_or(self.config.workloads.default_pids_limit) as i64,
+            cpu_shares: r
+                .cpu_weight
+                .map_or_else(|| (i64::from(r.memory_mb) * 1024 / 4096).clamp(2, 262_144), i64::from),
+            pids_limit: i64::from(r.pids_limit.unwrap_or(self.config.workloads.default_pids_limit)),
             read_only_rootfs: self.config.workloads.read_only_rootfs,
             tmp_size_mb: self.config.workloads.tmp_size_mb,
             data_dir: self.store.data_dir(&record.id),
@@ -278,7 +280,7 @@ impl Manager {
             self.check_disk()?;
         }
         if was_running {
-            self.admit(&id, spec.resources.memory_mb as u64)?;
+            self.admit(&id, u64::from(spec.resources.memory_mb))?;
         }
         // Pull first: if the new image can't be had, the running workload is left untouched.
         let pull = Duration::from_secs(self.config.docker.pull_timeout_seconds);
@@ -288,7 +290,7 @@ impl Manager {
         self.persist_resting_ports().await;
         if info.is_some() {
             if was_running {
-                let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
+                let grace = Duration::from_secs(u64::from(record.spec.stop.timeout_seconds));
                 let stopping = self.mark_stopping(&id);
                 let stopped = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
                 drop(stopping);

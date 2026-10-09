@@ -134,7 +134,7 @@ pub fn pack(
     let gz = builder.into_inner()?;
     let hashing = gz.finish()?;
     let (writer, sha256, size_bytes) = hashing.finish();
-    let file = writer.into_inner().map_err(|e| e.into_error())?;
+    let file = writer.into_inner().map_err(io::IntoInnerError::into_error)?;
     file.sync_all()?;
     Ok(Packed { size_bytes, sha256, entries: walked.entries() })
 }

@@ -3,9 +3,7 @@
 //! README.md, and docs/protocol.md for the API.
 //!
 //! Its only users are `main.rs` and the tests in `tests/`: what they use is `pub`, the rest is
-//! `pub(crate)`, and `unreachable_pub` keeps it that way.
-
-#![warn(unreachable_pub)]
+//! `pub(crate)`, and `unreachable_pub` (Cargo.toml's `[lints]`) keeps it that way.
 
 pub mod api;
 pub mod certs;

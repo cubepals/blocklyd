@@ -76,7 +76,7 @@ pub struct Layout {
 impl Layout {
     /// The layout for `state_dir`, with the link under `root` (`/` but in tests).
     pub fn new(state_dir: &Path, root: &Path) -> Self {
-        Layout {
+        Self {
             bin: state_dir.join("bin").join("blocklyd"),
             link: root.join(LINK.trim_start_matches('/')),
             dir: state_dir.join("upgrade"),
@@ -101,7 +101,7 @@ impl Layout {
 }
 
 /// An upgrade that hasn't come up yet.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Trial {
     pub from: String,
@@ -393,7 +393,7 @@ impl Upgrader {
                 "upgraded: on trial until reconciled and a heartbeat is accepted"
             );
         }
-        Upgrader {
+        Self {
             layout,
             control_plane: control_plane.to_owned(),
             version,

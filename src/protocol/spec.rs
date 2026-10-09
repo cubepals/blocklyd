@@ -101,8 +101,8 @@ pub enum Proto {
 impl Proto {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            Proto::Tcp => "tcp",
-            Proto::Udp => "udp",
+            Self::Tcp => "tcp",
+            Self::Udp => "udp",
         }
     }
 }
@@ -139,8 +139,8 @@ pub(crate) enum StopSignal {
 impl StopSignal {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            StopSignal::SIGTERM => "SIGTERM",
-            StopSignal::SIGINT => "SIGINT",
+            Self::SIGTERM => "SIGTERM",
+            Self::SIGINT => "SIGINT",
         }
     }
 }

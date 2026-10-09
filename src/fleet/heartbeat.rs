@@ -31,7 +31,7 @@ use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse, WorkloadReport}
 use crate::upgrade::Upgrader;
 
 /// Everything this node holds, for a heartbeat.
-pub async fn heartbeat_report(
+pub fn heartbeat_report(
     manager: &Manager,
     node_id: &NodeId,
     session: &str,
@@ -93,7 +93,7 @@ pub async fn run(
     let mut failing_since: Option<u64> = None;
     loop {
         seq += 1;
-        let mut request: HeartbeatRequest = heartbeat_report(&manager, &node_id, &session, boot.clone(), seq).await;
+        let mut request: HeartbeatRequest = heartbeat_report(&manager, &node_id, &session, boot.clone(), seq);
         request.upgrade_failed = upgrader.failure();
         let timeout = interval.max(Duration::from_secs(2)).min(Duration::from_secs(10));
         let sent = Instant::now();

@@ -35,7 +35,7 @@ impl Backstop {
     /// process started.
     pub fn arm(state_dir: &Path, started: Instant) -> Self {
         let version = crate::fleet::daemon_version();
-        let mut backstop = Backstop::default();
+        let mut backstop = Self::default();
         if on_trial(&Layout::new(state_dir, Path::new("/")), &version).is_none() {
             return backstop;
         }

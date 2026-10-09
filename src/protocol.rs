@@ -67,7 +67,7 @@ pub(crate) const FEATURES: &[&str] = &[
 impl ProtocolVersions {
     /// This build's, as enrollment, heartbeats and `/v1/health` say them.
     pub fn ours() -> Self {
-        ProtocolVersions { current: PROTOCOL_VERSION, supported: SUPPORTED_VERSIONS.to_vec() }
+        Self { current: PROTOCOL_VERSION, supported: SUPPORTED_VERSIONS.to_vec() }
     }
 }
 

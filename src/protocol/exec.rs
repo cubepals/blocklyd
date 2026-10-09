@@ -35,7 +35,7 @@ impl ExecRequest {
         if self.command.is_empty() || self.command.len() > MAX_EXEC_ARGS {
             errors.push(FieldError { field: "command".into(), problem: format!("1 to {MAX_EXEC_ARGS} arguments") });
         }
-        if self.command.first().is_some_and(|c| c.is_empty()) {
+        if self.command.first().is_some_and(String::is_empty) {
             errors.push(FieldError { field: "command[0]".into(), problem: "names a program".into() });
         }
         if self.command.iter().any(|a| a.len() > MAX_EXEC_ARG || a.contains('\0')) {

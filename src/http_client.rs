@@ -12,7 +12,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full, Limited, StreamBody};
+use http_body_util::{BodyExt, Collected, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{CONTENT_LENGTH, HOST};
 use hyper::{Method, Request, Response, Uri};
@@ -52,7 +52,7 @@ impl ClientError {
             // connection failing mid-handshake (a reset, an early close), as it may at any time.
             Self::Tls(_, e) => {
                 e.kind() != std::io::ErrorKind::InvalidData
-                    && !e.get_ref().is_some_and(|inner| inner.is::<rustls::Error>())
+                    && !e.get_ref().is_some_and(<dyn std::error::Error + Send + Sync>::is::<rustls::Error>)
             }
             Self::BadUrl(_) | Self::NoTls(_) => false,
         }
@@ -205,11 +205,7 @@ pub(crate) async fn send(
 
 /// Reads a whole (small) response body, refusing more than `limit` bytes.
 pub(crate) async fn read_body(response: Response<Incoming>, limit: usize) -> Result<Bytes, String> {
-    Limited::new(response.into_body(), limit)
-        .collect()
-        .await
-        .map(|collected| collected.to_bytes())
-        .map_err(|e| e.to_string())
+    Limited::new(response.into_body(), limit).collect().await.map(Collected::to_bytes).map_err(|e| e.to_string())
 }
 
 /// A JSON request and its JSON answer, over mutual TLS. Non-2xx answers become an error that

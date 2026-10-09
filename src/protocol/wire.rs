@@ -47,7 +47,7 @@ pub struct NodeFacts {
     pub labels: BTreeMap<String, String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct EnrollResponse {
@@ -142,7 +142,7 @@ pub struct HeartbeatRequest {
     pub(crate) upgrade_failed: Option<UpgradeFailure>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct UpgradeFailure {
@@ -151,7 +151,7 @@ pub struct UpgradeFailure {
 }
 
 /// The blocklyd the control plane wants the node to run, at `GET /fleet/v1/blocklyd`.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct UpgradeOffer {
@@ -159,7 +159,7 @@ pub struct UpgradeOffer {
     pub(crate) sha256: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkloadReport {
@@ -182,7 +182,7 @@ pub struct WorkloadReport {
     pub issues: Vec<Issue>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct HeartbeatResponse {
@@ -210,7 +210,7 @@ pub struct HeartbeatResponse {
 
 /// `POST /fleet/v1/nodes/{id}/renew`, over the node's current client certificate: a CSR for a new
 /// key. The node keeps its id; only its certificates and key change.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RenewRequest {
@@ -218,7 +218,7 @@ pub struct RenewRequest {
     pub csr_pem: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct RenewResponse {
@@ -227,7 +227,7 @@ pub struct RenewResponse {
     pub ca_pem: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Fence {

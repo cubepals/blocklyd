@@ -130,7 +130,7 @@ impl PortAllocator {
 
     /// Ports per protocol this host can hand out.
     pub(crate) fn capacity(&self) -> u32 {
-        (*self.range.end() - *self.range.start()) as u32 + 1
+        u32::from(*self.range.end() - *self.range.start()) + 1
     }
 
     #[cfg(test)]

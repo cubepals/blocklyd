@@ -138,9 +138,9 @@ pub(crate) fn check_epoch(record: &WorkloadRecord, asked: Option<u64>, rule: Epo
 impl From<RuntimeError> for NodeError {
     fn from(e: RuntimeError) -> Self {
         match e {
-            RuntimeError::Unavailable(m) => NodeError::RuntimeUnavailable(m),
-            RuntimeError::Timeout(m) => NodeError::Timeout(m),
-            other => NodeError::Runtime(other),
+            RuntimeError::Unavailable(m) => Self::RuntimeUnavailable(m),
+            RuntimeError::Timeout(m) => Self::Timeout(m),
+            other => Self::Runtime(other),
         }
     }
 }

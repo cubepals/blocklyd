@@ -310,12 +310,12 @@ pub(crate) struct NoRoom(pub(crate) String);
 impl NoRoom {
     /// Tells `room` the bytes written so far; its refusal stops the write.
     pub(crate) fn ask(room: &mut dyn FnMut(u64) -> Result<(), String>, written: u64) -> io::Result<()> {
-        room(written).map_err(|message| io::Error::other(NoRoom(message)))
+        room(written).map_err(|message| io::Error::other(Self(message)))
     }
 
     /// What `room` said, if `e` is its refusal.
     pub(crate) fn of(e: &io::Error) -> Option<&str> {
-        e.get_ref()?.downcast_ref::<NoRoom>().map(|refused| refused.0.as_str())
+        e.get_ref()?.downcast_ref::<Self>().map(|refused| refused.0.as_str())
     }
 }
 

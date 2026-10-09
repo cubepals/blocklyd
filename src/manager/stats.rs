@@ -99,8 +99,10 @@ impl Manager {
                 if state.records.contains_key(&id) {
                     state.disk.insert(id.clone(), (bytes, now()));
                 }
-                let over =
-                    state.records.get(&id).is_some_and(|r| bytes > r.spec.storage.size_gb as u64 * 1024 * 1024 * 1024);
+                let over = state
+                    .records
+                    .get(&id)
+                    .is_some_and(|r| bytes > u64::from(r.spec.storage.size_gb) * 1024 * 1024 * 1024);
                 drop(state);
                 if over {
                     self.set_issue(

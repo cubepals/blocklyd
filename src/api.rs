@@ -10,9 +10,6 @@
 //! - `error.rs`: errors as the protocol states them: an HTTP status and a stable code.
 //! - `tls.rs`: the API's side of mutual TLS: its certificate, and who a client certificate proves.
 
-// Handlers answer early with a ready-made `Response`, axum's own idiom for rejections.
-#![allow(clippy::result_large_err)]
-
 pub mod error;
 pub mod tls;
 
@@ -82,7 +79,7 @@ impl<S: Send + Sync> FromRequestParts<S> for SnapshotPath {
             .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_workload_id", e.to_string(), None))?;
         let snapshot = SnapshotId::parse(&snapshot)
             .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_snapshot_id", e.to_string(), None))?;
-        Ok(SnapshotPath(workload, snapshot))
+        Ok(Self(workload, snapshot))
     }
 }
 
@@ -92,7 +89,7 @@ pub(crate) struct ApiJson<T>(pub(crate) T);
 impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequest<S> for ApiJson<T> {
     type Rejection = Response;
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        Json::<T>::from_request(req, state).await.map(|Json(v)| ApiJson(v)).map_err(|e| {
+        Json::<T>::from_request(req, state).await.map(|Json(v)| Self(v)).map_err(|e| {
             let status = e.status();
             let code = if status == StatusCode::PAYLOAD_TOO_LARGE { "payload_too_large" } else { "invalid_request" };
             error_response(status, code, e.body_text(), None)
@@ -108,7 +105,7 @@ impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequestParts<S> for Api
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         Query::<T>::from_request_parts(parts, state)
             .await
-            .map(|Query(v)| ApiQuery(v))
+            .map(|Query(v)| Self(v))
             .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_request", e.body_text(), None))
     }
 }
@@ -125,6 +122,7 @@ fn etag(digest: &str) -> HeaderValue {
     HeaderValue::from_str(&format!("\"{digest}\"")).unwrap_or_else(|_| HeaderValue::from_static("\"\""))
 }
 
+#[expect(clippy::result_large_err, reason = "a ready-made `Response` for the rejection, axum's own idiom")]
 fn precondition(headers: &HeaderMap) -> Result<Precondition, Response> {
     let text = |name: header::HeaderName| headers.get(name).map(|v| v.to_str().unwrap_or("").trim().to_owned());
     match (text(header::IF_MATCH), text(header::IF_NONE_MATCH)) {
@@ -145,6 +143,7 @@ fn precondition(headers: &HeaderMap) -> Result<Precondition, Response> {
 }
 
 /// The placement epoch a mutating request acts for, if it names one.
+#[expect(clippy::result_large_err, reason = "a ready-made `Response` for the rejection, axum's own idiom")]
 fn epoch(headers: &HeaderMap) -> Result<Option<u64>, Response> {
     match headers.get(EPOCH_HEADER).map(|v| v.to_str().map(str::trim)) {
         None => Ok(None),

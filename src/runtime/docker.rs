@@ -216,7 +216,7 @@ fn body_of(spec: &ContainerSpec) -> ContainerCreateBody {
                 ("max-file".into(), spec.log_max_files.to_string()),
             ])),
         }),
-        oom_score_adj: Some(spec.oom_score_adj as i64),
+        oom_score_adj: Some(i64::from(spec.oom_score_adj)),
         ..Default::default()
     };
     ContainerCreateBody {
@@ -227,7 +227,7 @@ fn body_of(spec: &ContainerSpec) -> ContainerCreateBody {
         user: Some(spec.user.clone()),
         exposed_ports: Some(exposed),
         stop_signal: Some(spec.stop_signal.clone()),
-        stop_timeout: Some(spec.stop_timeout_secs as i64),
+        stop_timeout: Some(i64::from(spec.stop_timeout_secs)),
         host_config: Some(host_config),
         ..Default::default()
     }
@@ -465,7 +465,7 @@ impl ContainerRuntime for DockerRuntime {
         let mut builder = LogsOptionsBuilder::new().stdout(true).stderr(true).timestamps(true).follow(options.follow);
         builder = builder.tail(&options.tail.map_or_else(|| "all".to_owned(), |n| n.to_string()));
         if let Some(since) = options.since_unix {
-            builder = builder.since(since.clamp(0, i32::MAX as i64) as i32);
+            builder = builder.since(since.clamp(0, i64::from(i32::MAX)) as i32);
         }
         let docker = match self.docker() {
             Ok(docker) => docker,
@@ -544,7 +544,7 @@ impl ContainerRuntime for DockerRuntime {
                 let actor = message.actor.unwrap_or_default();
                 let at = message
                     .time_nano
-                    .and_then(|ns| OffsetDateTime::from_unix_timestamp_nanos(ns as i128).ok())
+                    .and_then(|ns| OffsetDateTime::from_unix_timestamp_nanos(i128::from(ns)).ok())
                     .unwrap_or_else(OffsetDateTime::now_utc);
                 Ok(RuntimeEvent {
                     container_id: actor.id.unwrap_or_default(),
