@@ -14,7 +14,7 @@ use axum::response::IntoResponse;
 use axum::routing::put;
 use blocklyd::manager::{NodeError, Precondition};
 use blocklyd::protocol::{ExportRequest, RestoreRequest};
-use blocklyd::store::RESTORE_COMPLETE;
+use blocklyd::store::restore::RESTORE_COMPLETE;
 use sha2::Digest;
 use support::{fixture, id, spec};
 

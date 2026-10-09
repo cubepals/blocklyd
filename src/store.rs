@@ -27,6 +27,10 @@
 //! Parts (`store/`):
 //! - `leftovers.rs`: what a crash leaves (spool files, unfinished snapshots, temp files), cleared
 //!   when blocklyd starts.
+//! - `restore.rs`: putting a restore's new data in place of the old, and finishing one a crash
+//!   interrupted.
+//! - `snapshots.rs`: local snapshots, beside the data they copy.
+//! - `quarantine.rs`: released host ports still resting, kept across restarts in `ports.json`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;
@@ -36,10 +40,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::durable::{self, WriteError};
-use crate::ids::{SnapshotId, WorkloadId};
-use crate::protocol::{Proto, SnapshotView, SpecRecord};
+use crate::ids::WorkloadId;
+use crate::protocol::{Proto, SpecRecord};
 
 pub mod leftovers;
+mod quarantine;
+pub mod restore;
+mod snapshots;
 
 pub const RECORD_VERSION: u32 = 1;
 
@@ -298,97 +305,6 @@ impl Store {
         self.root.join("spool")
     }
 
-    /// Where a restore unpacks: beside the data, so replacing it is one rename.
-    pub fn restoring_dir(&self, id: &WorkloadId) -> PathBuf {
-        self.workload_dir(id).join("data.restoring")
-    }
-
-    /// Puts a restore's new data, complete in `data.restoring/` and on disk (`durable.rs`), in place
-    /// of `data/`, and moves what it replaces into the trash, where it stays for the retention (a
-    /// restore can be undone by hand until then). Returns where that went.
-    ///
-    /// The swap is one `renameat2(RENAME_EXCHANGE)`: a crash leaves the old data in place or the
-    /// new, never neither. A filesystem that can't exchange gets two renames instead, and if a
-    /// crash falls between them, `recover_restore` finishes the second.
-    pub fn swap_in_restored(&self, id: &WorkloadId, now_unix: i64) -> Result<Option<PathBuf>, StoreError> {
-        self.swap_with(id, now_unix, exchange)
-    }
-
-    fn swap_with(
-        &self,
-        id: &WorkloadId,
-        now_unix: i64,
-        exchange: fn(&Path, &Path) -> rustix::io::Result<()>,
-    ) -> Result<Option<PathBuf>, StoreError> {
-        let (data, restoring) = (self.data_dir(id), self.restoring_dir(id));
-        mark_complete(&restoring)?;
-        let previous = match exchange(&restoring, &data) {
-            // What it replaced is now where the new data was.
-            Ok(()) => Some(self.trash_replaced(id, &restoring, now_unix)?),
-            // Nothing to replace.
-            Err(rustix::io::Errno::NOENT) if fs::symlink_metadata(&data).is_err() => {
-                fs::rename(&restoring, &data).map_err(io_err("restoring", &data))?;
-                None
-            }
-            Err(rustix::io::Errno::INVAL | rustix::io::Errno::NOSYS | rustix::io::Errno::OPNOTSUPP) => {
-                let previous = self.trash_replaced(id, &data, now_unix)?;
-                fs::rename(&restoring, &data).map_err(io_err("restoring", &data))?;
-                Some(previous)
-            }
-            Err(e) => return Err(StoreError::Io { what: "swapping in", path: data, source: e.into() }),
-        };
-        // A marker left behind is removed when blocklyd next starts.
-        let _ = fs::remove_file(data.join(RESTORE_COMPLETE));
-        let dir = self.workload_dir(id);
-        File::open(&dir).and_then(|d| d.sync_all()).map_err(io_err("syncing", &dir))?;
-        Ok(previous)
-    }
-
-    /// Settles what a restore left on disk when it didn't get to finish: called when blocklyd
-    /// starts, and before each restore, so never while one is under way.
-    pub fn recover_restore(&self, id: &WorkloadId, now_unix: i64) -> Result<Recovery, StoreError> {
-        let (data, restoring) = (self.data_dir(id), self.restoring_dir(id));
-        let leftover = fs::symlink_metadata(&restoring).is_ok();
-        if is_marked(&data) {
-            // The swap happened: what is at data.restoring/, if anything, is the data it replaced.
-            let previous = if leftover { Some(self.trash_replaced(id, &restoring, now_unix)?) } else { None };
-            let _ = fs::remove_file(data.join(RESTORE_COMPLETE));
-            return Ok(Recovery::Finished { previous });
-        }
-        if !leftover {
-            return Ok(Recovery::None);
-        }
-        if fs::symlink_metadata(&data).is_err() && is_marked(&restoring) {
-            // Only the second of the fallback's two renames was left: the old data is in the
-            // trash already, and the new data is complete.
-            fs::rename(&restoring, &data).map_err(io_err("restoring", &data))?;
-            let _ = fs::remove_file(data.join(RESTORE_COMPLETE));
-            let dir = self.workload_dir(id);
-            File::open(&dir).and_then(|d| d.sync_all()).map_err(io_err("syncing", &dir))?;
-            return Ok(Recovery::Finished { previous: None });
-        }
-        // An unpack or copy that didn't finish, or finished and was never swapped in: nothing it
-        // made has replaced the workload's data.
-        fs::remove_dir_all(&restoring).map_err(io_err("removing", &restoring))?;
-        Ok(Recovery::Discarded)
-    }
-
-    /// Moves data a restore replaced into the trash, under a name of its own: two restores in one
-    /// second each keep what they replaced.
-    fn trash_replaced(&self, id: &WorkloadId, from: &Path, now_unix: i64) -> Result<PathBuf, StoreError> {
-        let trash = self.trash_dir();
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(&trash).map_err(io_err("creating", &trash))?;
-        let mut to = trash.join(format!("{id}-replaced.{now_unix}"));
-        for n in 1.. {
-            if fs::symlink_metadata(&to).is_err() {
-                break;
-            }
-            to = trash.join(format!("{id}-replaced-{n}.{now_unix}"));
-        }
-        fs::rename(from, &to).map_err(io_err("trashing", from))?;
-        Ok(to)
-    }
-
     /// Moves the whole workload directory (record and data) into the trash, in one rename.
     pub fn trash(&self, id: &WorkloadId, now_unix: i64) -> Result<Option<PathBuf>, StoreError> {
         let from = self.workload_dir(id);
@@ -416,115 +332,6 @@ impl Store {
     }
 }
 
-/// Left at the top of a restore's new data, `data.restoring/`, once it is complete. It moves with
-/// the directory when the two are swapped, so after a crash it says which side of the swap
-/// blocklyd stopped on (`Store::recover_restore`); it is removed once the new data is in place.
-/// The name is blocklyd's: a world that holds it at its top loses that entry.
-pub const RESTORE_COMPLETE: &str = ".blocklyd-restore-complete";
-
-/// What `Store::recover_restore` found and did.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Recovery {
-    /// No restore was left unfinished.
-    None,
-    /// The restored data is in place now; the data it replaced went to the trash, at `previous`
-    /// if that was left to do.
-    Finished { previous: Option<PathBuf> },
-    /// The new data never replaced anything, and is gone; the workload's data is as it was.
-    Discarded,
-}
-
-fn exchange(a: &Path, b: &Path) -> rustix::io::Result<()> {
-    rustix::fs::renameat_with(rustix::fs::CWD, a, rustix::fs::CWD, b, rustix::fs::RenameFlags::EXCHANGE)
-}
-
-/// Marks a restore's new data complete, durably, before it is swapped in. Whatever a world brought
-/// under the marker's name goes first; the marker is made new, never through a link.
-fn mark_complete(restoring: &Path) -> Result<(), StoreError> {
-    let marker = restoring.join(RESTORE_COMPLETE);
-    let _ = fs::remove_file(&marker);
-    let _ = fs::remove_dir_all(&marker);
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&marker)
-        .and_then(|f| f.sync_all())
-        .map_err(io_err("marking", &marker))?;
-    File::open(restoring).and_then(|d| d.sync_all()).map_err(io_err("syncing", restoring))
-}
-
-/// Whether `dir` holds the marker this daemon made. A workload can make a file of that name in its
-/// own data, but not one owned by the daemon.
-fn is_marked(dir: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    fs::symlink_metadata(dir.join(RESTORE_COMPLETE))
-        .is_ok_and(|m| m.is_file() && m.uid() == rustix::process::geteuid().as_raw())
-}
-
-/// Local snapshots, beside the data they copy: on the same filesystem, so a copy can share its
-/// blocks, and out of the workload's reach, since only `data/` is mounted.
-impl Store {
-    pub fn snapshots_dir(&self, id: &WorkloadId) -> PathBuf {
-        self.workload_dir(id).join("snapshots")
-    }
-
-    /// `snapshots/<snapshot>`. A `SnapshotId` is one plain path component, like a `WorkloadId`.
-    pub fn snapshot_dir(&self, id: &WorkloadId, snapshot: &SnapshotId) -> PathBuf {
-        self.snapshots_dir(id).join(snapshot.as_str())
-    }
-
-    /// A finished snapshot's description, if it exists.
-    pub fn snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Option<SnapshotView> {
-        let bytes = fs::read(self.snapshot_dir(id, snapshot).join("snapshot.json")).ok()?;
-        serde_json::from_slice::<SnapshotView>(&bytes).ok().filter(|v| v.id == *snapshot && v.workload == *id)
-    }
-
-    /// The workload's finished snapshots, oldest first.
-    pub fn snapshots(&self, id: &WorkloadId) -> Vec<SnapshotView> {
-        let Ok(entries) = fs::read_dir(self.snapshots_dir(id)) else { return Vec::new() };
-        let mut found: Vec<SnapshotView> = entries
-            .filter_map(Result::ok)
-            .filter_map(|e| SnapshotId::parse(&e.file_name().to_string_lossy()).ok())
-            .filter_map(|snapshot| self.snapshot(id, &snapshot))
-            .collect();
-        found.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
-        found
-    }
-
-    /// Makes room for a new snapshot: the parent directories, and nothing left of an unfinished
-    /// one under the same id. Returns where its copy goes.
-    pub fn prepare_snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Result<PathBuf, StoreError> {
-        let dir = self.snapshot_dir(id, snapshot);
-        let parent = self.snapshots_dir(id);
-        fs::DirBuilder::new().recursive(true).mode(0o700).create(&parent).map_err(io_err("creating", &parent))?;
-        match fs::remove_dir_all(&dir) {
-            Ok(()) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(StoreError::Io { what: "clearing", path: dir, source: e }),
-        }
-        fs::DirBuilder::new().mode(0o700).create(&dir).map_err(io_err("creating", &dir))?;
-        Ok(dir.join("data"))
-    }
-
-    /// Writes a snapshot's description, last, once its copy is on disk: from here on it exists.
-    pub fn finish_snapshot(&self, view: &SnapshotView) -> Result<(), StoreError> {
-        let path = self.snapshot_dir(&view.workload, &view.id).join("snapshot.json");
-        let bytes = serde_json::to_vec_pretty(view).expect("serializes");
-        Ok(durable::write_atomic(&path, &bytes, 0o600)?)
-    }
-
-    /// Removes a snapshot, finished or not. Returns whether there was one. Blocking.
-    pub fn remove_snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Result<bool, StoreError> {
-        let dir = self.snapshot_dir(id, snapshot);
-        match fs::remove_dir_all(&dir) {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(StoreError::Io { what: "removing", path: dir, source: e }),
-        }
-    }
-}
-
 /// A released host port still in quarantine, as persisted in `ports.json`.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -532,19 +339,6 @@ pub struct RestingPort {
     pub protocol: Proto,
     pub port: u16,
     pub released_at_unix: i64,
-}
-
-impl Store {
-    /// Quarantined ports survive restarts, so a restarted daemon can't hand out a port a route
-    /// may still point at. Rewritten whole, atomically, on each release.
-    pub fn save_resting_ports(&self, ports: &[RestingPort]) -> Result<(), StoreError> {
-        let bytes = serde_json::to_vec_pretty(ports).expect("serializes");
-        Ok(durable::write_atomic(&self.root.join("ports.json"), &bytes, 0o600)?)
-    }
-
-    pub fn load_resting_ports(&self) -> Vec<RestingPort> {
-        fs::read(self.root.join("ports.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-    }
 }
 
 /// Bytes a directory tree occupies on disk (allocated blocks, not apparent sizes), without
@@ -632,15 +426,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn ports_in_quarantine_are_read_back_as_saved() {
-        let tmp = tempfile::tempdir().unwrap();
-        let store = Store::open(tmp.path()).unwrap();
-        let resting = [RestingPort { protocol: Proto::Udp, port: 42001, released_at_unix: 1_000 }];
-        store.save_resting_ports(&resting).unwrap();
-        assert_eq!(store.load_resting_ports(), resting);
-    }
-
-    #[test]
     fn one_daemon_per_state_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(tmp.path()).unwrap();
@@ -708,32 +493,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_restore_is_swapped_in_whole_by_either_route() {
-        type Exchange = fn(&Path, &Path) -> rustix::io::Result<()>;
-        let refuse: Exchange = |_, _| Err(rustix::io::Errno::INVAL);
-        for (route, exchange) in [("exchange", super::exchange as Exchange), ("two renames", refuse)] {
-            let tmp = tempfile::tempdir().unwrap();
-            let store = Store::open(tmp.path()).unwrap();
-            let id = WorkloadId::parse("w").unwrap();
-            fs::create_dir_all(store.data_dir(&id)).unwrap();
-            fs::write(store.data_dir(&id).join("level.dat"), b"old").unwrap();
-            fs::create_dir_all(store.restoring_dir(&id)).unwrap();
-            fs::write(store.restoring_dir(&id).join("level.dat"), b"new").unwrap();
-            let previous = store.swap_with(&id, 1_000, exchange).unwrap().expect("the old data was kept");
-            assert_eq!(fs::read(store.data_dir(&id).join("level.dat")).unwrap(), b"new", "{route}");
-            assert_eq!(fs::read(previous.join("level.dat")).unwrap(), b"old", "{route}");
-            assert!(!store.restoring_dir(&id).exists(), "{route}");
-            assert!(!store.data_dir(&id).join(RESTORE_COMPLETE).exists(), "{route}: the marker is gone");
-            assert_eq!(store.recover_restore(&id, 1_000).unwrap(), Recovery::None, "{route}: nothing left over");
-            // A second restore in the same second keeps what it replaced too.
-            fs::create_dir_all(store.restoring_dir(&id)).unwrap();
-            let again = store.swap_with(&id, 1_000, exchange).unwrap().unwrap();
-            assert_ne!(again, previous, "{route}");
-            assert_eq!(fs::read(again.join("level.dat")).unwrap(), b"new", "{route}");
-        }
-    }
-
-    #[test]
     fn orphan_dirs_are_found() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::open(tmp.path()).unwrap();
@@ -743,37 +502,5 @@ pub(crate) mod tests {
         let orphans = store.orphan_dirs(&known);
         assert_eq!(orphans.len(), 1);
         assert!(orphans[0].ends_with("lost"));
-    }
-
-    #[test]
-    fn a_snapshot_exists_once_its_description_is_written() {
-        let tmp = tempfile::tempdir().unwrap();
-        let store = Store::open(tmp.path()).unwrap();
-        let id = WorkloadId::parse("w").unwrap();
-        let snap = SnapshotId::parse("0b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10").unwrap();
-        let data = store.prepare_snapshot(&id, &snap).unwrap();
-        fs::create_dir(&data).unwrap();
-        assert!(store.snapshot(&id, &snap).is_none(), "unfinished");
-        assert!(store.snapshots(&id).is_empty());
-        let view = SnapshotView {
-            id: snap.clone(),
-            workload: id.clone(),
-            epoch: Some(3),
-            created_at: "2026-10-01T00:00:00Z".into(),
-            size_bytes: 1,
-            files: 1,
-            method: crate::protocol::Method::Copy,
-            quiesced: false,
-            spec_digest: "sha256:x".into(),
-            duration_ms: 1,
-        };
-        store.finish_snapshot(&view).unwrap();
-        assert_eq!(store.snapshot(&id, &snap), Some(view.clone()));
-        assert_eq!(store.snapshots(&id), vec![view]);
-        // Preparing the same id again starts over.
-        store.prepare_snapshot(&id, &snap).unwrap();
-        assert!(store.snapshot(&id, &snap).is_none());
-        assert!(store.remove_snapshot(&id, &snap).unwrap());
-        assert!(!store.remove_snapshot(&id, &snap).unwrap());
     }
 }

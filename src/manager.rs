@@ -69,7 +69,8 @@ use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
     RuntimeError, RuntimeInfo, format_time, parse_time,
 };
-use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Recovery, Store, WorkloadRecord};
+use crate::store::restore::Recovery;
+use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Store, WorkloadRecord};
 
 mod archive;
 mod delete;
