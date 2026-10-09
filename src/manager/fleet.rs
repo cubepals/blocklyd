@@ -4,22 +4,60 @@
 
 use super::*;
 
+/// The node as the control plane holds it, as its last answer to a heartbeat said. On the wire it
+/// is a string (`HeartbeatResponse::lifecycle`, `FleetView::lifecycle`); one this build doesn't
+/// know is kept as it came and reported back the same.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lifecycle {
+    Active,
+    Draining,
+    /// Its workloads may be running elsewhere: it restarts nothing on its own (`Lease::Revoked`).
+    Lost,
+    Retired,
+    Other(String),
+}
+
+impl From<&str> for Lifecycle {
+    fn from(said: &str) -> Self {
+        match said {
+            "active" => Self::Active,
+            "draining" => Self::Draining,
+            "lost" => Self::Lost,
+            "retired" => Self::Retired,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+}
+
+impl Lifecycle {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Draining => "draining",
+            Self::Lost => "lost",
+            Self::Retired => "retired",
+            Self::Other(other) => other,
+        }
+    }
+}
+
 impl Manager {
     // ─── fleet ─────────────────────────────────────────────────────────────────────────────
 
-    pub fn set_fleet(&self, node_id: &str, control_plane: &str) {
+    pub fn set_fleet(&self, node_id: &NodeId, control_plane: &str) {
         let mut fleet = self.fleet.lock().unwrap();
-        fleet.node_id = Some(node_id.to_owned());
+        fleet.node_id = Some(node_id.clone());
         fleet.control_plane = Some(control_plane.to_owned());
     }
 
     /// Records a heartbeat's outcome: the lifecycle the control plane holds for this node, or why
     /// it couldn't be reached.
-    pub fn fleet_contact(&self, result: Result<&str, &str>, latency: Duration) {
+    pub fn fleet_contact(&self, result: Result<Lifecycle, &str>, latency: Duration) {
+        let ok = result.is_ok();
         let mut fleet = self.fleet.lock().unwrap();
         match result {
             Ok(lifecycle) => {
-                fleet.lifecycle = Some(lifecycle.to_owned());
+                fleet.lifecycle = Some(lifecycle);
                 fleet.last_contact = Some(Instant::now());
                 fleet.last_contact_at = Some(now());
                 fleet.last_error = None;
@@ -32,7 +70,7 @@ impl Manager {
             }
         }
         drop(fleet);
-        self.metrics.heartbeat(result.is_ok());
+        self.metrics.heartbeat(ok);
     }
 
     /// The control plane answered a heartbeat sent at `sent`, granting `seconds` of execution
@@ -62,7 +100,7 @@ impl Manager {
             return Lease::NotFleet;
         }
         let fleet = self.fleet.lock().unwrap();
-        if fleet.lifecycle.as_deref() == Some("lost") {
+        if fleet.lifecycle == Some(Lifecycle::Lost) {
             return Lease::Revoked;
         }
         match fleet.lease_until {
@@ -91,9 +129,9 @@ impl Manager {
         let fleet = self.fleet.lock().unwrap().clone();
         let node_id = fleet.node_id?;
         Some(crate::protocol::FleetView {
-            node_id,
+            node_id: node_id.to_string(),
             control_plane: fleet.control_plane.unwrap_or_default(),
-            lifecycle: fleet.lifecycle,
+            lifecycle: fleet.lifecycle.as_ref().map(|l| l.as_str().to_owned()),
             last_contact_at: fleet.last_contact_at.map(format_time),
             last_contact_age_seconds: fleet.last_contact.map(|at| at.elapsed().as_secs()),
             last_error: fleet.last_error,

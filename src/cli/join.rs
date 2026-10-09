@@ -98,7 +98,7 @@ pub async fn join(options: Join) -> anyhow::Result<String> {
                      again under its own id, paste the line `bun scripts/fleet.ts token --node {node}` prints.\n"
                 ));
             }
-            Some(other) if other != node => bail!(
+            Some(other) if other != node.as_str() => bail!(
                 "this host is node {node}, and the token re-enrolls node {other}: paste it on that node's host. \
                  For this one, `bun scripts/fleet.ts token --node {node}` prints the line"
             ),
@@ -134,7 +134,7 @@ pub async fn join(options: Join) -> anyhow::Result<String> {
     if let Some(identity) = &enrolled {
         preflight(root, config_file).await?;
         let swap = Reenroll {
-            node: identity.node_id(),
+            node: identity.node_id().as_str(),
             state_dir,
             ca_file: under(root, &fleet.ca),
             token_file: under(root, token_file),

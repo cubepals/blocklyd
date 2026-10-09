@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use blocklyd::config::FleetConfig;
-use blocklyd::manager::{Manager, Precondition, Records};
+use blocklyd::manager::{Lifecycle, Manager, Precondition, Records};
 use blocklyd::metrics::Metrics;
 use blocklyd::protocol::WorkloadState;
 use blocklyd::runtime::fake::FakeRuntime;
@@ -84,7 +84,7 @@ async fn in_a_fleet_the_resume_waits_for_the_lease() {
     tokio::time::sleep(QUIET).await;
     assert_eq!(second.view(&id("w")).unwrap().state, WorkloadState::Restarting);
     assert_eq!(fake.count_calls("start "), 1, "nothing starts before the control plane answers");
-    second.fleet_contact(Ok("active"), Duration::from_millis(3));
+    second.fleet_contact(Ok(Lifecycle::Active), Duration::from_millis(3));
     second.grant_lease(Some(120), Instant::now());
     until(&second, WorkloadState::Running).await;
 }
@@ -93,7 +93,7 @@ async fn in_a_fleet_the_resume_waits_for_the_lease() {
 async fn a_node_held_lost_resumes_nothing_now_or_after_the_next_restart() {
     let (dir, fake) = running_then_host_down(true).await;
     let second = after_restart(dir.path(), &fake, true).await;
-    second.fleet_contact(Ok("lost"), Duration::from_millis(3));
+    second.fleet_contact(Ok(Lifecycle::Lost), Duration::from_millis(3));
     second.grant_lease(Some(0), Instant::now());
     until(&second, WorkloadState::Stopped).await;
     assert_eq!(fake.count_calls("start "), 1);
@@ -109,7 +109,7 @@ async fn a_fence_in_the_same_answer_wins_over_the_resume() {
     let second = after_restart(dir.path(), &fake, true).await;
     // As the heartbeat applies an answer: its fences, then its lease.
     second.fence(id("w"), 2).await.unwrap();
-    second.fleet_contact(Ok("active"), Duration::from_millis(3));
+    second.fleet_contact(Ok(Lifecycle::Active), Duration::from_millis(3));
     second.grant_lease(Some(120), Instant::now());
     tokio::time::sleep(QUIET).await;
     assert_eq!(second.view(&id("w")).unwrap().state, WorkloadState::Fenced);
@@ -127,7 +127,7 @@ async fn a_fence_the_disk_couldnt_record_still_keeps_the_copy_from_resuming() {
     std::fs::create_dir_all(record.join("in-the-way")).unwrap();
     assert!(second.fence(id("w"), 2).await.is_err(), "the fence couldn't be recorded");
     // The heartbeat grants the lease all the same.
-    second.fleet_contact(Ok("active"), Duration::from_millis(3));
+    second.fleet_contact(Ok(Lifecycle::Active), Duration::from_millis(3));
     second.grant_lease(Some(120), Instant::now());
     tokio::time::sleep(QUIET).await;
     assert_eq!(fake.count_calls("start "), 1, "a superseded copy never runs again");

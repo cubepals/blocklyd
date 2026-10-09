@@ -270,7 +270,7 @@ impl Metrics {
             .get_or_create(&InfoLabels {
                 version: env!("CARGO_PKG_VERSION").into(),
                 protocol: crate::protocol::PROTOCOL_VERSION.to_string(),
-                node: manager.config.node_id.clone(),
+                node: manager.config.node_id.to_string(),
                 deployment: manager.config.deployment_id.clone(),
             })
             .set(1);

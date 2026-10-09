@@ -42,7 +42,7 @@ impl Manager {
         });
         if running && !request.quiesced {
             return Err(NodeError::Conflict {
-                code: "not_quiesced",
+                code: ConflictCode::NotQuiesced,
                 message: "stop the workload, or pause its saving and say so (quiesced), before exporting".into(),
             });
         }
@@ -159,7 +159,7 @@ impl Manager {
         check_epoch(&record, epoch, EpochRule::Exact)?;
         if record.phase != Phase::Active {
             return Err(NodeError::Conflict {
-                code: "not_created",
+                code: ConflictCode::NotCreated,
                 message: "PUT the workload's spec before restoring into it".into(),
             });
         }
@@ -168,7 +168,7 @@ impl Manager {
         });
         if running {
             return Err(NodeError::Conflict {
-                code: "not_stopped",
+                code: ConflictCode::NotStopped,
                 message: "stop the workload before restoring into it".into(),
             });
         }
@@ -220,7 +220,7 @@ impl Manager {
             Recovery::Finished { previous } => {
                 tracing::warn!(workload = %id, ?previous, "finished an interrupted restore: the restored data is in place");
                 Ok(Some(Issue::new(
-                    "restore_finished",
+                    IssueCode::RestoreFinished,
                     "a restore was interrupted after its data was complete, and finished when blocklyd started",
                 )))
             }

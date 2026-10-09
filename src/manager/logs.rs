@@ -21,7 +21,7 @@ impl Manager {
         let record = self.record(id)?;
         if record.phase == Phase::Retained {
             return Err(NodeError::Conflict {
-                code: "no_compute",
+                code: ConflictCode::NoCompute,
                 message: "a decommissioned workload has no logs".into(),
             });
         }

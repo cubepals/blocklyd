@@ -10,13 +10,15 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
+use crate::ids::NodeId;
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// This host's stable name, written on every container it makes. Two nodes never share one.
     /// In fleet mode it is left out: the control plane issues it at enrollment.
     #[serde(default)]
-    pub node_id: String,
+    pub node_id: NodeId,
     /// The Blockly deployment (staging, production) this host serves. Containers of another
     /// deployment are never adopted or touched.
     pub deployment_id: String,
@@ -403,7 +405,7 @@ impl Config {
         }
         match &self.fleet {
             None => {
-                if !id_ok(&self.node_id) {
+                if !id_ok(self.node_id.as_str()) {
                     return bad("node_id is 1-63 of a-z, 0-9 and '-'".into());
                 }
                 match &self.api.tls {
@@ -415,7 +417,7 @@ impl Config {
                 }
             }
             Some(fleet) => {
-                if !self.node_id.is_empty() {
+                if !self.node_id.as_str().is_empty() {
                     return bad("in fleet mode node_id comes from enrollment; leave it out".into());
                 }
                 if self.api.tls.is_some() {
@@ -614,7 +616,7 @@ mod tests {
         config.validate().unwrap();
         let fleet = config.fleet.expect("fleet mode");
         assert_eq!((fleet.heartbeat_seconds, fleet.restart_requires_contact_seconds), (5, 120));
-        assert!(config.api.tls.is_none() && config.node_id.is_empty());
+        assert!(config.api.tls.is_none() && config.node_id.as_str().is_empty());
     }
 
     #[test]

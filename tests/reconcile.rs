@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use blocklyd::manager::{Precondition, Records};
-use blocklyd::protocol::{EnsureOutcome, WorkloadState};
+use blocklyd::protocol::{EnsureOutcome, IssueCode, WorkloadState};
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::store::restore::RESTORE_COMPLETE;
 use support::{fixture, id, manager_on, spec};
@@ -79,7 +79,7 @@ async fn a_lost_state_directory_is_rebuilt_from_container_labels() {
     assert_eq!(view.state, WorkloadState::Running);
     assert_eq!(view.spec_digest, made.workload.spec_digest);
     assert_eq!(view.ports, made.workload.ports);
-    assert!(view.issues.iter().any(|i| i.code == "record_rebuilt"), "rebuilt, and says so");
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::RecordRebuilt), "rebuilt, and says so");
     let rebuilt: serde_json::Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
     for field in ["id", "generation", "spec", "specDigest", "ports", "containerName", "createdAt"] {
         assert_eq!(rebuilt[field], original[field], "{field}");
@@ -124,7 +124,7 @@ async fn a_create_interrupted_before_the_container_existed_is_finished_by_the_ne
     restarted.reconcile(Records::FromDisk).await;
     let view = restarted.view(&id("a")).unwrap();
     assert_eq!(view.state, WorkloadState::Creating);
-    assert!(view.issues.iter().any(|i| i.code == "create_incomplete"));
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::CreateIncomplete));
     let done = restarted.ensure(id("a"), spec(), Precondition::None, None).await.unwrap();
     assert_eq!(done.workload.state, WorkloadState::Created);
     assert!(done.workload.issues.is_empty());
@@ -139,7 +139,7 @@ async fn a_container_the_runtime_lost_is_reported_not_recreated() {
     restarted.reconcile(Records::FromDisk).await;
     let view = restarted.view(&id("a")).unwrap();
     assert_eq!(view.state, WorkloadState::Missing);
-    assert!(view.issues.iter().any(|i| i.code == "container_missing"));
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::ContainerMissing));
     assert_eq!(f.fake.count_calls("create "), 1, "blocklyd doesn't recreate on its own: it holds no secrets");
     assert!(!view.ports.is_empty(), "its ports stay held for when it's asked back");
 }
@@ -154,7 +154,7 @@ async fn orphaned_data_is_reported_and_never_touched() {
     let report = f.manager.reconcile(Records::FromDisk).await;
     assert!(report.error.is_none());
     let host = f.manager.node_status().await;
-    assert!(host.issues.iter().any(|i| i.code == "orphan_data"));
+    assert!(host.issues.iter().any(|i| i.code == IssueCode::OrphanData));
     assert!(orphan.join("level.dat").exists());
 }
 
@@ -186,10 +186,10 @@ async fn two_records_claiming_one_port_are_both_flagged() {
     restarted.reconcile(Records::FromDisk).await;
     for w in ["a", "b"] {
         let view = restarted.view(&id(w)).unwrap();
-        assert!(view.issues.iter().any(|i| i.code == "port_conflict"), "{w}: {:?}", view.issues);
+        assert!(view.issues.iter().any(|i| i.code == IssueCode::PortConflict), "{w}: {:?}", view.issues);
     }
     let b = restarted.view(&id("b")).unwrap();
-    assert!(b.issues.iter().any(|i| i.code == "port_mismatch"), "the record no longer matches b's container");
+    assert!(b.issues.iter().any(|i| i.code == IssueCode::PortMismatch), "the record no longer matches b's container");
 }
 
 /// A world in `dir` that says `what`.
@@ -228,7 +228,7 @@ async fn a_restore_cut_short_once_its_data_was_complete_is_finished_at_startup()
         assert!(!data.join(RESTORE_COMPLETE).exists(), "{w}");
         assert!(!restarted.store.restoring_dir(&id(w)).exists(), "{w}");
         let issues = restarted.view(&id(w)).unwrap().issues;
-        assert!(issues.iter().any(|i| i.code == "restore_finished"), "{w}: and says so: {issues:?}");
+        assert!(issues.iter().any(|i| i.code == IssueCode::RestoreFinished), "{w}: and says so: {issues:?}");
     }
     // What the exchange replaced went where a finished restore puts it.
     let trashed: Vec<_> = std::fs::read_dir(restarted.store.trash_dir())
@@ -282,7 +282,7 @@ async fn what_a_crash_left_in_the_spool_and_of_snapshots_is_cleared_at_startup()
     assert!(!store.snapshot_dir(&id("w"), &snapshot(unfinished)).exists());
     assert!(store.snapshot_dir(&id("w"), &snapshot(damaged)).join("data/level.dat").exists(), "left for a human");
     let issues = restarted.node_status().await.issues;
-    assert!(issues.iter().any(|i| i.code == "unreadable_snapshot" && i.detail.contains(damaged)), "{issues:?}");
+    assert!(issues.iter().any(|i| i.code == IssueCode::UnreadableSnapshot && i.detail.contains(damaged)), "{issues:?}");
     // Only from disk: a pass on a schedule never looks.
     std::fs::write(store.spool_dir().join("w-1b6f.tar.gz"), b"a download under way").unwrap();
     assert!(restarted.reconcile(Records::InMemory).await.error.is_none());

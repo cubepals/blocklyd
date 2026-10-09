@@ -37,7 +37,7 @@ impl Manager {
         }
         if record.phase == Phase::Creating {
             return Err(NodeError::Conflict {
-                code: "not_created",
+                code: ConflictCode::NotCreated,
                 message: "the workload's creation didn't finish; PUT its spec again".into(),
             });
         }
@@ -46,7 +46,7 @@ impl Manager {
         });
         if running && !request.quiesced {
             return Err(NodeError::Conflict {
-                code: "not_quiesced",
+                code: ConflictCode::NotQuiesced,
                 message: "stop the workload, or pause its saving and say so (quiesced), before a snapshot".into(),
             });
         }
@@ -132,7 +132,7 @@ impl Manager {
         let _guard = lock.lock().await;
         if self.state.lock().unwrap().uploading.contains(&(id.clone(), snapshot.clone())) {
             return Err(NodeError::Conflict {
-                code: "snapshot_busy",
+                code: ConflictCode::SnapshotBusy,
                 message: "the snapshot is being uploaded; delete it once that ends".into(),
             });
         }
@@ -170,7 +170,7 @@ impl Manager {
                     return Err(NodeError::SnapshotNotFound(snapshot.to_string()));
                 }
                 self.mark_uploading(&id, &snapshot).ok_or_else(|| NodeError::Conflict {
-                    code: "snapshot_busy",
+                    code: ConflictCode::SnapshotBusy,
                     message: "this snapshot is being uploaded already".into(),
                 })?
             };

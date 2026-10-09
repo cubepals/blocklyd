@@ -103,9 +103,12 @@ impl Manager {
                     state.records.get(&id).is_some_and(|r| bytes > r.spec.storage.size_gb as u64 * 1024 * 1024 * 1024);
                 drop(state);
                 if over {
-                    self.set_issue(&id, Issue::new("over_storage", "data is larger than the size the spec promised"));
+                    self.set_issue(
+                        &id,
+                        Issue::new(IssueCode::OverStorage, "data is larger than the size the spec promised"),
+                    );
                 } else {
-                    self.clear_issue(&id, "over_storage");
+                    self.clear_issue(&id, IssueCode::OverStorage);
                 }
             }
         }

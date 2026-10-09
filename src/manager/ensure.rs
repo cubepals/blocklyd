@@ -123,7 +123,7 @@ impl Manager {
         let mut labels = spec.labels.clone();
         labels.insert(LABEL_MANAGED.into(), "true".into());
         labels.insert(LABEL_DEPLOYMENT.into(), self.config.deployment_id.clone());
-        labels.insert(LABEL_NODE.into(), self.config.node_id.clone());
+        labels.insert(LABEL_NODE.into(), self.config.node_id.to_string());
         labels.insert(LABEL_WORKLOAD.into(), record.id.to_string());
         labels.insert(LABEL_GENERATION.into(), record.generation.to_string());
         labels.insert(LABEL_DIGEST.into(), record.spec_digest.clone());
@@ -186,7 +186,7 @@ impl Manager {
                 let existing = self.inspect(&record.container_name).await?;
                 if existing.as_ref().and_then(|i| i.labels.get(LABEL_WORKLOAD)) != Some(&record.id.to_string()) {
                     return Err(NodeError::Conflict {
-                        code: "name_taken",
+                        code: ConflictCode::NameTaken,
                         message: format!(
                             "a container named {} exists and isn't this workload's",
                             record.container_name

@@ -83,6 +83,38 @@ id_type!(
     "snapshot"
 );
 
+/// What this node is called: `node_id` in the config, or in fleet mode the id the control plane
+/// gave it at enrollment. It names the node in labels, metrics and the control plane's URLs. Not
+/// held to a workload id's rules: an identity enrolled before is never refused for its id, and the
+/// config holds its own to `config.rs`'s.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct NodeId(String);
+
+impl NodeId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for NodeId {
+    fn from(id: String) -> Self {
+        Self(id)
+    }
+}
+
+impl From<&str> for NodeId {
+    fn from(id: &str) -> Self {
+        Self(id.to_owned())
+    }
+}
+
+impl fmt::Display for NodeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

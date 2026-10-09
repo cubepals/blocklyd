@@ -291,7 +291,7 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
     let (identity, tls_material): (Option<Identity>, TlsConfig) = match config.fleet.clone() {
         Some(fleet) => {
             let identity = blocklyd::fleet::enroll::ensure_identity(&config, &fleet, facts(&config, &fleet)).await?;
-            config.node_id = identity.node_id().to_owned();
+            config.node_id = identity.node_id().clone();
             let tls = identity.server_tls()?;
             (Some(identity), tls)
         }

@@ -127,14 +127,40 @@ pub struct StorageView {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Issue {
-    pub code: String,
+    #[cfg_attr(test, schemars(with = "String"))]
+    pub code: IssueCode,
     pub detail: String,
 }
 
 impl Issue {
-    pub fn new(code: &str, detail: impl Into<String>) -> Self {
-        Self { code: code.into(), detail: detail.into() }
+    pub fn new(code: IssueCode, detail: impl Into<String>) -> Self {
+        Self { code, detail: detail.into() }
     }
+}
+
+/// What an `Issue` is about, as its code says it on the wire.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueCode {
+    ContainerMissing,
+    CreateIncomplete,
+    DigestMismatch,
+    DuplicateContainer,
+    InsufficientCapacity,
+    LiveRestoreOff,
+    NetworkNotIsolated,
+    OrphanData,
+    OverStorage,
+    PortConflict,
+    PortMismatch,
+    PortOutOfRange,
+    RecordRebuilt,
+    RestoreFinished,
+    UnexpectedContainer,
+    UnlabelledContainer,
+    UnreadableRecord,
+    UnreadableSnapshot,
+    UnrecoverableContainer,
 }
 
 /// Where an operator finds it on the host. Informational; never a contract.

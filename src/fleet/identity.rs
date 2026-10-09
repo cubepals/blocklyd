@@ -32,13 +32,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::tls::ServerCert;
 use crate::config::TlsConfig;
+use crate::ids::NodeId;
 use crate::protocol::wire::{RenewRequest, RenewResponse};
 use crate::tls::{TlsSetupError, load_certs, load_key};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityFile {
-    pub node_id: String,
+    pub node_id: NodeId,
     pub deployment_id: String,
     pub control_plane: String,
     pub allowed_clients: Vec<String>,
@@ -226,7 +227,7 @@ impl Identity {
             .map_err(|e| IdentityError::Invalid(format!("client TLS: {e}")))
     }
 
-    pub fn node_id(&self) -> &str {
+    pub fn node_id(&self) -> &NodeId {
         &self.file.node_id
     }
 }
@@ -269,8 +270,8 @@ impl Credentials {
         self.client.read().unwrap().clone()
     }
 
-    pub fn node_id(&self) -> String {
-        self.identity.lock().unwrap().node_id().to_owned()
+    pub fn node_id(&self) -> NodeId {
+        self.identity.lock().unwrap().node_id().clone()
     }
 
     pub fn generation(&self) -> u32 {
@@ -322,7 +323,7 @@ impl Credentials {
             .pem()
             .context("encoding the certificate request")?;
         let url = format!("{}/fleet/v1/nodes/{}/renew", control_plane.trim_end_matches('/'), current.node_id());
-        let request = RenewRequest { node_id: current.node_id().to_owned(), csr_pem: csr };
+        let request = RenewRequest { node_id: current.node_id().to_string(), csr_pem: csr };
         let answer: RenewResponse =
             crate::http_client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
                 .await

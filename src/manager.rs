@@ -51,7 +51,7 @@ use tokio::sync::mpsc;
 use crate::clock::now;
 use crate::config::Config;
 use crate::host;
-use crate::ids::{SnapshotId, WorkloadId};
+use crate::ids::{NodeId, SnapshotId, WorkloadId};
 use crate::labels::{
     LABEL_DEPLOYMENT, LABEL_DIGEST, LABEL_EPOCH, LABEL_GENERATION, LABEL_MANAGED, LABEL_NODE, LABEL_RECORD,
     LABEL_WORKLOAD,
@@ -61,10 +61,10 @@ use crate::ports::{PortAllocator, PortError, Probe};
 use crate::protocol::{
     Audience, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView, EnsureOutcome,
     EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse, FieldError,
-    Issue, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse, ProtocolVersions, PutPart,
-    ReconcileView, RestoreRequest, RestoreResponse, SnapshotDeleteResponse, SnapshotList, SnapshotRequest,
-    SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest, WorkloadSpec, WorkloadState,
-    WorkloadView,
+    Issue, IssueCode, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse,
+    ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, SnapshotDeleteResponse, SnapshotList,
+    SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest, WorkloadSpec,
+    WorkloadState, WorkloadView,
 };
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
@@ -93,7 +93,8 @@ mod stats;
 mod view;
 mod workload_state;
 
-pub use error::{EpochRule, NodeError, check_epoch};
+pub use error::{ConflictCode, EpochRule, NodeError, check_epoch};
+pub use fleet::Lifecycle;
 pub use label_record::LabelRecord;
 pub use logs::lines_of;
 pub use node::WorkloadSample;
@@ -219,9 +220,9 @@ pub struct Manager {
 /// What the node knows of its control plane, in fleet mode.
 #[derive(Clone, Debug, Default)]
 struct FleetState {
-    node_id: Option<String>,
+    node_id: Option<NodeId>,
     control_plane: Option<String>,
-    lifecycle: Option<String>,
+    lifecycle: Option<Lifecycle>,
     last_contact: Option<Instant>,
     last_contact_at: Option<OffsetDateTime>,
     last_error: Option<String>,
@@ -434,20 +435,20 @@ impl Manager {
     /// A freshly made container settles whatever was wrong with the old one, a restart it was
     /// refused included.
     fn clear_resolved_issues(&self, id: &WorkloadId) {
-        const RESOLVED: [&str; 6] = [
-            "container_missing",
-            "create_incomplete",
-            "digest_mismatch",
-            "port_mismatch",
-            "unexpected_container",
-            "insufficient_capacity",
+        const RESOLVED: [IssueCode; 6] = [
+            IssueCode::ContainerMissing,
+            IssueCode::CreateIncomplete,
+            IssueCode::DigestMismatch,
+            IssueCode::PortMismatch,
+            IssueCode::UnexpectedContainer,
+            IssueCode::InsufficientCapacity,
         ];
         if let Some(list) = self.state.lock().unwrap().issues.get_mut(id) {
-            list.retain(|i| !RESOLVED.contains(&i.code.as_str()));
+            list.retain(|i| !RESOLVED.contains(&i.code));
         }
     }
 
-    fn clear_issue(&self, id: &WorkloadId, code: &str) {
+    fn clear_issue(&self, id: &WorkloadId, code: IssueCode) {
         if let Some(list) = self.state.lock().unwrap().issues.get_mut(id) {
             list.retain(|i| i.code != code);
         }
@@ -563,7 +564,10 @@ fn restart_backoff(attempt: u32) -> Duration {
 fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
     let text = e.to_string();
     if text.contains("port is already allocated") || text.contains("address already in use") {
-        NodeError::Conflict { code: "port_conflict", message: format!("{id}: a host port it holds is in use: {text}") }
+        NodeError::Conflict {
+            code: ConflictCode::PortConflict,
+            message: format!("{id}: a host port it holds is in use: {text}"),
+        }
     } else {
         e.into()
     }

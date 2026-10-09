@@ -109,7 +109,7 @@ pub async fn ensure_identity(config: &Config, fleet: &FleetConfig, facts: NodeFa
         );
     }
     let file = IdentityFile {
-        node_id: response.node_id.clone(),
+        node_id: response.node_id.as_str().into(),
         deployment_id: response.deployment_id.clone(),
         control_plane: fleet.url.clone(),
         allowed_clients: response.allowed_clients.clone(),

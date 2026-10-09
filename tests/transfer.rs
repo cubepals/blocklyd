@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::put;
-use blocklyd::manager::{NodeError, Precondition, Records};
+use blocklyd::manager::{ConflictCode, NodeError, Precondition, Records};
 use blocklyd::protocol::{ExportRequest, RestoreRequest};
 use blocklyd::store::restore::RESTORE_COMPLETE;
 use sha2::Digest;
@@ -222,12 +222,12 @@ async fn a_running_workload_exports_only_when_quiesced_and_never_restores() {
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     f.manager.start(id("w"), Some(1)).await.unwrap();
     let err = f.manager.export(id("w"), export_to(format!("{base}/x.tar.gz")), Some(1)).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_quiesced", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotQuiesced, .. }), "{err:?}");
     let mut quiesced = export_to(format!("{base}/x.tar.gz"));
     quiesced.quiesced = true;
     f.manager.export(id("w"), quiesced, Some(1)).await.unwrap();
     let err = f.manager.restore(id("w"), restore_from(format!("{base}/x.tar.gz"), None), Some(1)).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_stopped", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotStopped, .. }), "{err:?}");
 }
 
 #[tokio::test]
@@ -327,7 +327,7 @@ async fn snapshots_follow_the_export_rules() {
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(3)).await.unwrap();
     f.manager.start(id("w"), Some(3)).await.unwrap();
     let err = f.manager.snapshot(id("w"), snapshot_request(SNAP, false), Some(3)).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_quiesced", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotQuiesced, .. }), "{err:?}");
     let quiesced = f.manager.snapshot(id("w"), snapshot_request(SNAP, true), Some(3)).await.unwrap();
     assert!(quiesced.snapshot.quiesced);
     // A running workload's data is never replaced, from a snapshot or otherwise.
@@ -336,7 +336,7 @@ async fn snapshots_follow_the_export_rules() {
         .restore(id("w"), serde_json::from_value(serde_json::json!({ "snapshot": SNAP })).unwrap(), Some(3))
         .await
         .unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_stopped", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotStopped, .. }), "{err:?}");
     // Only the current copy is copied.
     f.manager.fence(id("w"), 4).await.unwrap();
     let other = "1b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10";

@@ -32,7 +32,7 @@ impl IntoResponse for NodeError {
                 "precondition_failed",
                 Some(serde_json::json!({ "currentSpecDigest": current })),
             ),
-            NodeError::Conflict { code, .. } => (StatusCode::CONFLICT, *code, None),
+            NodeError::Conflict { code, .. } => (StatusCode::CONFLICT, code.as_str(), None),
             NodeError::InsufficientCapacity(_) => (StatusCode::CONFLICT, "insufficient_capacity", None),
             NodeError::InsufficientDisk(_) => (StatusCode::INSUFFICIENT_STORAGE, "insufficient_disk", None),
             NodeError::NoFreePorts(_) => (StatusCode::CONFLICT, "no_free_ports", None),

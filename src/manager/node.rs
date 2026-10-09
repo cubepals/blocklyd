@@ -17,7 +17,7 @@ impl Manager {
             daemon_version: env!("CARGO_PKG_VERSION").into(),
             protocol: ProtocolVersions::ours(),
             features: crate::protocol::features(),
-            node_id: self.config.node_id.clone(),
+            node_id: self.config.node_id.to_string(),
             deployment_id: self.config.deployment_id.clone(),
         }
     }
@@ -145,7 +145,7 @@ impl Manager {
         let host_issues = self.state.lock().unwrap().host_issues.clone();
         let info = self.runtime_info.lock().unwrap().clone().unwrap_or_default();
         NodeStatus {
-            node_id: self.config.node_id.clone(),
+            node_id: self.config.node_id.to_string(),
             deployment_id: self.config.deployment_id.clone(),
             fleet: self.fleet_view(),
             daemon: DaemonView {

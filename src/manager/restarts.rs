@@ -85,7 +85,10 @@ impl Manager {
         // Refused, the workload stays crashed, and says why.
         if let Err(e) = self.admit(id, record.spec.resources.memory_mb as u64) {
             tracing::warn!(workload = %id, error = %e, "not restarting after a failure: no room for it now");
-            self.set_issue(id, Issue::new("insufficient_capacity", format!("not restarted after a failure: {e}")));
+            self.set_issue(
+                id,
+                Issue::new(IssueCode::InsufficientCapacity, format!("not restarted after a failure: {e}")),
+            );
             return Restart::Done;
         }
         self.count_restart(id, attempt + 1).await;

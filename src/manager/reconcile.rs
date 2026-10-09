@@ -63,7 +63,8 @@ impl Manager {
         if from == Records::FromDisk {
             let (records, bad) = self.store.load_all()?;
             for b in bad {
-                host_issues.push(Issue::new("unreadable_record", format!("{}: {}", b.path.display(), b.problem)));
+                host_issues
+                    .push(Issue::new(IssueCode::UnreadableRecord, format!("{}: {}", b.path.display(), b.problem)));
             }
             // What a crash left is settled before anything uses the data.
             host_issues.extend(self.settle_leftovers(&records, &mut issues).await);
@@ -85,14 +86,14 @@ impl Manager {
         let network = self.note(self.runtime.ensure_network(&self.config.docker.network, &network_labels).await)?;
         if !network.isolated {
             host_issues.push(Issue::new(
-                "network_not_isolated",
+                IssueCode::NetworkNotIsolated,
                 format!("{} lets workloads reach each other (enable_icc is not false)", self.config.docker.network),
             ));
         }
         if let Ok(info) = self.runtime.info().await {
             if info.live_restore != Some(true) {
                 host_issues.push(Issue::new(
-                    "live_restore_off",
+                    IssueCode::LiveRestoreOff,
                     "the Docker daemon stops every workload when it restarts (live-restore is off)",
                 ));
             }
@@ -104,8 +105,10 @@ impl Manager {
         for c in containers {
             match c.labels.get(LABEL_WORKLOAD).map(|w| WorkloadId::parse(w)) {
                 Some(Ok(id)) => by_workload.entry(id).or_default().push(c),
-                _ => host_issues
-                    .push(Issue::new("unlabelled_container", format!("{} carries no valid workload id", c.name))),
+                _ => host_issues.push(Issue::new(
+                    IssueCode::UnlabelledContainer,
+                    format!("{} carries no valid workload id", c.name),
+                )),
             }
         }
 
@@ -120,7 +123,7 @@ impl Manager {
                 issues
                     .entry(record.id.clone())
                     .or_default()
-                    .push(Issue::new("duplicate_container", format!("{} also claims this workload", s.name)));
+                    .push(Issue::new(IssueCode::DuplicateContainer, format!("{} also claims this workload", s.name)));
             }
             let info = mine.into_iter().next();
             match (record.phase, &info) {
@@ -132,17 +135,17 @@ impl Manager {
                     adopted += 1;
                 }
                 (Phase::Creating, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
-                    "create_incomplete",
+                    IssueCode::CreateIncomplete,
                     "creation was interrupted before the container existed; PUT the spec again",
                 )),
                 (Phase::Active, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
-                    "container_missing",
+                    IssueCode::ContainerMissing,
                     "the runtime no longer has this workload's container; PUT the spec to make it again",
                 )),
                 (Phase::Retained, Some(c)) => {
                     // Compute exists though it was let go: the runtime is the truth.
                     issues.entry(record.id.clone()).or_default().push(Issue::new(
-                        "unexpected_container",
+                        IssueCode::UnexpectedContainer,
                         format!("{} exists for a decommissioned workload", c.name),
                     ));
                 }
@@ -151,7 +154,7 @@ impl Manager {
             if let Some(c) = &info {
                 if c.labels.get(LABEL_DIGEST) != Some(&record.spec_digest) {
                     issues.entry(record.id.clone()).or_default().push(Issue::new(
-                        "digest_mismatch",
+                        IssueCode::DigestMismatch,
                         "the container was made from a different spec than the record holds",
                     ));
                 }
@@ -160,7 +163,7 @@ impl Manager {
                     && labelled.ports != record.ports
                 {
                     issues.entry(record.id.clone()).or_default().push(Issue::new(
-                        "port_mismatch",
+                        IssueCode::PortMismatch,
                         "the container publishes different ports than the record holds",
                     ));
                 }
@@ -174,8 +177,10 @@ impl Manager {
             let Some(c) = containers.into_iter().next() else { continue };
             let Some(label) = c.labels.get(LABEL_RECORD).and_then(|l| serde_json::from_str::<LabelRecord>(l).ok())
             else {
-                host_issues
-                    .push(Issue::new("unrecoverable_container", format!("{} has no readable record label", c.name)));
+                host_issues.push(Issue::new(
+                    IssueCode::UnrecoverableContainer,
+                    format!("{} has no readable record label", c.name),
+                ));
                 continue;
             };
             let record = WorkloadRecord {
@@ -201,7 +206,7 @@ impl Manager {
             self.store.ensure_data_dir(&id, self.config.data_owner_ids())?;
             self.save_record(&record).await?;
             issues.entry(id.clone()).or_default().push(Issue::new(
-                "record_rebuilt",
+                IssueCode::RecordRebuilt,
                 "blocklyd's record was missing and was rebuilt from the container's labels",
             ));
             seen.insert(id.clone());
@@ -218,12 +223,15 @@ impl Manager {
                 for p in &r.ports {
                     if let Err(e) = state.ports.claim(&r.id, p.protocol, p.host_port) {
                         let issue = match e {
-                            PortError::Conflict { .. } => Issue::new("port_conflict", e.to_string()),
-                            _ => Issue::new("port_out_of_range", e.to_string()),
+                            PortError::Conflict { .. } => Issue::new(IssueCode::PortConflict, e.to_string()),
+                            _ => Issue::new(IssueCode::PortOutOfRange, e.to_string()),
                         };
                         issues.entry(r.id.clone()).or_default().push(issue);
                         if let PortError::Conflict { holder, .. } = &e {
-                            issues.entry(holder.clone()).or_default().push(Issue::new("port_conflict", e.to_string()));
+                            issues
+                                .entry(holder.clone())
+                                .or_default()
+                                .push(Issue::new(IssueCode::PortConflict, e.to_string()));
                         }
                     }
                 }
@@ -232,7 +240,7 @@ impl Manager {
 
         for dir in self.store.orphan_dirs(&seen) {
             host_issues.push(Issue::new(
-                "orphan_data",
+                IssueCode::OrphanData,
                 format!("{} holds data no workload claims; left alone", dir.display()),
             ));
         }
@@ -245,7 +253,7 @@ impl Manager {
         let known: BTreeSet<_> = state.records.keys().cloned().collect();
         state.issues.retain(|id, _| known.contains(id));
         for (id, list) in state.issues.iter_mut() {
-            list.retain(|i| matches!(i.code.as_str(), "over_storage" | "insufficient_capacity"));
+            list.retain(|i| matches!(i.code, IssueCode::OverStorage | IssueCode::InsufficientCapacity));
             if let Some(new) = issues.remove(id) {
                 list.extend(new);
             }
@@ -283,6 +291,8 @@ impl Manager {
             tracing::warn!(path = %failed.path.display(), error = %failed.problem, "couldn't remove what a crash left");
         }
         let unreadable = leftovers.unreadable.into_iter();
-        unreadable.map(|b| Issue::new("unreadable_snapshot", format!("{}: {}", b.path.display(), b.problem))).collect()
+        unreadable
+            .map(|b| Issue::new(IssueCode::UnreadableSnapshot, format!("{}: {}", b.path.display(), b.problem)))
+            .collect()
     }
 }

@@ -17,7 +17,7 @@ pub enum NodeError {
     #[error("the workload's current spec is not the one the request expected")]
     PreconditionFailed { current: Option<String> },
     #[error("{message}")]
-    Conflict { code: &'static str, message: String },
+    Conflict { code: ConflictCode, message: String },
     #[error("{0}")]
     InsufficientCapacity(String),
     #[error("{0}")]
@@ -52,6 +52,36 @@ pub enum NodeError {
     Transfer(String),
     #[error("the archive is {size_bytes} bytes; one upload to the store carries at most {limit_bytes}")]
     ArchiveTooLarge { size_bytes: u64, limit_bytes: u64 },
+}
+
+/// Why a verb can't act on the workload as it is: the `code` of its 409 answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictCode {
+    ContainerMissing,
+    NameTaken,
+    NoCompute,
+    NotCreated,
+    NotQuiesced,
+    NotRunning,
+    NotStopped,
+    PortConflict,
+    SnapshotBusy,
+}
+
+impl ConflictCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ContainerMissing => "container_missing",
+            Self::NameTaken => "name_taken",
+            Self::NoCompute => "no_compute",
+            Self::NotCreated => "not_created",
+            Self::NotQuiesced => "not_quiesced",
+            Self::NotRunning => "not_running",
+            Self::NotStopped => "not_stopped",
+            Self::PortConflict => "port_conflict",
+            Self::SnapshotBusy => "snapshot_busy",
+        }
+    }
 }
 
 /// How a verb treats the placement epoch it is sent.
