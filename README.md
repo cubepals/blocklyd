@@ -19,8 +19,8 @@ talk to each other). If the control plane goes away, servers keep running.
 
 ## Build and test
 
-Rust 1.94 (`rust-version` 1.89), one Cargo package, `Cargo.lock` committed and every build
-`--locked`.
+Rust 1.94.1, as `rust-toolchain.toml` names it for rustup, CI and the Dockerfile; one Cargo package,
+`Cargo.lock` committed and every build `--locked`.
 
 ```sh
 cargo build --locked --release                               # target/release/blocklyd

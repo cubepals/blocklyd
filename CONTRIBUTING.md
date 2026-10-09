@@ -6,7 +6,8 @@ agents alike; this page is how to work on it.
 
 ## Setup and tests
 
-Rust 1.94 on Linux (blocklyd uses Linux-only APIs; on macOS, work in a Linux container or VM).
+The Rust `rust-toolchain.toml` names, which rustup installs, on Linux (blocklyd uses Linux-only
+APIs; on macOS, work in a Linux container or VM).
 
 ```sh
 cargo fmt --check

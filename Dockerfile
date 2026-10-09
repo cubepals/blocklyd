@@ -5,6 +5,8 @@
 #   /deploy/                  Docker's daemon.json and the systemd unit
 #   /LICENSE.md               FSL-1.1-ALv2
 # Cubepals' control plane image copies them out of it, pinned by digest.
+# The Rust is rust-toolchain.toml's, which isn't copied in: the tag says the same version, and CI
+# fails if they differ.
 FROM rust:1.94.1-alpine3.22 AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src

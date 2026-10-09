@@ -15,7 +15,6 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_VERSION: 1.94.1
 
 jobs:
   # A change to nothing but prose skips the rest. `check` still reports, so it can stay required.
@@ -53,10 +52,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Rust ${{ env.RUST_VERSION }}
+      # rust-toolchain.toml names the one Rust, with clippy and rustfmt; rustup installs it from there.
+      - name: Rust from rust-toolchain.toml
+        id: rust
         run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy,rustfmt
-          rustup override set "$RUST_VERSION"
+          rustup toolchain install
+          echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      # The release image builds with its own Rust, from the Dockerfile's base image tag.
+      - name: The Dockerfile's Rust is the same
+        env:
+          RUST: ${{ steps.rust.outputs.version }}
+        run: grep -q "^FROM rust:$RUST-" Dockerfile || { grep '^FROM rust:' Dockerfile; exit 1; }
       # Keyed on the toolchain too: a new rustc can't reuse the old one's artifacts, and an exact
       # key hit never saves, so without it a Rust bump would rebuild everything on every run until
       # Cargo.lock changed. A Cargo.lock change starts from the last cache of the same Rust.
@@ -66,8 +72,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             target
-          key: test-${{ env.RUST_VERSION }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: test-${{ env.RUST_VERSION }}-
+          key: test-${{ steps.rust.outputs.version }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: test-${{ steps.rust.outputs.version }}-
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       # One implementation of the structure rules for both repositories: Cubepals'
@@ -101,10 +107,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Rust ${{ env.RUST_VERSION }}
-        run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup override set "$RUST_VERSION"
+      - name: Rust from rust-toolchain.toml
+        run: rustup toolchain install
       # The release's own binary, not a build from source on every run.
       - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
         with:
@@ -150,11 +154,12 @@ jobs:
           ref: main
           path: cubepals
           persist-credentials: false
-      - name: Rust ${{ env.RUST_VERSION }}
+      - name: Rust from rust-toolchain.toml
+        id: rust
         working-directory: blocklyd
         run: |
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup override set "$RUST_VERSION"
+          rustup toolchain install
+          echo "version=$(rustc --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
       # As test's: the toolchain is in the key.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -162,8 +167,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             blocklyd/target
-          key: contract-${{ env.RUST_VERSION }}-${{ hashFiles('blocklyd/Cargo.lock') }}
-          restore-keys: contract-${{ env.RUST_VERSION }}-
+          key: contract-${{ steps.rust.outputs.version }}-${{ hashFiles('blocklyd/Cargo.lock') }}
+          restore-keys: contract-${{ steps.rust.outputs.version }}-
       - run: cargo build --locked
         working-directory: blocklyd
       - name: Start an S3 store

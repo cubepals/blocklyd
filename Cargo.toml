@@ -2,7 +2,7 @@
 name = "blocklyd"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.94"
 license = "FSL-1.1-ALv2"
 publish = false
 repository = "https://github.com/cubepals/blocklyd"
