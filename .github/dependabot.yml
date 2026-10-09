@@ -1,13 +1,16 @@
 # Monthly and grouped, as Cubepals' own: at most two pull requests per ecosystem a month, one for
 # minor and patch updates and one for majors. New releases wait a week (a month for majors) before
 # they are offered, so a broken or hijacked release has time to be pulled. Security fixes skip all
-# of that: they arrive when published.
+# of that: they arrive when published. Each pull request is labelled `dependencies` only. Minor and
+# patch updates merge themselves once `check` passes (workflows/dependabot.yml); majors and actions
+# wait for a person.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
       interval: monthly
+    labels: [dependencies]
     open-pull-requests-limit: 2
     cooldown:
       default-days: 7
@@ -27,6 +30,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    labels: [dependencies]
     open-pull-requests-limit: 1
     cooldown:
       default-days: 7

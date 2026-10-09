@@ -5,7 +5,8 @@ name: Release
 # are published, attested, as an immutable GitHub Release and as ghcr.io/cubepals/blocklyd:<version>.
 # Any other commit does nothing. Agents never push tags; this does.
 on:
-  workflow_run:
+  # Safe here: the job runs only for CI on a push to this repository's main, never a fork's run.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: [CI]
     types: [completed]
     branches: [main]
@@ -20,7 +21,10 @@ concurrency:
 
 jobs:
   release:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    if: >-
+      github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -33,9 +37,10 @@ jobs:
       # The commit CI passed on, or main's head when run by hand.
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SHA }}
+          persist-credentials: false
       - name: Is this version released?
         id: version
         run: |
@@ -49,11 +54,14 @@ jobs:
           fi
       - name: Build
         if: steps.version.outputs.new == 'true'
-        run: docker build -t "$IMAGE:${{ steps.version.outputs.version }}" .
+        env:
+          version: ${{ steps.version.outputs.version }}
+        run: docker build -t "$IMAGE:$version" .
       - name: The binary says its version, and the files
         if: steps.version.outputs.new == 'true'
+        env:
+          version: ${{ steps.version.outputs.version }}
         run: |
-          version='${{ steps.version.outputs.version }}'
           [ "$(docker run --rm "$IMAGE:$version" --version)" = "blocklyd $version" ]
           mkdir -p dist
           id=$(docker create "$IMAGE:$version")
@@ -66,36 +74,40 @@ jobs:
       - name: Push the image
         if: steps.version.outputs.new == 'true'
         id: push
+        env:
+          version: ${{ steps.version.outputs.version }}
         run: |
-          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          docker push -q "$IMAGE:${{ steps.version.outputs.version }}"
-          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:${{ steps.version.outputs.version }}" | cut -d@ -f2)
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push -q "$IMAGE:$version"
+          digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$IMAGE:$version" | cut -d@ -f2)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "$IMAGE:${{ steps.version.outputs.version }}@$digest"
-      - uses: actions/attest-build-provenance@v4
+          echo "$IMAGE:$version@$digest"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: steps.version.outputs.new == 'true'
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         if: steps.version.outputs.new == 'true'
         with:
           subject-path: dist/*
       # Drafted with every file, then published: an immutable release can't take files after.
       - name: Publish the release
         if: steps.version.outputs.new == 'true'
+        env:
+          version: ${{ steps.version.outputs.version }}
+          digest: ${{ steps.push.outputs.digest }}
         run: |
-          version='${{ steps.version.outputs.version }}'
           cat > notes.md <<NOTES
           blocklyd $version, under FSL-1.1-ALv2 (LICENSE.md).
 
-          Image: \`$IMAGE:$version@${{ steps.push.outputs.digest }}\`
+          Image: \`$IMAGE:$version@$digest\`
 
           Check a file or the image:
           \`\`\`sh
-          gh attestation verify blocklyd -R ${{ github.repository }}
-          gh attestation verify oci://$IMAGE:$version -R ${{ github.repository }}
+          gh attestation verify blocklyd -R $GITHUB_REPOSITORY
+          gh attestation verify oci://$IMAGE:$version -R $GITHUB_REPOSITORY
           \`\`\`
           NOTES
           gh release create "v$version" dist/* --draft --target "$SHA" \

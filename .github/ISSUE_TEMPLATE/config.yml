@@ -1,4 +1,4 @@
-blank_issues_enabled: true
+blank_issues_enabled: false
 contact_links:
   - name: Help with your server or account on cubepals.com
     url: mailto:support@cubepals.com

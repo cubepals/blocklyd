@@ -1,0 +1,16 @@
+name: Idea
+description: Something blocklyd could do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What an operator or the control plane is trying to do, and what gets in the way.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea
+      description: blocklyd prefers what it can infer, default or repair itself over a new setting.

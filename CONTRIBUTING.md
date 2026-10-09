@@ -1,7 +1,7 @@
 # Contributing
 
 blocklyd is the node daemon of [Cubepals](https://github.com/cubepals/cubepals), developed under
-the codename Blockly. [CLAUDE.md](CLAUDE.md) holds the rules every change follows, for people and
+the codename Blockly. [AGENTS.md](AGENTS.md) holds the rules every change follows, for people and
 agents alike; this page is how to work on it.
 
 ## Setup and tests
@@ -43,6 +43,7 @@ You keep the copyright in it.
 
 ## Conduct and security
 
-Everyone here follows Cubepals' [code of
-conduct](https://github.com/cubepals/cubepals/blob/main/CODE_OF_CONDUCT.md). Security problems
-are reported privately, as [SECURITY.md](SECURITY.md) says, never in an issue.
+Everyone here follows the
+[code of conduct](https://github.com/cubepals/.github/blob/main/CODE_OF_CONDUCT.md), which every
+Cubepals repository shares. Security problems are reported privately, as [SECURITY.md](SECURITY.md)
+says, never in an issue. Where to get help is in [SUPPORT.md](SUPPORT.md).
