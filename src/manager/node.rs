@@ -1,4 +1,5 @@
-//! What the node reports about itself as a whole: health, capacity, status, a heartbeat's body.
+//! What the node reports about itself as a whole: health, capacity, status. A heartbeat's body is
+//! put together from these in `crate::fleet::heartbeat`.
 //! Each workload's own view is `view.rs`; the lease is `fleet.rs`; admission is `room.rs`.
 
 use super::*;
@@ -120,50 +121,9 @@ impl Manager {
         })
     }
 
-    /// Everything this node holds, for a heartbeat.
-    pub async fn heartbeat_report(
-        &self,
-        node_id: &str,
-        session: &str,
-        boot_id: Option<String>,
-        seq: u64,
-    ) -> crate::protocol::wire::HeartbeatRequest {
-        let workloads = self
-            .list(None)
-            .into_iter()
-            .map(|v| crate::protocol::wire::WorkloadReport {
-                id: v.id.to_string(),
-                epoch: v.epoch,
-                superseded_by: v.superseded_by,
-                state: v.state,
-                spec_digest: v.spec_digest,
-                generation: v.generation,
-                memory_mb: v.resources.memory_mb,
-                restart_count: v.restart_count,
-                exit: v.exit,
-                last_failure_at: v.last_failure_at,
-                changed_at: v.changed_at,
-                ports: v.ports.iter().map(|p| (p.name.clone(), p.host_port)).collect(),
-                issues: v.issues,
-            })
-            .collect();
-        let issues = self.state.lock().unwrap().host_issues.clone();
-        crate::protocol::wire::HeartbeatRequest {
-            node_id: node_id.to_owned(),
-            session_id: session.to_owned(),
-            boot_id,
-            seq,
-            daemon_version: crate::fleet::daemon_version(),
-            protocol: ProtocolVersions::ours(),
-            features: crate::protocol::features(),
-            runtime_up: self.docker_up(),
-            reconciled: self.reconciled(),
-            capacity: self.capacity(),
-            workloads,
-            issues,
-            addresses: self.addresses(),
-            upgrade_failed: None,
-        }
+    /// What is wrong with the host as a whole, as the last full pass found it.
+    pub fn host_issues(&self) -> Vec<Issue> {
+        self.state.lock().unwrap().host_issues.clone()
     }
 
     pub fn last_reconcile(&self) -> Option<ReconcileView> {
