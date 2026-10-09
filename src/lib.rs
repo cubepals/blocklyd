@@ -5,6 +5,7 @@
 pub mod api;
 pub mod certs;
 pub mod cli;
+pub mod clock;
 pub mod config;
 pub mod doctor;
 pub mod durable;
@@ -13,6 +14,7 @@ pub mod host;
 pub mod http_client;
 pub mod ids;
 pub mod infer;
+pub mod labels;
 pub mod manager;
 pub mod metrics;
 pub mod ports;

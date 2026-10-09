@@ -90,7 +90,7 @@ pub async fn periodic(manager: Arc<Manager>, cancel: CancellationToken) {
             _ = trash.tick() => {
                 let retention = (manager.config.workloads.trash_retention_hours * 3600) as i64;
                 let store = manager.store.clone();
-                let now = crate::manager::now().unix_timestamp();
+                let now = crate::clock::now().unix_timestamp();
                 if let Ok(purged) = tokio::task::spawn_blocking(move || store.purge_trash(now, retention)).await {
                     for path in purged {
                         info!(path = %path.display(), "purged from trash after retention");

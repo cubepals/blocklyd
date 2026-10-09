@@ -44,9 +44,14 @@ use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 use tokio::sync::mpsc;
 
+use crate::clock::now;
 use crate::config::Config;
 use crate::host;
 use crate::ids::{SnapshotId, WorkloadId};
+use crate::labels::{
+    LABEL_DEPLOYMENT, LABEL_DIGEST, LABEL_EPOCH, LABEL_GENERATION, LABEL_MANAGED, LABEL_NODE, LABEL_RECORD,
+    LABEL_WORKLOAD,
+};
 use crate::metrics::Metrics;
 use crate::ports::{PortAllocator, PortError, Probe};
 use crate::protocol::{
@@ -82,21 +87,6 @@ mod view;
 
 pub use logs::lines_of;
 pub use node::WorkloadSample;
-
-pub const LABEL_MANAGED: &str = "blocklyd.managed";
-pub const LABEL_DEPLOYMENT: &str = "blocklyd.deployment";
-pub const LABEL_NODE: &str = "blocklyd.node";
-pub const LABEL_WORKLOAD: &str = "blocklyd.workload";
-pub const LABEL_GENERATION: &str = "blocklyd.generation";
-pub const LABEL_DIGEST: &str = "blocklyd.spec-digest";
-pub const LABEL_EPOCH: &str = "blocklyd.epoch";
-/// The whole record (minus secrets) as JSON: enough to rebuild blocklyd's state from the
-/// runtime alone if the state directory is lost.
-pub const LABEL_RECORD: &str = "blocklyd.record";
-
-pub fn now() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
-}
 
 fn now_str() -> String {
     format_time(now())

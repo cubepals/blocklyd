@@ -113,7 +113,7 @@ pub async fn ensure_identity(config: &Config, fleet: &FleetConfig, facts: NodeFa
         deployment_id: response.deployment_id.clone(),
         control_plane: fleet.url.clone(),
         allowed_clients: response.allowed_clients.clone(),
-        enrolled_at: crate::runtime::format_time(crate::manager::now()),
+        enrolled_at: crate::runtime::format_time(crate::clock::now()),
         generation: 0,
     };
     let identity = Identity::save(

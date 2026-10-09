@@ -187,7 +187,7 @@ async fn list(State(app): State<AppState>, ApiQuery(q): ApiQuery<ListQuery>) -> 
     };
     let body = crate::protocol::ListResponse {
         workloads: app.manager.list(since),
-        observed_at: crate::runtime::format_time(crate::manager::now()),
+        observed_at: crate::runtime::format_time(crate::clock::now()),
     };
     Json(body).into_response()
 }
