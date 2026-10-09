@@ -22,10 +22,10 @@ use hyper::Method;
 use tracing::{info, warn};
 
 use super::identity::{Identity, IdentityFile, same_certificates};
-use crate::api::tls::load_certs;
 use crate::config::{Config, FleetConfig};
 use crate::http_client::{self as client, JsonError};
 use crate::protocol::wire::{EnrollRequest, EnrollResponse, NodeFacts};
+use crate::tls::load_certs;
 
 /// The node's identity: the one on disk, or a new one from enrollment. Retries while the
 /// control plane can't be reached (a host is often up before it is); gives up on a refusal.

@@ -12,17 +12,16 @@
 //! 3. One of its DNS names is in `allowed_clients`: a valid certificate for someone else (another
 //!    deployment, an edge) is refused with 403.
 
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
 use rustls::RootCertStore;
 use rustls::server::{ClientHello, ResolvesServerCert, WebPkiClientVerifier};
 use rustls::sign::CertifiedKey;
-use rustls_pki_types::pem::PemObject;
-use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+use rustls_pki_types::CertificateDer;
 
 use crate::config::TlsConfig;
+use crate::tls::{TlsSetupError, load_certs, load_key, provider};
 
 /// Who is on the other end of a connection, attached to each request it sends.
 #[derive(Clone, Debug, Default)]
@@ -30,42 +29,6 @@ pub struct ClientIdentity {
     pub names: Vec<String>,
     /// The allowed name it matched, if any.
     pub allowed: Option<String>,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum TlsSetupError {
-    #[error("{path}: {problem}")]
-    File { path: String, problem: String },
-    #[error("TLS configuration: {0}")]
-    Rustls(String),
-}
-
-fn file_err(path: &Path, problem: impl ToString) -> TlsSetupError {
-    TlsSetupError::File { path: path.display().to_string(), problem: problem.to_string() }
-}
-
-pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, TlsSetupError> {
-    let certs: Vec<_> = CertificateDer::pem_file_iter(path)
-        .map_err(|e| file_err(path, e))?
-        .collect::<Result<_, _>>()
-        .map_err(|e| file_err(path, e))?;
-    if certs.is_empty() {
-        return Err(file_err(path, "holds no certificate"));
-    }
-    Ok(certs)
-}
-
-pub fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, TlsSetupError> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = fs::metadata(path).map_err(|e| file_err(path, e))?.permissions().mode();
-    if mode & 0o077 != 0 {
-        return Err(file_err(path, format!("is readable by others (mode {:o}); chmod 600 it", mode & 0o777)));
-    }
-    PrivateKeyDer::from_pem_file(path).map_err(|e| file_err(path, e))
-}
-
-pub fn provider() -> Arc<rustls::crypto::CryptoProvider> {
-    Arc::new(rustls::crypto::ring::default_provider())
 }
 
 /// The API's own certificate, replaceable while serving: a renewed one is used for new

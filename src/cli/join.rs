@@ -231,7 +231,7 @@ fn report(token: &JoinToken, config: &Config, file: &Path, kept: bool, written: 
 /// The fleet CA as the token's endpoint serves it, once it is the one the token names.
 async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
     let url = format!("{}/fleet/v1/ca.pem", token.url.trim_end_matches('/'));
-    let provider = crate::api::tls::provider();
+    let provider = crate::tls::provider();
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()

@@ -20,5 +20,6 @@ pub mod protocol;
 pub mod reconcile;
 pub mod runtime;
 pub mod store;
+pub mod tls;
 pub mod transfer;
 pub mod tree;
