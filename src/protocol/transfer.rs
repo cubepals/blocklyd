@@ -1,6 +1,6 @@
 //! Moving a workload's data: export to a presigned URL (in parts when it is large), restore from
 //! one or from a snapshot, local snapshots, and a snapshot's upload. It does not make or unpack
-//! archives: that is `crate::transfer`. Stopping, fencing and deleting are in `lifecycle.rs`.
+//! archives: that is `crate::tarball`. Stopping, fencing and deleting are in `lifecycle.rs`.
 
 use std::collections::BTreeMap;
 use std::fmt;

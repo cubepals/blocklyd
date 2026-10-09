@@ -79,7 +79,7 @@ fn snapshot_archive_and_restore_costs() {
 
     let started = Instant::now();
     let packed =
-        blocklyd::transfer::pack(&dir.path().join("snapshot"), &dir.path().join("all.tar.gz"), &[], &mut |_| Ok(()))
+        blocklyd::tarball::pack(&dir.path().join("snapshot"), &dir.path().join("all.tar.gz"), &[], &mut |_| Ok(()))
             .unwrap();
     let took = started.elapsed().as_secs_f64();
     println!(
@@ -92,14 +92,14 @@ fn snapshot_archive_and_restore_costs() {
 
     let started = Instant::now();
     let moved =
-        blocklyd::transfer::pack(&data, &dir.path().join("move.tar.gz"), &["libraries".to_owned()], &mut |_| Ok(()))
+        blocklyd::tarball::pack(&data, &dir.path().join("move.tar.gz"), &["libraries".to_owned()], &mut |_| Ok(()))
             .unwrap();
     let took = started.elapsed().as_secs_f64();
     println!("archive (a move, without libraries/): {:.2} s, {:.0} MB out", took, mb(moved.size_bytes));
 
     let started = Instant::now();
     let unpacked =
-        blocklyd::transfer::unpack(&dir.path().join("all.tar.gz"), &dir.path().join("restored"), me, &mut |_| Ok(()))
+        blocklyd::tarball::unpack(&dir.path().join("all.tar.gz"), &dir.path().join("restored"), me, &mut |_| Ok(()))
             .unwrap();
     let took = started.elapsed().as_secs_f64();
     println!("restore from an archive: {:.2} s ({:.0} MB/s out)", took, rate(unpacked.bytes, took));

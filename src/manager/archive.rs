@@ -82,11 +82,11 @@ impl Manager {
         url: &str,
         extra_headers: &BTreeMap<String, String>,
         parts: Option<&PartsTarget>,
-    ) -> Result<(crate::transfer::Packed, Option<Vec<PutPart>>), NodeError> {
+    ) -> Result<(crate::tarball::Packed, Option<Vec<PutPart>>), NodeError> {
         let tls = tls_for(url)?;
         let need = {
             let root = root.clone();
-            tokio::task::spawn_blocking(move || crate::transfer::tree_bytes(&root)).await.unwrap_or(0)
+            tokio::task::spawn_blocking(move || crate::tarball::tree_bytes(&root)).await.unwrap_or(0)
         };
         self.admit_disk(need, "the archive's spool")?;
         let spool_dir = self.store.spool_dir();
@@ -98,7 +98,7 @@ impl Manager {
             // Watched as it is written, as a restore is: admitted alone, it may not be alone.
             let mut watch = self.floor_watch();
             tokio::task::spawn_blocking(move || {
-                crate::transfer::pack(&root, &spool, &exclude, &mut |read| watch.wrote(read).map_err(|e| e.to_string()))
+                crate::tarball::pack(&root, &spool, &exclude, &mut |read| watch.wrote(read).map_err(|e| e.to_string()))
             })
             .await
             .map_err(|e| NodeError::Internal(format!("packing panicked: {e}")))?
@@ -265,20 +265,20 @@ impl Manager {
         std::fs::create_dir_all(&spool_dir).map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
         let spool = spool_dir.join(format!("{id}-{}.tar.gz", uuid::Uuid::new_v4()));
         let _cleanup = RemoveOnDrop(spool.clone());
-        let mut file = crate::transfer::Hashing::new(
+        let mut file = crate::tarball::Hashing::new(
             std::fs::File::create(&spool).map_err(|e| NodeError::Internal(format!("spool: {e}")))?,
         );
         let mut body = response.into_body();
         let mut watch = self.floor_watch();
         // A body that stops coming never ends by itself, and this holds the workload's lock: it
         // fails once nothing arrives for a while, or once nobody is waiting for it any more.
-        let idle = crate::transfer::download_idle();
-        let deadline = tokio::time::Instant::now() + crate::transfer::DOWNLOAD_LIMIT;
+        let idle = crate::tarball::download_idle();
+        let deadline = tokio::time::Instant::now() + crate::tarball::DOWNLOAD_LIMIT;
         let stalled = |_| {
             let why = if tokio::time::Instant::now() < deadline {
                 format!("nothing arrived for {idle:?}")
             } else {
-                format!("not finished within {:?}", crate::transfer::DOWNLOAD_LIMIT)
+                format!("not finished within {:?}", crate::tarball::DOWNLOAD_LIMIT)
             };
             NodeError::Transfer(format!("downloading the archive: {why}"))
         };
@@ -290,7 +290,7 @@ impl Manager {
             if let Ok(data) = frame.into_data() {
                 file.write_all(&data).map_err(|e| write_failed("spool", e))?;
                 watch.wrote(file.bytes())?;
-                if file.bytes() > crate::transfer::MAX_UNPACKED_BYTES {
+                if file.bytes() > crate::tarball::MAX_UNPACKED_BYTES {
                     return Err(NodeError::InvalidArchive("the archive is larger than any world".into()));
                 }
             }
@@ -308,7 +308,7 @@ impl Manager {
             tokio::task::spawn_blocking(move || {
                 // On disk before anything calls it complete (`Store::swap_in_restored`).
                 let disk = crate::durable::FilesystemSync::begin(&beside)?;
-                let unpacked = crate::transfer::unpack(&spool, &into, owner, &mut |written| {
+                let unpacked = crate::tarball::unpack(&spool, &into, owner, &mut |written| {
                     watch.wrote(written).map_err(|e| e.to_string())
                 })?;
                 disk.finish()?;
@@ -318,8 +318,8 @@ impl Manager {
             .map_err(|e| NodeError::Internal(format!("unpacking panicked: {e}")))?
         };
         let unpacked = unpacked.map_err(|e| match e {
-            crate::transfer::UnpackError::NoRoom(message) => NodeError::InsufficientDisk(message),
-            crate::transfer::UnpackError::Io(io) => write_failed("unpacking", io),
+            crate::tarball::UnpackError::NoRoom(message) => NodeError::InsufficientDisk(message),
+            crate::tarball::UnpackError::Io(io) => write_failed("unpacking", io),
             other => NodeError::InvalidArchive(other.to_string()),
         })?;
         Ok(RestoreResponse {
@@ -389,7 +389,7 @@ const PART_TRIES: u32 = 3;
 /// to take (a dropped connection, a 5xx) is sent again; one it refused fails the archive, and the
 /// control plane drops the upload.
 async fn put_parts(spool: &std::path::Path, size: u64, parts: &PartsTarget) -> Result<Vec<PutPart>, NodeError> {
-    let needed = crate::transfer::parts_needed(size, parts.part_size);
+    let needed = crate::tarball::parts_needed(size, parts.part_size);
     if needed > parts.urls.len() as u64 {
         return Err(NodeError::ArchiveTooLarge { size_bytes: size, limit_bytes: parts.capacity() });
     }
@@ -441,7 +441,7 @@ async fn put_part(
     let etag = response.headers().get(hyper::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_owned);
     // A few bytes, but a store that stops sending them would hold the export forever: a stall is
     // a part the store failed to take, and it is sent again like one.
-    let idle = crate::transfer::download_idle();
+    let idle = crate::tarball::download_idle();
     let text = tokio::time::timeout(idle, crate::http_client::read_body(response, 4096))
         .await
         .map_err(|_| (format!("the store's answer stopped: nothing arrived for {idle:?}"), true))?

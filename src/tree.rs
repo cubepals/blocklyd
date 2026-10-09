@@ -12,7 +12,7 @@
 //! - a file is read through the descriptor that was opened and checked.
 //!
 //! `copy_tree` uses it for local snapshots, sharing blocks with the source (`FICLONE`) where the
-//! filesystem can, and `transfer::pack` for archives. `disk_usage` measures a tree by the same
+//! filesystem can, and `tarball::pack` for archives. `disk_usage` measures a tree by the same
 //! rules, opening only its directories.
 
 use std::ffi::{CString, OsStr};
@@ -297,8 +297,8 @@ fn no_reflink(e: Errno) -> bool {
 }
 
 /// A long write its caller's `room` stopped: the disk is under the floor the caller keeps. It comes
-/// back inside the `io::Error` that `copy_tree` and `transfer::pack` return, so the caller can tell
-/// it from the disk's own failures (`NoRoom::of`), as `transfer::UnpackError::NoRoom` is told apart.
+/// back inside the `io::Error` that `copy_tree` and `tarball::pack` return, so the caller can tell
+/// it from the disk's own failures (`NoRoom::of`), as `tarball::UnpackError::NoRoom` is told apart.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct NoRoom(pub String);
