@@ -63,7 +63,7 @@ impl Manager {
                 Ok(out) => out,
                 Err(RuntimeError::NotFound(_) | RuntimeError::Conflict(_)) => {
                     return Err(NodeError::Conflict {
-                        code: "not_running",
+                        code: ConflictCode::NotRunning,
                         message: "the workload stopped or was replaced before the command ran".into(),
                     });
                 }
@@ -96,7 +96,10 @@ impl Manager {
         let info = if record.phase == Phase::Active { self.inspect(&record.container_name).await? } else { None };
         match info {
             Some(info) if info.status == ContainerStatus::Running => Ok(info.id),
-            _ => Err(NodeError::Conflict { code: "not_running", message: "exec needs a running workload".into() }),
+            _ => Err(NodeError::Conflict {
+                code: ConflictCode::NotRunning,
+                message: "exec needs a running workload".into(),
+            }),
         }
     }
 }

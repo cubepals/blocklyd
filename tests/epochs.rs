@@ -3,7 +3,7 @@
 
 mod support;
 
-use blocklyd::manager::{NodeError, Precondition};
+use blocklyd::manager::{NodeError, Precondition, Records};
 use blocklyd::protocol::{EnsureOutcome, ExecRequest, WorkloadState};
 use blocklyd::runtime::ContainerStatus;
 use support::{fixture, id, manager_on, spec};
@@ -172,7 +172,7 @@ async fn a_fenced_copy_survives_a_restart_as_fenced() {
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(3)).await.unwrap();
     f.manager.fence(id("w"), 4).await.unwrap();
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     let view = restarted.view(&id("w")).unwrap();
     assert_eq!(view.state, WorkloadState::Fenced);
     assert!(matches!(restarted.start(id("w"), Some(3)).await, Err(NodeError::Superseded { by: 4 })));
@@ -206,7 +206,7 @@ async fn the_epoch_is_rebuilt_from_labels_when_the_state_directory_is_lost() {
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(9)).await.unwrap();
     std::fs::remove_file(f.manager.store.workloads_dir().join("w").join("workload.json")).unwrap();
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     assert_eq!(restarted.view(&id("w")).unwrap().epoch, Some(9));
     assert!(matches!(restarted.start(id("w"), Some(8)).await, Err(NodeError::StaleEpoch { .. })));
 }

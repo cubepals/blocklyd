@@ -24,8 +24,8 @@ use tracing::{debug, info, warn};
 
 use super::identity::Credentials;
 use crate::http_client as client;
-use crate::ids::WorkloadId;
-use crate::manager::Manager;
+use crate::ids::{NodeId, WorkloadId};
+use crate::manager::{Lifecycle, Manager};
 use crate::protocol::ProtocolVersions;
 use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse, WorkloadReport};
 use crate::upgrade::Upgrader;
@@ -33,7 +33,7 @@ use crate::upgrade::Upgrader;
 /// Everything this node holds, for a heartbeat.
 pub async fn heartbeat_report(
     manager: &Manager,
-    node_id: &str,
+    node_id: &NodeId,
     session: &str,
     boot_id: Option<String>,
     seq: u64,
@@ -59,7 +59,7 @@ pub async fn heartbeat_report(
         .collect();
     let issues = manager.host_issues();
     HeartbeatRequest {
-        node_id: node_id.to_owned(),
+        node_id: node_id.to_string(),
         session_id: session.to_owned(),
         boot_id,
         seq,
@@ -104,7 +104,7 @@ pub async fn run(
                 if let Some(since) = failing_since.take() {
                     info!(missed = seq - since, "heartbeat: the control plane answers again");
                 }
-                manager.fleet_contact(Ok(&answer.lifecycle), sent.elapsed());
+                manager.fleet_contact(Ok(Lifecycle::from(answer.lifecycle.as_str())), sent.elapsed());
                 // Fences first: the lease granted below lets waiting resumes go ahead at once,
                 // and none of them may be a copy this answer supersedes.
                 for fence in answer.fences {

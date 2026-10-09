@@ -21,7 +21,7 @@ fn file_err(path: &Path, problem: impl ToString) -> TlsSetupError {
     TlsSetupError::File { path: path.display().to_string(), problem: problem.to_string() }
 }
 
-pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, TlsSetupError> {
+pub(crate) fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, TlsSetupError> {
     let certs: Vec<_> = CertificateDer::pem_file_iter(path)
         .map_err(|e| file_err(path, e))?
         .collect::<Result<_, _>>()
@@ -32,7 +32,7 @@ pub fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>, TlsSetupE
     Ok(certs)
 }
 
-pub fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, TlsSetupError> {
+pub(crate) fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, TlsSetupError> {
     use std::os::unix::fs::PermissionsExt;
     let mode = fs::metadata(path).map_err(|e| file_err(path, e))?.permissions().mode();
     if mode & 0o077 != 0 {
@@ -41,6 +41,6 @@ pub fn load_key(path: &Path) -> Result<PrivateKeyDer<'static>, TlsSetupError> {
     PrivateKeyDer::from_pem_file(path).map_err(|e| file_err(path, e))
 }
 
-pub fn provider() -> Arc<rustls::crypto::CryptoProvider> {
+pub(crate) fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }

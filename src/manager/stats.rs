@@ -81,11 +81,11 @@ impl Manager {
 
     /// Measures each workload's data on disk, and the snapshots beside it. Called on an interval;
     /// blocking work off-thread.
-    pub async fn measure_disk(self: &Arc<Self>) {
+    pub(crate) async fn measure_disk(self: &Arc<Self>) {
         let ids: Vec<WorkloadId> = self.state.lock().unwrap().records.keys().cloned().collect();
         let dirs: Vec<std::path::PathBuf> = ids.iter().map(|id| self.store.snapshots_dir(id)).collect();
         let snapshots = tokio::task::spawn_blocking(move || {
-            dirs.iter().filter(|d| d.exists()).filter_map(|d| crate::store::disk_usage(d).ok()).sum::<u64>()
+            dirs.iter().filter(|d| d.exists()).filter_map(|d| crate::tree::disk_usage(d).ok()).sum::<u64>()
         })
         .await;
         if let Ok(bytes) = snapshots {
@@ -93,7 +93,7 @@ impl Manager {
         }
         for id in ids {
             let dir = self.store.data_dir(&id);
-            let used = tokio::task::spawn_blocking(move || crate::store::disk_usage(&dir)).await;
+            let used = tokio::task::spawn_blocking(move || crate::tree::disk_usage(&dir)).await;
             if let Ok(Ok(bytes)) = used {
                 let mut state = self.state.lock().unwrap();
                 if state.records.contains_key(&id) {
@@ -103,9 +103,12 @@ impl Manager {
                     state.records.get(&id).is_some_and(|r| bytes > r.spec.storage.size_gb as u64 * 1024 * 1024 * 1024);
                 drop(state);
                 if over {
-                    self.set_issue(&id, Issue::new("over_storage", "data is larger than the size the spec promised"));
+                    self.set_issue(
+                        &id,
+                        Issue::new(IssueCode::OverStorage, "data is larger than the size the spec promised"),
+                    );
                 } else {
-                    self.clear_issue(&id, "over_storage");
+                    self.clear_issue(&id, IssueCode::OverStorage);
                 }
             }
         }

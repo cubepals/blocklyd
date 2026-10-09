@@ -15,7 +15,7 @@ use hyper::Method;
 
 use crate::http_client as client;
 
-pub trait Service {
+pub(crate) trait Service {
     /// `systemctl` with these arguments; an error when it fails.
     fn systemctl(&self, args: &[&str]) -> anyhow::Result<()>;
     /// Whether the blocklyd whose ops listener is `ops` has had a heartbeat accepted, by `within`
@@ -25,8 +25,8 @@ pub trait Service {
 
 /// The host's own systemd; `program` is another `systemctl` in tests that run blocklyd as a plain
 /// process.
-pub struct Systemd {
-    pub program: PathBuf,
+pub(crate) struct Systemd {
+    pub(crate) program: PathBuf,
 }
 
 impl Service for Systemd {

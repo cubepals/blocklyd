@@ -60,7 +60,7 @@ impl Manager {
                         .as_ref()
                         .is_some_and(|i| i.labels.get(LABEL_DIGEST) == Some(&digest) && secrets_match(i, &spec));
                 if same {
-                    self.remember(id, info);
+                    self.remember(id, info).await;
                     return Ok(EnsureResponse {
                         outcome: EnsureOutcome::Unchanged,
                         restarted: false,
@@ -123,7 +123,7 @@ impl Manager {
         let mut labels = spec.labels.clone();
         labels.insert(LABEL_MANAGED.into(), "true".into());
         labels.insert(LABEL_DEPLOYMENT.into(), self.config.deployment_id.clone());
-        labels.insert(LABEL_NODE.into(), self.config.node_id.clone());
+        labels.insert(LABEL_NODE.into(), self.config.node_id.to_string());
         labels.insert(LABEL_WORKLOAD.into(), record.id.to_string());
         labels.insert(LABEL_GENERATION.into(), record.generation.to_string());
         labels.insert(LABEL_DIGEST.into(), record.spec_digest.clone());
@@ -139,7 +139,7 @@ impl Manager {
             entrypoint: spec.entrypoint.clone(),
             env,
             labels,
-            user: self.config.workloads.user.clone(),
+            user: self.config.workloads.user.to_string(),
             memory_bytes: r.memory_mb as i64 * 1024 * 1024,
             nano_cpus: r.cpu_millis.map(|m| m as i64 * 1_000_000),
             // Weight follows size unless asked otherwise: a 4 GB server gets Docker's default
@@ -186,7 +186,7 @@ impl Manager {
                 let existing = self.inspect(&record.container_name).await?;
                 if existing.as_ref().and_then(|i| i.labels.get(LABEL_WORKLOAD)) != Some(&record.id.to_string()) {
                     return Err(NodeError::Conflict {
-                        code: "name_taken",
+                        code: ConflictCode::NameTaken,
                         message: format!(
                             "a container named {} exists and isn't this workload's",
                             record.container_name
@@ -239,7 +239,7 @@ impl Manager {
             undo(self);
             return Err(e);
         }
-        if let Err(e) = self.save_record(&record) {
+        if let Err(e) = self.save_record(&record).await {
             undo(self);
             return Err(e);
         }
@@ -248,7 +248,7 @@ impl Manager {
                 record.container_id = Some(container_id);
                 record.phase = Phase::Active;
                 record.updated_at = now_str();
-                self.save_record(&record)?;
+                self.save_record(&record).await?;
                 self.observe(&record).await?;
                 Ok(EnsureResponse { outcome: EnsureOutcome::Created, restarted: false, workload: self.view(id)? })
             }
@@ -285,13 +285,13 @@ impl Manager {
         self.note(self.runtime.ensure_image(&spec.image, pull).await)?;
         let old_ports = record.ports.clone();
         let ports = self.allocate_ports(&id, &spec, &old_ports)?;
-        self.persist_resting_ports();
+        self.persist_resting_ports().await;
         if info.is_some() {
             if was_running {
                 let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
-                self.state.lock().unwrap().stopping.insert(id.clone());
+                let stopping = self.mark_stopping(&id);
                 let stopped = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
-                self.state.lock().unwrap().stopping.remove(&id);
+                drop(stopping);
                 self.note(stopped)?;
             }
             self.note(self.runtime.remove(&record.container_name).await)?;
@@ -312,10 +312,10 @@ impl Manager {
         // A new generation begins a new run: the old one's failures don't use up its retries.
         record.restart_count = 0;
         record.updated_at = now_str();
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         let container_id = self.make_container(&record, &spec).await?;
         record.container_id = Some(container_id);
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         if was_running {
             self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(&id, e))?;
         }

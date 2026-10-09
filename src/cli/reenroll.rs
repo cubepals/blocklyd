@@ -27,22 +27,22 @@ use anyhow::{Context, bail};
 use super::service::Service;
 use crate::fleet::identity::{Identity, write_atomic};
 
-pub struct Reenroll<'a> {
-    pub node: &'a str,
+pub(crate) struct Reenroll<'a> {
+    pub(crate) node: &'a str,
     /// The state directory, the CA file and the token file, as this process reaches them.
-    pub state_dir: PathBuf,
-    pub ca_file: PathBuf,
-    pub token_file: PathBuf,
+    pub(crate) state_dir: PathBuf,
+    pub(crate) ca_file: PathBuf,
+    pub(crate) token_file: PathBuf,
     /// The fleet CA the token names, already checked against its hash, and the token as pasted.
-    pub ca: &'a [u8],
-    pub token: &'a str,
+    pub(crate) ca: &'a [u8],
+    pub(crate) token: &'a str,
     /// Where the restarted blocklyd answers for its metrics, and how long its first beat may take.
-    pub ops: SocketAddr,
-    pub within: Duration,
+    pub(crate) ops: SocketAddr,
+    pub(crate) within: Duration,
 }
 
 /// Swaps the identity, and returns what to tell the operator; puts the old one back on failure.
-pub async fn reenroll(swap: Reenroll<'_>, service: &impl Service) -> anyhow::Result<String> {
+pub(crate) async fn reenroll(swap: Reenroll<'_>, service: &impl Service) -> anyhow::Result<String> {
     let identity = Identity::dir_for(&swap.state_dir);
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let old = swap.state_dir.join(format!("identity.old-{stamp}"));

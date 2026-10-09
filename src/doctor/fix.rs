@@ -20,19 +20,19 @@ use crate::store::Store;
 
 /// Something `--fix` did, and how to take it back.
 #[derive(Clone, Debug, Serialize)]
-pub struct Change {
-    pub done: String,
-    pub undo: String,
+pub(crate) struct Change {
+    pub(crate) done: String,
+    pub(crate) undo: String,
 }
 
 /// What `--fix` did, and what is left for the operator.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Fixed {
-    pub changes: Vec<Change>,
-    pub next: Vec<String>,
+    pub(crate) changes: Vec<Change>,
+    pub(crate) next: Vec<String>,
 }
 
-pub async fn apply(config: &Config, runtime: &dyn ContainerRuntime, daemon_json: &Path) -> Fixed {
+pub(crate) async fn apply(config: &Config, runtime: &dyn ContainerRuntime, daemon_json: &Path) -> Fixed {
     let mut fixed = Fixed::default();
     let servers = runtime.list(&[format!("{LABEL_MANAGED}=true")]).await;
     if has_workloads(&config.state_dir) || servers.as_ref().is_ok_and(|servers| !servers.is_empty()) {
@@ -64,7 +64,7 @@ pub async fn apply(config: &Config, runtime: &dyn ContainerRuntime, daemon_json:
 }
 
 /// `on_disk` with every setting of Blockly's daemon.json laid over it.
-pub fn merged(on_disk: Option<Map<String, Value>>) -> Map<String, Value> {
+pub(crate) fn merged(on_disk: Option<Map<String, Value>>) -> Map<String, Value> {
     let mut settings = on_disk.unwrap_or_default();
     settings.extend(deploy_daemon_json());
     settings

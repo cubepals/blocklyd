@@ -22,7 +22,7 @@ use std::path::Path;
 use toml::{Table, Value};
 
 /// The API's port when `api.listen` is inferred.
-pub const API_PORT: u16 = 7443;
+pub(crate) const API_PORT: u16 = 7443;
 
 /// One value filled in, as the configuration would write it, and where it came from.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,9 +34,9 @@ pub struct Inferred {
 
 /// A local address the host could serve the fleet on.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Candidate {
-    pub ip: Ipv4Addr,
-    pub interface: Option<String>,
+pub(crate) struct Candidate {
+    pub(crate) ip: Ipv4Addr,
+    pub(crate) interface: Option<String>,
 }
 
 impl std::fmt::Display for Candidate {
@@ -49,7 +49,7 @@ impl std::fmt::Display for Candidate {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum InferError {
+pub(crate) enum InferError {
     NoAddress,
     Several(Vec<Candidate>),
 }
@@ -77,7 +77,7 @@ impl std::fmt::Display for InferError {
 impl std::error::Error for InferError {}
 
 /// Fills in what `table`, a configuration as written, leaves out.
-pub fn fill(table: &mut Table, root: &Path) -> Result<Vec<Inferred>, InferError> {
+pub(crate) fn fill(table: &mut Table, root: &Path) -> Result<Vec<Inferred>, InferError> {
     let mut inferred = Vec::new();
     if table.contains_key("fleet") {
         addresses(table, root, &mut inferred)?;
@@ -100,7 +100,7 @@ pub fn fill(table: &mut Table, root: &Path) -> Result<Vec<Inferred>, InferError>
 /// Memory kept for the host: a sixteenth of it, and never less than 2048 MB, today's fixed
 /// default. The kernel, the page cache worlds are read through, Docker and blocklyd need more on a
 /// bigger host: 2048 MB up to 32 GB, 4096 on 64 GB, 8192 on 128 GB.
-pub fn reserved_memory_mb(total_mb: u64) -> u64 {
+pub(crate) fn reserved_memory_mb(total_mb: u64) -> u64 {
     (total_mb / 16).max(2048)
 }
 
@@ -161,7 +161,7 @@ fn addresses(table: &mut Table, root: &Path, inferred: &mut Vec<Inferred>) -> Re
 }
 
 /// The host's one private address, or why there isn't one.
-pub fn address(root: &Path) -> Result<Candidate, InferError> {
+pub(crate) fn address(root: &Path) -> Result<Candidate, InferError> {
     let mut found = candidates(root);
     match found.len() {
         0 => Err(InferError::NoAddress),
@@ -172,7 +172,7 @@ pub fn address(root: &Path) -> Result<Candidate, InferError> {
 
 /// Every local IPv4 address the fleet could be served on: private, or on a WireGuard interface.
 /// Never loopback, and never a bridge's, such as Docker's own `docker0`.
-pub fn candidates(root: &Path) -> Vec<Candidate> {
+pub(crate) fn candidates(root: &Path) -> Vec<Candidate> {
     let read = |path: &str| std::fs::read_to_string(root.join(path)).unwrap_or_default();
     let routes = read("proc/net/route");
     let mut found: Vec<Candidate> = Vec::new();

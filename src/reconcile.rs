@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::manager::Manager;
+use crate::manager::{Manager, Records};
 
 /// Follows runtime events until cancelled, reconnecting with backoff; a gap in the stream is
 /// closed by a full resync once it's back.
@@ -49,7 +49,7 @@ pub async fn follow_events(manager: Arc<Manager>, cancel: CancellationToken) {
         }
         // Short: after an outage the first look decides when blocklyd is trustworthy again.
         backoff = (backoff * 2).min(Duration::from_secs(5));
-        let report = manager.reconcile(false).await;
+        let report = manager.reconcile(Records::InMemory).await;
         if report.error.is_none() {
             info!(workloads = report.workloads, "resynced after the event stream came back");
         }
@@ -74,7 +74,7 @@ pub async fn periodic(manager: Arc<Manager>, cancel: CancellationToken) {
             () = cancel.cancelled() => return,
             _ = resync.tick() => {
                 let was_reconciled = manager.reconciled();
-                let report = manager.reconcile(false).await;
+                let report = manager.reconcile(Records::InMemory).await;
                 if let Some(error) = report.error {
                     warn!(%error, "resync failed");
                     continue;

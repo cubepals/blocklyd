@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::put;
-use blocklyd::manager::{NodeError, Precondition};
+use blocklyd::manager::{ConflictCode, NodeError, Precondition, Records};
 use blocklyd::protocol::{ExportRequest, RestoreRequest};
 use blocklyd::store::restore::RESTORE_COMPLETE;
 use sha2::Digest;
@@ -126,8 +126,7 @@ async fn announcing(length: u64) -> String {
 #[tokio::test]
 async fn a_download_that_stops_coming_fails_and_lets_go_of_the_workload() {
     // Two minutes without a byte is a stall on a host; a second is, here.
-    blocklyd::tarball::set_download_idle(std::time::Duration::from_secs(1));
-    let f = fixture("").await;
+    let f = fixture("[transfer]\nidle_seconds = 1\n").await;
     let made = f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     let data = std::path::PathBuf::from(&made.workload.locate.data_dir);
     std::fs::write(data.join("level.dat"), b"mine").unwrap();
@@ -162,7 +161,7 @@ async fn a_restore_onto_a_disk_below_its_floor_is_refused_and_changes_nothing() 
     std::fs::write(data.join("world/level.dat"), b"day two").unwrap();
     // The same node, now keeping a floor no disk is above.
     let full = support::manager_on(f.dir.path(), f.fake.clone(), "[capacity]\nmin_free_disk_mb = 1000000000\n");
-    assert!(full.reconcile(true).await.error.is_none());
+    assert!(full.reconcile(Records::FromDisk).await.error.is_none());
     let err = full.restore(id("w"), restore_from(format!("{base}/w.tar.gz"), None), Some(1)).await.unwrap_err();
     assert!(matches!(err, NodeError::InsufficientDisk(_)), "{err:?}");
     assert_eq!(std::fs::read(data.join("world/level.dat")).unwrap(), b"day two", "the data is as it was");
@@ -223,12 +222,12 @@ async fn a_running_workload_exports_only_when_quiesced_and_never_restores() {
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     f.manager.start(id("w"), Some(1)).await.unwrap();
     let err = f.manager.export(id("w"), export_to(format!("{base}/x.tar.gz")), Some(1)).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_quiesced", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotQuiesced, .. }), "{err:?}");
     let mut quiesced = export_to(format!("{base}/x.tar.gz"));
     quiesced.quiesced = true;
     f.manager.export(id("w"), quiesced, Some(1)).await.unwrap();
     let err = f.manager.restore(id("w"), restore_from(format!("{base}/x.tar.gz"), None), Some(1)).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_stopped", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotStopped, .. }), "{err:?}");
 }
 
 #[tokio::test]
@@ -328,7 +327,7 @@ async fn snapshots_follow_the_export_rules() {
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(3)).await.unwrap();
     f.manager.start(id("w"), Some(3)).await.unwrap();
     let err = f.manager.snapshot(id("w"), snapshot_request(SNAP, false), Some(3)).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_quiesced", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotQuiesced, .. }), "{err:?}");
     let quiesced = f.manager.snapshot(id("w"), snapshot_request(SNAP, true), Some(3)).await.unwrap();
     assert!(quiesced.snapshot.quiesced);
     // A running workload's data is never replaced, from a snapshot or otherwise.
@@ -337,7 +336,7 @@ async fn snapshots_follow_the_export_rules() {
         .restore(id("w"), serde_json::from_value(serde_json::json!({ "snapshot": SNAP })).unwrap(), Some(3))
         .await
         .unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_stopped", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotStopped, .. }), "{err:?}");
     // Only the current copy is copied.
     f.manager.fence(id("w"), 4).await.unwrap();
     let other = "1b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10";
@@ -542,8 +541,7 @@ async fn parts_too_few_for_the_archive_are_refused_before_anything_is_sent() {
 
 #[tokio::test]
 async fn a_part_the_store_failed_to_take_is_sent_again() {
-    blocklyd::tarball::set_download_idle(std::time::Duration::from_secs(1));
-    let f = fixture("[transfer]\nmax_put_mb = 1\n").await;
+    let f = fixture("[transfer]\nmax_put_mb = 1\nidle_seconds = 1\n").await;
     // A store that answers the first PUT of part 2 with a 503, then takes it; and whose first
     // answer to part 3 stops after its head, so the node never hears the end of it.
     let held: Objects = Arc::default();

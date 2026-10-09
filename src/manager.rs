@@ -30,12 +30,13 @@
 //! - `fleet.rs`: the node's standing with its control plane.
 //! - `node.rs`: what the node reports about itself as a whole.
 //! - `reconcile.rs`: makes the records agree with what Docker has.
-//! - `persist.rs`: writes a record from memory, in turn with every other write of the state.
+//! - `persist.rs`: writes records and the port quarantine in turn, off the async threads.
 //! - `error.rs`: what an operation fails with, and the epoch check every mutating verb makes.
 //! - `workload_state.rs`: the state a record and its container make together.
 //! - `label_record.rs`: the record as a container's label carries it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -50,7 +51,7 @@ use tokio::sync::mpsc;
 use crate::clock::now;
 use crate::config::Config;
 use crate::host;
-use crate::ids::{SnapshotId, WorkloadId};
+use crate::ids::{NodeId, SnapshotId, WorkloadId};
 use crate::labels::{
     LABEL_DEPLOYMENT, LABEL_DIGEST, LABEL_EPOCH, LABEL_GENERATION, LABEL_MANAGED, LABEL_NODE, LABEL_RECORD,
     LABEL_WORKLOAD,
@@ -60,10 +61,10 @@ use crate::ports::{PortAllocator, PortError, Probe};
 use crate::protocol::{
     Audience, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView, EnsureOutcome,
     EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse, FieldError,
-    Issue, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse, ProtocolVersions, PutPart,
-    ReconcileView, RestoreRequest, RestoreResponse, SnapshotDeleteResponse, SnapshotList, SnapshotRequest,
-    SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest, WorkloadSpec, WorkloadState,
-    WorkloadView,
+    Issue, IssueCode, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse,
+    ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, RestoreSource, SnapshotDeleteResponse,
+    SnapshotList, SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest,
+    WorkloadSpec, WorkloadState, WorkloadView,
 };
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
@@ -92,15 +93,23 @@ mod stats;
 mod view;
 mod workload_state;
 
-pub use error::{EpochRule, NodeError, check_epoch};
+pub use error::{ConflictCode, NodeError};
+pub(crate) use error::{EpochRule, check_epoch};
 pub use label_record::LabelRecord;
-pub use logs::lines_of;
-pub use node::WorkloadSample;
-pub use workload_state::derive_state;
+pub(crate) use workload_state::{Sight, Stopping, derive_state};
 use workload_state::{clean_exit, derive_power_state};
 
 fn now_str() -> String {
     format_time(now())
+}
+
+/// Where a reconciliation takes the records from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Records {
+    /// Read again from disk, and what a crash left settled: when blocklyd starts.
+    FromDisk,
+    /// As memory holds them: every pass after the first.
+    InMemory,
 }
 
 /// HTTP conditional semantics on `PUT /v1/workloads/{id}`.
@@ -127,6 +136,26 @@ struct StatsSample {
     at: Instant,
     raw: RawStats,
     cores: Option<f64>,
+}
+
+impl State {
+    fn stopping(&self, id: &WorkloadId) -> Stopping {
+        if self.stopping.contains(id) { Stopping::Underway } else { Stopping::NotAsked }
+    }
+}
+
+/// A key held in one of `State`'s sets (`stopping`, `uploading`) while the work it marks runs, and
+/// taken out when this drops: also on an early return, or when the request's future is dropped.
+struct Marked<'a, K: Eq + Hash> {
+    state: &'a Mutex<State>,
+    set: fn(&mut State) -> &mut HashSet<K>,
+    key: K,
+}
+
+impl<K: Eq + Hash> Drop for Marked<'_, K> {
+    fn drop(&mut self) {
+        (self.set)(&mut self.state.lock().unwrap()).remove(&self.key);
+    }
 }
 
 impl StatsSample {
@@ -164,15 +193,16 @@ struct State {
 
 pub struct Manager {
     pub config: Arc<Config>,
-    pub runtime: Arc<dyn ContainerRuntime>,
+    pub(crate) runtime: Arc<dyn ContainerRuntime>,
     pub store: Store,
     pub metrics: Arc<Metrics>,
-    state: Mutex<State>,
+    /// Shared with the disk writes, which run on the blocking pool (`persist.rs`).
+    state: Arc<Mutex<State>>,
     /// Records and the port quarantine are written one at a time, newest last (`persist.rs`).
-    disk_writes: Mutex<()>,
+    disk_writes: Arc<Mutex<()>>,
     locks: Mutex<HashMap<WorkloadId, Arc<tokio::sync::Mutex<()>>>>,
     exec_keys: Mutex<IdempotencyCache>,
-    pub started_at: OffsetDateTime,
+    pub(crate) started_at: OffsetDateTime,
     started: Instant,
     docker_up: AtomicBool,
     reconciled: AtomicBool,
@@ -195,9 +225,9 @@ pub struct Manager {
 /// What the node knows of its control plane, in fleet mode.
 #[derive(Clone, Debug, Default)]
 struct FleetState {
-    node_id: Option<String>,
+    node_id: Option<NodeId>,
     control_plane: Option<String>,
-    lifecycle: Option<String>,
+    lifecycle: Option<Lifecycle>,
     last_contact: Option<Instant>,
     last_contact_at: Option<OffsetDateTime>,
     last_error: Option<String>,
@@ -210,9 +240,46 @@ struct FleetState {
     renewed_at: Option<OffsetDateTime>,
 }
 
+/// The node as the control plane holds it, as its last answer to a heartbeat said. On the wire it
+/// is a string (`HeartbeatResponse::lifecycle`, `FleetView::lifecycle`); one this build doesn't
+/// know is kept as it came and reported back the same.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lifecycle {
+    Active,
+    Draining,
+    /// Its workloads may be running elsewhere: it restarts nothing on its own (`Lease::Revoked`).
+    Lost,
+    Retired,
+    Other(String),
+}
+
+impl From<&str> for Lifecycle {
+    fn from(said: &str) -> Self {
+        match said {
+            "active" => Self::Active,
+            "draining" => Self::Draining,
+            "lost" => Self::Lost,
+            "retired" => Self::Retired,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+}
+
+impl Lifecycle {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Draining => "draining",
+            Self::Lost => "lost",
+            Self::Retired => "retired",
+            Self::Other(other) => other,
+        }
+    }
+}
+
 /// What the execution lease allows now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lease {
+pub(crate) enum Lease {
     /// Not in fleet mode: the single-node daemon restarts as its policy says.
     NotFleet,
     Held,
@@ -277,7 +344,7 @@ impl Manager {
         let ports = PortAllocator::new(low..=high, Duration::from_secs(config.network.port_quarantine_seconds), probe);
         let facts = host::facts();
         Arc::new(Self {
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 records: BTreeMap::new(),
                 observed: HashMap::new(),
                 ports,
@@ -292,8 +359,8 @@ impl Manager {
                 uploading: HashSet::new(),
                 snapshot_bytes: None,
                 last_reconcile: None,
-            }),
-            disk_writes: Mutex::new(()),
+            })),
+            disk_writes: Arc::default(),
             locks: Mutex::new(HashMap::new()),
             exec_keys: Mutex::new(IdempotencyCache::default()),
             started_at: now(),
@@ -316,7 +383,7 @@ impl Manager {
         })
     }
 
-    pub fn uptime(&self) -> Duration {
+    pub(crate) fn uptime(&self) -> Duration {
         self.started.elapsed()
     }
 
@@ -332,8 +399,13 @@ impl Manager {
     /// full pass has looked since it last didn't. Otherwise every state reads `unknown`: after an
     /// outage the last observation is history (a daemon stop kills workloads), and reporting it
     /// as the state would tell the control plane something false.
-    pub fn trustworthy(&self) -> bool {
+    pub(crate) fn trustworthy(&self) -> bool {
         self.docker_up() && self.reconciled()
+    }
+
+    /// `trustworthy`, as a state is derived with it.
+    fn sight(&self) -> Sight {
+        if self.trustworthy() { Sight::Current } else { Sight::Stale }
     }
 
     /// Records whether the runtime answered; every runtime error funnels through here. An
@@ -351,6 +423,20 @@ impl Manager {
         result
     }
 
+    /// Marks the workload as stopping, for as long as the guard lives.
+    fn mark_stopping(&self, id: &WorkloadId) -> Marked<'_, WorkloadId> {
+        let set: fn(&mut State) -> &mut HashSet<WorkloadId> = |s| &mut s.stopping;
+        set(&mut self.state.lock().unwrap()).insert(id.clone());
+        Marked { state: &self.state, set, key: id.clone() }
+    }
+
+    /// Marks the snapshot as uploading, for as long as the guard lives; None if it is already.
+    fn mark_uploading(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Option<Marked<'_, (WorkloadId, SnapshotId)>> {
+        let set: fn(&mut State) -> &mut HashSet<(WorkloadId, SnapshotId)> = |s| &mut s.uploading;
+        let key = (id.clone(), snapshot.clone());
+        set(&mut self.state.lock().unwrap()).insert(key.clone()).then_some(Marked { state: &self.state, set, key })
+    }
+
     fn lock_for(&self, id: &WorkloadId) -> Arc<tokio::sync::Mutex<()>> {
         self.locks.lock().unwrap().entry(id.clone()).or_default().clone()
     }
@@ -359,11 +445,11 @@ impl Manager {
         format!("blockly-{}-{}", self.config.deployment_id, id)
     }
 
-    pub fn allocatable_memory_mb(&self) -> u64 {
+    pub(crate) fn allocatable_memory_mb(&self) -> u64 {
         self.config.capacity.allocatable_mb(self.memory_total_mb)
     }
 
-    pub fn spec_policy(&self) -> SpecPolicy {
+    pub(crate) fn spec_policy(&self) -> SpecPolicy {
         SpecPolicy {
             allowed_images: self.config.workloads.allowed_images.clone(),
             min_memory_mb: self.config.workloads.min_memory_mb,
@@ -372,7 +458,7 @@ impl Manager {
         }
     }
 
-    pub fn owner_labels(&self) -> Vec<String> {
+    pub(crate) fn owner_labels(&self) -> Vec<String> {
         vec![
             format!("{LABEL_MANAGED}=true"),
             format!("{LABEL_DEPLOYMENT}={}", self.config.deployment_id),
@@ -391,53 +477,23 @@ impl Manager {
     /// A freshly made container settles whatever was wrong with the old one, a restart it was
     /// refused included.
     fn clear_resolved_issues(&self, id: &WorkloadId) {
-        const RESOLVED: [&str; 6] = [
-            "container_missing",
-            "create_incomplete",
-            "digest_mismatch",
-            "port_mismatch",
-            "unexpected_container",
-            "insufficient_capacity",
+        const RESOLVED: [IssueCode; 6] = [
+            IssueCode::ContainerMissing,
+            IssueCode::CreateIncomplete,
+            IssueCode::DigestMismatch,
+            IssueCode::PortMismatch,
+            IssueCode::UnexpectedContainer,
+            IssueCode::InsufficientCapacity,
         ];
         if let Some(list) = self.state.lock().unwrap().issues.get_mut(id) {
-            list.retain(|i| !RESOLVED.contains(&i.code.as_str()));
+            list.retain(|i| !RESOLVED.contains(&i.code));
         }
     }
 
-    fn clear_issue(&self, id: &WorkloadId, code: &str) {
+    fn clear_issue(&self, id: &WorkloadId, code: IssueCode) {
         if let Some(list) = self.state.lock().unwrap().issues.get_mut(id) {
             list.retain(|i| i.code != code);
         }
-    }
-
-    /// Writes the port quarantine to disk, as it is when its turn comes. A failure is logged, not
-    /// fatal: at worst a restart forgets which ports were resting.
-    fn persist_resting_ports(&self) {
-        let _turn = self.disk_writes.lock().unwrap();
-        let now_unix = now().unix_timestamp();
-        let resting: Vec<crate::store::RestingPort> = self
-            .state
-            .lock()
-            .unwrap()
-            .ports
-            .resting()
-            .into_iter()
-            .map(|(protocol, port, ago)| crate::store::RestingPort {
-                protocol,
-                port,
-                released_at_unix: now_unix - ago.as_secs() as i64,
-            })
-            .collect();
-        if let Err(e) = self.store.save_resting_ports(&resting) {
-            tracing::warn!(error = %e, "couldn't persist the port quarantine");
-        }
-    }
-
-    fn save_record(&self, record: &WorkloadRecord) -> Result<(), NodeError> {
-        let _turn = self.disk_writes.lock().unwrap();
-        self.store.save(record)?;
-        self.state.lock().unwrap().records.insert(record.id.clone(), record.clone());
-        Ok(())
     }
 
     fn record(&self, id: &WorkloadId) -> Result<WorkloadRecord, NodeError> {
@@ -451,11 +507,20 @@ impl Manager {
     /// Looks at the container now and remembers what it saw.
     async fn observe(&self, record: &WorkloadRecord) -> Result<Option<ContainerInfo>, NodeError> {
         let info = if record.phase == Phase::Retained { None } else { self.inspect(&record.container_name).await? };
-        self.remember(&record.id, info.clone());
+        self.remember(&record.id, info.clone()).await;
         Ok(info)
     }
 
-    fn remember(&self, id: &WorkloadId, info: Option<ContainerInfo>) {
+    async fn remember(&self, id: &WorkloadId, info: Option<ContainerInfo>) {
+        if self.note_observed(id, info)
+            && let Err(e) = self.write_record(id).await
+        {
+            tracing::warn!(workload = %id, error = %e, "couldn't record which boot the workload ran in");
+        }
+    }
+
+    /// What `remember` notes in memory; whether the record's boot changed, which is then written.
+    fn note_observed(&self, id: &WorkloadId, info: Option<ContainerInfo>) -> bool {
         let mut state = self.state.lock().unwrap();
         let era = self.runtime_era.load(Ordering::SeqCst);
         // A failure blocklyd watched happen: it was running at the last look, in this same era,
@@ -501,17 +566,14 @@ impl Manager {
             r.superseded_by.is_none()
                 && r.spec.restart.policy == crate::protocol::RestartPolicy::OnFailure
                 && attempt < r.spec.restart.max_retries
-                && derive_power_state(r, info.as_ref(), false, true) == WorkloadState::Crashed
+                && derive_power_state(r, info.as_ref(), Stopping::NotAsked, Sight::Current) == WorkloadState::Crashed
         });
         state.observed.insert(id.clone(), Observed { info, era });
         if was_running && failed && restartable {
             state.restart_due.insert(id.clone(), Instant::now() + restart_backoff(attempt));
             self.restart_wake.notify_one();
         }
-        drop(state);
-        if boot_changed && let Err(e) = self.write_record(id) {
-            tracing::warn!(workload = %id, error = %e, "couldn't record which boot the workload ran in");
-        }
+        boot_changed
     }
 
     /// Takes a runtime event: a hint to look again, never the truth itself.
@@ -544,8 +606,20 @@ fn restart_backoff(attempt: u32) -> Duration {
 fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
     let text = e.to_string();
     if text.contains("port is already allocated") || text.contains("address already in use") {
-        NodeError::Conflict { code: "port_conflict", message: format!("{id}: a host port it holds is in use: {text}") }
+        NodeError::Conflict {
+            code: ConflictCode::PortConflict,
+            message: format!("{id}: a host port it holds is in use: {text}"),
+        }
     } else {
         e.into()
     }
+}
+
+/// Runs blocking file work on tokio's blocking pool, off the async threads. A panic in it goes on
+/// in the caller, as it would have inline.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, NodeError> {
+    tokio::task::spawn_blocking(work).await.map_err(|e| match e.try_into_panic() {
+        Ok(panic) => std::panic::resume_unwind(panic),
+        Err(e) => NodeError::Internal(format!("the runtime dropped blocking work: {e}")),
+    })
 }

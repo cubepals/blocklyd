@@ -14,9 +14,9 @@ use tracing::{error, info, warn};
 
 use blocklyd::api::tls::ServerCert;
 use blocklyd::api::{self, AppState};
-use blocklyd::config::{Config, FleetConfig, TlsConfig};
+use blocklyd::config::{Config, FleetConfig, Mode, TlsConfig};
 use blocklyd::fleet::identity::{Credentials, Identity};
-use blocklyd::manager::Manager;
+use blocklyd::manager::{Manager, Records};
 use blocklyd::metrics::Metrics;
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::runtime::docker::DockerRuntime;
@@ -288,14 +288,15 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
     // daemon that can't is refused here, rather than by every create that follows.
     store.check_ownable(config.data_owner_ids())?;
     // Fleet mode: the node's id and TLS material come from enrollment, before anything is served.
-    let (identity, tls_material): (Option<Identity>, TlsConfig) = match config.fleet.clone() {
-        Some(fleet) => {
+    let (identity, tls_material): (Option<Identity>, TlsConfig) = match config.mode()? {
+        Mode::Fleet(fleet) => {
+            let fleet = fleet.clone();
             let identity = blocklyd::fleet::enroll::ensure_identity(&config, &fleet, facts(&config, &fleet)).await?;
-            config.node_id = identity.node_id().to_owned();
+            config.node_id = identity.node_id().clone();
             let tls = identity.server_tls()?;
             (Some(identity), tls)
         }
-        None => (None, config.api.tls.clone().expect("validated")),
+        Mode::Standalone(tls) => (None, tls.clone()),
     };
     let config = Arc::new(config);
     let (tls, server_cert) = api::tls::reloadable_server_config(&tls_material).context("loading TLS material")?;
@@ -311,7 +312,7 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
 
     // Rebuild everything from disk and the runtime before answering anyone. If Docker is down
     // blocklyd still starts, knows its records, and says it is degraded until Docker is back.
-    let report = manager.reconcile(true).await;
+    let report = manager.reconcile(Records::FromDisk).await;
     match &report.error {
         None => info!(
             workloads = report.workloads,
@@ -403,7 +404,7 @@ fn start_fleet(
     cancel: &CancellationToken,
 ) -> anyhow::Result<FleetTasks> {
     let credentials = Credentials::new(identity, server_cert).context("the node's identity")?;
-    let upgrader = Upgrader::new(&manager.config.state_dir, &fleet.url, backstop.ended(), cancel.clone());
+    let upgrader = Arc::new(Upgrader::new(&manager.config.state_dir, &fleet.url, backstop.ended(), cancel.clone()));
     let trial = tokio::spawn(upgrader.clone().watch_trial());
     let heartbeat = tokio::spawn(blocklyd::fleet::heartbeat::run(
         manager.clone(),

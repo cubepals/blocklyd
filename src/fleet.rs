@@ -16,7 +16,7 @@
 pub mod enroll;
 pub mod heartbeat;
 pub mod identity;
-pub mod token;
+pub(crate) mod token;
 pub use crate::protocol::wire;
 
 /// The version this blocklyd reports to the control plane, which offers an upgrade to an older one.

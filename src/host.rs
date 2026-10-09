@@ -5,11 +5,11 @@ use std::path::Path;
 #[derive(Clone, Debug, Default)]
 pub struct HostFacts {
     pub hostname: String,
-    pub kernel: String,
+    pub(crate) kernel: String,
     pub cpus: u32,
     pub load_average: Option<[f64; 3]>,
     pub memory_total_bytes: Option<u64>,
-    pub memory_available_bytes: Option<u64>,
+    pub(crate) memory_available_bytes: Option<u64>,
 }
 
 fn read(path: &str) -> Option<String> {
@@ -53,13 +53,13 @@ pub fn disk(path: &Path) -> Option<(u64, u64)> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ProcessFacts {
-    pub rss_bytes: Option<u64>,
-    pub cpu_seconds: Option<f64>,
+pub(crate) struct ProcessFacts {
+    pub(crate) rss_bytes: Option<u64>,
+    pub(crate) cpu_seconds: Option<f64>,
 }
 
 /// This process's resident memory and CPU time: blocklyd's own footprint.
-pub fn process() -> ProcessFacts {
+pub(crate) fn process() -> ProcessFacts {
     let page = rustix::param::page_size() as u64;
     let rss_bytes = read("/proc/self/statm")
         .and_then(|s| s.split_whitespace().nth(1).and_then(|p| p.parse::<u64>().ok()))

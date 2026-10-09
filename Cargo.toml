@@ -49,7 +49,8 @@ sha2 = "0.11"
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
 hex = "0.4"
-# The join token is base64url JSON; bollard already brings this crate in.
+# The join token is base64url JSON. rcgen's pem already brings this version in; bollard brings 0.22,
+# so the lock holds both whichever this names.
 base64 = "0.23"
 time = { version = "0.3", features = ["formatting", "parsing"] }
 uuid = { version = "1", features = ["v4"] }
@@ -67,7 +68,13 @@ rustix = { version = "1", features = ["fs", "process", "param", "time"] }
 libc = "0.2.189"
 async-trait = "0.1"
 
+[features]
+# The fake container runtime (src/runtime/fake.rs), for tests only: the tests in tests/ turn it on
+# through the dev-dependency below, and a release build never has it.
+fake = []
+
 [dev-dependencies]
+blocklyd = { path = ".", features = ["fake"] }
 # The control plane tests/fleet.rs stands in for reads the node's certificate requests.
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "crypto", "x509-parser"] }
 # The wire types' JSON Schema, which only the protocol's schema test reads (src/protocol/schema.rs):

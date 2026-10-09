@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use crate::manager::NodeError;
 use crate::protocol::{ErrorBody, ErrorDetail};
 
-pub fn error_response(
+pub(crate) fn error_response(
     status: StatusCode,
     code: &str,
     message: impl Into<String>,
@@ -32,7 +32,7 @@ impl IntoResponse for NodeError {
                 "precondition_failed",
                 Some(serde_json::json!({ "currentSpecDigest": current })),
             ),
-            NodeError::Conflict { code, .. } => (StatusCode::CONFLICT, *code, None),
+            NodeError::Conflict { code, .. } => (StatusCode::CONFLICT, code.as_str(), None),
             NodeError::InsufficientCapacity(_) => (StatusCode::CONFLICT, "insufficient_capacity", None),
             NodeError::InsufficientDisk(_) => (StatusCode::INSUFFICIENT_STORAGE, "insufficient_disk", None),
             NodeError::NoFreePorts(_) => (StatusCode::CONFLICT, "no_free_ports", None),
@@ -41,7 +41,9 @@ impl IntoResponse for NodeError {
             NodeError::RuntimeUnavailable(_) => (StatusCode::SERVICE_UNAVAILABLE, "runtime_unavailable", None),
             NodeError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, "timeout", None),
             NodeError::Runtime(_) => (StatusCode::BAD_GATEWAY, "runtime_error", None),
-            NodeError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal", None),
+            NodeError::Internal(_) | NodeError::Io { .. } | NodeError::Store(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal", None)
+            }
             NodeError::StaleEpoch { asked, current } => (
                 StatusCode::CONFLICT,
                 "stale_epoch",
@@ -61,7 +63,9 @@ impl IntoResponse for NodeError {
                 "checksum_mismatch",
                 Some(serde_json::json!({ "expected": expected, "actual": actual })),
             ),
-            NodeError::Transfer(_) => (StatusCode::BAD_GATEWAY, "transfer_failed", None),
+            NodeError::Transfer(_) | NodeError::TransferBroke { .. } => {
+                (StatusCode::BAD_GATEWAY, "transfer_failed", None)
+            }
             NodeError::ArchiveTooLarge { size_bytes, limit_bytes } => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "archive_too_large",

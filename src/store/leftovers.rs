@@ -24,19 +24,19 @@ use crate::protocol::SnapshotView;
 
 /// What `Store::clear_leftovers` removed, and what it left.
 #[derive(Debug, Default)]
-pub struct Leftovers {
-    pub removed: Vec<PathBuf>,
+pub(crate) struct Leftovers {
+    pub(crate) removed: Vec<PathBuf>,
     /// Left for a human: snapshots whose description doesn't read, names that aren't snapshots'.
-    pub unreadable: Vec<BadRecord>,
+    pub(crate) unreadable: Vec<BadRecord>,
     /// What couldn't be removed, and why.
-    pub failed: Vec<BadRecord>,
+    pub(crate) failed: Vec<BadRecord>,
 }
 
 impl Store {
     /// Clears what a crash left: everything in the spool, temp files beside `ports.json` and the
     /// records of `workloads`, and those workloads' snapshots that have no `snapshot.json`. Only
     /// while nothing else can be writing them: at startup, under the lock. Blocking.
-    pub fn clear_leftovers(&self, workloads: &[WorkloadId]) -> Leftovers {
+    pub(crate) fn clear_leftovers(&self, workloads: &[WorkloadId]) -> Leftovers {
         let mut found = Leftovers::default();
         found.remove_in(&self.spool_dir(), |_| true);
         found.remove_in(&self.root, |entry| is_temp_of(entry, "ports.json"));

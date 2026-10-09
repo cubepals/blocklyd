@@ -42,7 +42,7 @@ impl Manager {
         });
         if running && !request.quiesced {
             return Err(NodeError::Conflict {
-                code: "not_quiesced",
+                code: ConflictCode::NotQuiesced,
                 message: "stop the workload, or pause its saving and say so (quiesced), before exporting".into(),
             });
         }
@@ -90,34 +90,34 @@ impl Manager {
         };
         self.admit_disk(need, "the archive's spool")?;
         let spool_dir = self.store.spool_dir();
-        std::fs::create_dir_all(&spool_dir).map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+        std::fs::create_dir_all(&spool_dir).map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let spool = spool_dir.join(format!("{}.tar.gz", uuid::Uuid::new_v4()));
         let _cleanup = RemoveOnDrop(spool.clone());
         let packed = {
             let spool = spool.clone();
             // Watched as it is written, as a restore is: admitted alone, it may not be alone.
             let mut watch = self.floor_watch();
-            tokio::task::spawn_blocking(move || {
+            blocking(move || {
                 crate::tarball::pack(&root, &spool, &exclude, &mut |read| watch.wrote(read).map_err(|e| e.to_string()))
             })
-            .await
-            .map_err(|e| NodeError::Internal(format!("packing panicked: {e}")))?
+            .await?
             .map_err(|e| copy_failed("packing the data", e))?
         };
         let limit = self.config.transfer.max_put_bytes();
         if let (Some(parts), true) = (parts, packed.size_bytes > limit) {
-            let put = put_parts(&spool, packed.size_bytes, parts).await?;
+            let put = put_parts(&spool, packed.size_bytes, parts, self.config.transfer.idle()).await?;
             return Ok((packed, Some(put)));
         }
         one_put(packed.size_bytes, limit)?;
-        let (body, length) =
-            crate::http_client::file_body(&spool).await.map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+        let (body, length) = crate::http_client::file_body(&spool)
+            .await
+            .map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let mut headers: Vec<(&str, String)> = extra_headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
         headers.push(("content-length", length.to_string()));
         let response =
             crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
                 .await
-                .map_err(|e| NodeError::Transfer(format!("uploading the archive: {e}")))?;
+                .map_err(|e| NodeError::TransferBroke { what: "uploading the archive", source: e.into() })?;
         if !response.status().is_success() {
             let status = response.status();
             let text = crate::http_client::read_body(response, 4096).await.unwrap_or_default();
@@ -139,11 +139,11 @@ impl Manager {
         request: RestoreRequest,
         epoch: Option<u64>,
     ) -> Result<RestoreResponse, NodeError> {
-        request.validate().map_err(NodeError::Invalid)?;
+        let source = RestoreSource::try_from(request).map_err(NodeError::Invalid)?;
         let lock = self.lock_for(&id);
         let _guard = lock.lock().await;
         let started = Instant::now();
-        let result = self.restore_locked(&id, request, epoch).await;
+        let result = self.restore_locked(&id, source, epoch).await;
         self.metrics.operation("restore", &result, started.elapsed());
         result
     }
@@ -151,7 +151,7 @@ impl Manager {
     async fn restore_locked(
         &self,
         id: &WorkloadId,
-        request: RestoreRequest,
+        source: RestoreSource,
         epoch: Option<u64>,
     ) -> Result<RestoreResponse, NodeError> {
         let started = Instant::now();
@@ -159,7 +159,7 @@ impl Manager {
         check_epoch(&record, epoch, EpochRule::Exact)?;
         if record.phase != Phase::Active {
             return Err(NodeError::Conflict {
-                code: "not_created",
+                code: ConflictCode::NotCreated,
                 message: "PUT the workload's spec before restoring into it".into(),
             });
         }
@@ -168,37 +168,40 @@ impl Manager {
         });
         if running {
             return Err(NodeError::Conflict {
-                code: "not_stopped",
+                code: ConflictCode::NotStopped,
                 message: "stop the workload before restoring into it".into(),
             });
         }
         let restoring = self.store.restoring_dir(id);
         // What an earlier restore left unfinished is settled first, as a start would settle it.
-        self.settle_restore(id)?;
+        self.settle_restore(id).await?;
         let owner = self.config.data_owner_ids();
-        let made = match (&request.url, &request.snapshot) {
-            (Some(url), _) => self.unpack_from(id, url, request.sha256.as_deref(), &restoring, owner).await,
-            (None, Some(snapshot)) => self.copy_from_snapshot(id, snapshot, &restoring, owner).await,
-            (None, None) => unreachable!("validated"),
+        let made = match &source {
+            RestoreSource::Url { url, sha256 } => self.unpack_from(id, url, sha256.as_deref(), &restoring, owner).await,
+            RestoreSource::Snapshot(snapshot) => self.copy_from_snapshot(id, snapshot, &restoring, owner).await,
         };
         let made = match made {
             Ok(made) => made,
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&restoring);
+                let _ = blocking(move || std::fs::remove_dir_all(&restoring)).await;
                 return Err(e);
             }
         };
-        let previous = match self.store.swap_in_restored(id, now().unix_timestamp()) {
+        let swapped = {
+            let (store, id) = (self.store.clone(), id.clone());
+            blocking(move || store.swap_in_restored(&id, now().unix_timestamp())).await?
+        };
+        let previous = match swapped {
             Ok(previous) => previous,
             Err(e) => {
                 // Settled as a crash here would be at the next start: the old data or the new is
                 // in place, whole.
-                let _ = self.settle_restore(id);
+                let _ = self.settle_restore(id).await;
                 return Err(e.into());
             }
         };
         self.state.lock().unwrap().disk.remove(id);
-        tracing::info!(workload = %id, bytes = made.size_bytes, entries = made.entries, snapshot = ?request.snapshot, "restored");
+        tracing::info!(workload = %id, bytes = made.size_bytes, entries = made.entries, from = ?source, "restored");
         Ok(RestoreResponse {
             previous_data: previous.map(|p| p.to_string_lossy().into_owned()),
             duration_ms: started.elapsed().as_millis() as u64,
@@ -209,13 +212,14 @@ impl Manager {
     /// Settles what a restore left on disk when it didn't finish (`Store::recover_restore`), and
     /// says so. Returns the issue to report when that put the restored data in place: whoever asked
     /// for the restore may not have heard that it succeeded.
-    pub(super) fn settle_restore(&self, id: &WorkloadId) -> Result<Option<Issue>, NodeError> {
-        match self.store.recover_restore(id, now().unix_timestamp())? {
+    pub(super) async fn settle_restore(&self, id: &WorkloadId) -> Result<Option<Issue>, NodeError> {
+        let (store, of) = (self.store.clone(), id.clone());
+        match blocking(move || store.recover_restore(&of, now().unix_timestamp())).await?? {
             Recovery::None => Ok(None),
             Recovery::Finished { previous } => {
                 tracing::warn!(workload = %id, ?previous, "finished an interrupted restore: the restored data is in place");
                 Ok(Some(Issue::new(
-                    "restore_finished",
+                    IssueCode::RestoreFinished,
                     "a restore was interrupted after its data was complete, and finished when blocklyd started",
                 )))
             }
@@ -252,7 +256,7 @@ impl Manager {
             Duration::from_secs(3600),
         )
         .await
-        .map_err(|e| NodeError::Transfer(format!("downloading the archive: {e}")))?;
+        .map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
         if !response.status().is_success() {
             return Err(NodeError::Transfer(format!("the store answered HTTP {}", response.status())));
         }
@@ -262,17 +266,17 @@ impl Manager {
             self.admit_disk(length, "the archive's download")?;
         }
         let spool_dir = self.store.spool_dir();
-        std::fs::create_dir_all(&spool_dir).map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+        std::fs::create_dir_all(&spool_dir).map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let spool = spool_dir.join(format!("{id}-{}.tar.gz", uuid::Uuid::new_v4()));
         let _cleanup = RemoveOnDrop(spool.clone());
         let mut file = crate::tarball::Hashing::new(
-            std::fs::File::create(&spool).map_err(|e| NodeError::Internal(format!("spool: {e}")))?,
+            std::fs::File::create(&spool).map_err(|source| NodeError::Io { what: "spool".into(), source })?,
         );
         let mut body = response.into_body();
         let mut watch = self.floor_watch();
         // A body that stops coming never ends by itself, and this holds the workload's lock: it
         // fails once nothing arrives for a while, or once nobody is waiting for it any more.
-        let idle = crate::tarball::download_idle();
+        let idle = self.config.transfer.idle();
         let deadline = tokio::time::Instant::now() + crate::tarball::DOWNLOAD_LIMIT;
         let stalled = |_| {
             let why = if tokio::time::Instant::now() < deadline {
@@ -286,7 +290,8 @@ impl Manager {
             .await
             .map_err(stalled)?
         {
-            let frame = frame.map_err(|e| NodeError::Transfer(format!("downloading the archive: {e}")))?;
+            let frame =
+                frame.map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
             if let Ok(data) = frame.into_data() {
                 file.write_all(&data).map_err(|e| write_failed("spool", e))?;
                 watch.wrote(file.bytes())?;
@@ -305,7 +310,7 @@ impl Manager {
         let unpacked = {
             let (spool, into, beside) = (spool.clone(), into.to_owned(), self.store.workload_dir(id));
             let mut watch = self.floor_watch();
-            tokio::task::spawn_blocking(move || {
+            blocking(move || {
                 // On disk before anything calls it complete (`Store::swap_in_restored`).
                 let disk = crate::durable::FilesystemSync::begin(&beside)?;
                 let unpacked = crate::tarball::unpack(&spool, &into, owner, &mut |written| {
@@ -314,8 +319,7 @@ impl Manager {
                 disk.finish()?;
                 Ok(unpacked)
             })
-            .await
-            .map_err(|e| NodeError::Internal(format!("unpacking panicked: {e}")))?
+            .await?
         };
         let unpacked = unpacked.map_err(|e| match e {
             crate::tarball::UnpackError::NoRoom(message) => NodeError::InsufficientDisk(message),
@@ -348,7 +352,7 @@ impl Manager {
         let from = self.store.snapshot_dir(id, snapshot).join("data");
         let (into, beside) = (into.to_owned(), self.store.workload_dir(id));
         let mut watch = self.floor_watch();
-        let copied = tokio::task::spawn_blocking(move || {
+        let copied = blocking(move || {
             // On disk before anything calls it complete (`Store::swap_in_restored`).
             let disk = crate::durable::FilesystemSync::begin(&beside)?;
             let copied = crate::tree::copy_tree(&from, &into, Some(owner), &[], &mut |copied| {
@@ -356,8 +360,7 @@ impl Manager {
             })?;
             disk.finish().map(|()| copied)
         })
-        .await
-        .map_err(|e| NodeError::Internal(format!("copying panicked: {e}")))?
+        .await?
         .map_err(|e| copy_failed("copying the snapshot", e))?;
         Ok(RestoreResponse {
             size_bytes: copied.walked.bytes,
@@ -388,7 +391,12 @@ const PART_TRIES: u32 = 3;
 /// archive are refused before anything is sent, as one PUT too small is. A part the store failed
 /// to take (a dropped connection, a 5xx) is sent again; one it refused fails the archive, and the
 /// control plane drops the upload.
-async fn put_parts(spool: &std::path::Path, size: u64, parts: &PartsTarget) -> Result<Vec<PutPart>, NodeError> {
+async fn put_parts(
+    spool: &std::path::Path,
+    size: u64,
+    parts: &PartsTarget,
+    idle: Duration,
+) -> Result<Vec<PutPart>, NodeError> {
     let needed = crate::tarball::parts_needed(size, parts.part_size);
     if needed > parts.urls.len() as u64 {
         return Err(NodeError::ArchiveTooLarge { size_bytes: size, limit_bytes: parts.capacity() });
@@ -402,7 +410,7 @@ async fn put_parts(spool: &std::path::Path, size: u64, parts: &PartsTarget) -> R
         let mut tries = 0;
         let etag = loop {
             tries += 1;
-            match put_part(spool, url, &parts.headers, offset, length, tls.clone()).await {
+            match put_part(spool, url, &parts.headers, offset, length, tls.clone(), idle).await {
                 Ok(etag) => break etag,
                 Err((message, transient)) if transient && tries < PART_TRIES => {
                     tracing::warn!(part = number, of = needed, error = %message, "sending a part again");
@@ -427,6 +435,7 @@ async fn put_part(
     offset: u64,
     length: u64,
     tls: Option<Arc<rustls::ClientConfig>>,
+    idle: Duration,
 ) -> Result<String, (String, bool)> {
     let body = crate::http_client::file_range_body(spool, offset, length)
         .await
@@ -441,7 +450,6 @@ async fn put_part(
     let etag = response.headers().get(hyper::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_owned);
     // A few bytes, but a store that stops sending them would hold the export forever: a stall is
     // a part the store failed to take, and it is sent again like one.
-    let idle = crate::tarball::download_idle();
     let text = tokio::time::timeout(idle, crate::http_client::read_body(response, 4096))
         .await
         .map_err(|_| (format!("the store's answer stopped: nothing arrived for {idle:?}"), true))?
@@ -457,11 +465,10 @@ async fn put_part(
 /// A write that failed for want of space reached the disk's floor the hard way; any other failure
 /// is blocklyd's own.
 fn write_failed(what: &str, e: std::io::Error) -> NodeError {
-    let message = format!("{what}: {e}");
     if e.kind() == std::io::ErrorKind::StorageFull {
-        NodeError::InsufficientDisk(message)
+        NodeError::InsufficientDisk(format!("{what}: {e}"))
     } else {
-        NodeError::Internal(message)
+        NodeError::Io { what: what.to_owned(), source: e }
     }
 }
 
@@ -505,7 +512,9 @@ mod tests {
         let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
         assert!(matches!(copy_failed("copying", full), NodeError::InsufficientDisk(_)));
         let failed = std::io::Error::other("Input/output error");
-        assert!(matches!(copy_failed("copying", failed), NodeError::Internal(m) if m == "copying: Input/output error"));
+        let failed = copy_failed("copying", failed);
+        assert!(matches!(failed, NodeError::Io { .. }), "{failed:?}");
+        assert_eq!(failed.to_string(), "copying: Input/output error", "as the API answers it");
     }
 
     #[test]

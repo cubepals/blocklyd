@@ -1,20 +1,25 @@
 //! blocklyd: Blockly's node daemon. It runs Blockly's Minecraft servers on a Linux host through
 //! Docker, for a control plane that places them: alone on one host, or as one node of many. See
 //! README.md, and docs/protocol.md for the API.
+//!
+//! Its only users are `main.rs` and the tests in `tests/`: what they use is `pub`, the rest is
+//! `pub(crate)`, and `unreachable_pub` keeps it that way.
+
+#![warn(unreachable_pub)]
 
 pub mod api;
 pub mod certs;
 pub mod cli;
-pub mod clock;
+pub(crate) mod clock;
 pub mod config;
 pub mod doctor;
 pub mod durable;
 pub mod fleet;
 pub mod host;
-pub mod http_client;
+pub(crate) mod http_client;
 pub mod ids;
-pub mod infer;
-pub mod labels;
+pub(crate) mod infer;
+pub(crate) mod labels;
 pub mod manager;
 pub mod metrics;
 pub mod ports;
@@ -23,6 +28,6 @@ pub mod reconcile;
 pub mod runtime;
 pub mod store;
 pub mod tarball;
-pub mod tls;
+pub(crate) mod tls;
 pub mod tree;
 pub mod upgrade;

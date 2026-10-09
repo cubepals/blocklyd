@@ -4,10 +4,15 @@
 //! the host enforces.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::time::Duration;
 
 use serde::Deserialize;
+
+use crate::ids::NodeId;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -15,7 +20,7 @@ pub struct Config {
     /// This host's stable name, written on every container it makes. Two nodes never share one.
     /// In fleet mode it is left out: the control plane issues it at enrollment.
     #[serde(default)]
-    pub node_id: String,
+    pub node_id: NodeId,
     /// The Blockly deployment (staging, production) this host serves. Containers of another
     /// deployment are never adopted or touched.
     pub deployment_id: String,
@@ -29,13 +34,13 @@ pub struct Config {
     #[serde(default)]
     pub network: NetworkConfig,
     #[serde(default)]
-    pub workloads: WorkloadPolicy,
+    pub(crate) workloads: WorkloadPolicy,
     #[serde(default)]
     pub capacity: CapacityConfig,
     #[serde(default)]
-    pub intervals: Intervals,
+    pub(crate) intervals: Intervals,
     #[serde(default)]
-    pub transfer: TransferConfig,
+    pub(crate) transfer: TransferConfig,
     /// Fleet mode: this node enrolls with a control plane, takes its identity and TLS material
     /// from it, and reports to it. Without it, blocklyd is the single-node daemon it was.
     #[serde(default)]
@@ -76,12 +81,12 @@ fn default_shutdown_grace() -> u64 {
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     /// This node's certificate chain (PEM), with extended key usage serverAuth.
-    pub cert: PathBuf,
+    pub(crate) cert: PathBuf,
     /// Its private key (PEM, mode 0600).
-    pub key: PathBuf,
+    pub(crate) key: PathBuf,
     /// The CA that issues control-plane client certificates. Only its certificate lives on a
     /// host; its private key never does.
-    pub client_ca: PathBuf,
+    pub(crate) client_ca: PathBuf,
     /// DNS names (subject alternative names) of the clients allowed to call this API, e.g.
     /// `control-plane.staging.blockly.internal`. A valid certificate for another name is refused.
     pub allowed_clients: Vec<String>,
@@ -146,8 +151,8 @@ impl Default for OpsConfig {
 pub struct DockerConfig {
     pub socket: PathBuf,
     /// The bridge network workloads join. Made with inter-container traffic off.
-    pub network: String,
-    pub pull_timeout_seconds: u64,
+    pub(crate) network: String,
+    pub(crate) pull_timeout_seconds: u64,
 }
 
 impl Default for DockerConfig {
@@ -173,7 +178,7 @@ pub struct NetworkConfig {
     pub control_ips: Vec<IpAddr>,
     /// A released port isn't handed out again for this long, so a route to the old workload
     /// that is still cached somewhere can't reach a new one.
-    pub port_quarantine_seconds: u64,
+    pub(crate) port_quarantine_seconds: u64,
 }
 
 impl Default for NetworkConfig {
@@ -189,33 +194,33 @@ impl Default for NetworkConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct WorkloadPolicy {
+pub(crate) struct WorkloadPolicy {
     /// Image reference prefixes this host runs. Everything else is refused.
-    pub allowed_images: Vec<String>,
+    pub(crate) allowed_images: Vec<String>,
     /// uid:gid every workload runs as. Numeric, never root.
-    pub user: String,
+    pub(crate) user: Ids,
     /// Owner of each workload's data directory on the host. The same as `user` unless the
     /// daemon remaps user namespaces, where it is the remapped host id.
-    pub data_owner: Option<String>,
-    pub read_only_rootfs: bool,
+    pub(crate) data_owner: Option<Ids>,
+    pub(crate) read_only_rootfs: bool,
     /// Size of the writable /tmp a read-only workload gets (tmpfs, counted in its memory).
-    pub tmp_size_mb: u32,
-    pub default_pids_limit: u32,
-    pub log_max_size_mb: u32,
-    pub log_max_files: u32,
+    pub(crate) tmp_size_mb: u32,
+    pub(crate) default_pids_limit: u32,
+    pub(crate) log_max_size_mb: u32,
+    pub(crate) log_max_files: u32,
     /// The kernel kills the highest score first when the host runs out; workloads go before
     /// blocklyd and Docker.
-    pub oom_score_adj: i32,
+    pub(crate) oom_score_adj: i32,
     /// How long deleted data stays in the host's trash before it is purged.
-    pub trash_retention_hours: u64,
-    pub min_memory_mb: u32,
+    pub(crate) trash_retention_hours: u64,
+    pub(crate) min_memory_mb: u32,
 }
 
 impl Default for WorkloadPolicy {
     fn default() -> Self {
         Self {
             allowed_images: vec!["itzg/minecraft-server:".into(), "docker.io/itzg/minecraft-server:".into()],
-            user: "1000:1000".into(),
+            user: Ids { uid: 1000, gid: 1000 },
             data_owner: None,
             read_only_rootfs: true,
             tmp_size_mb: 256,
@@ -237,12 +242,12 @@ pub struct CapacityConfig {
     pub reserved_memory_mb: u64,
     /// A ceiling on what workloads may be given, below total minus reserved: for a host that
     /// runs other things too, or a test that wants a small host.
-    pub allocatable_memory_mb: Option<u64>,
+    pub(crate) allocatable_memory_mb: Option<u64>,
     /// Creating a workload is refused below this much free disk.
     pub min_free_disk_mb: u64,
     /// Running memory may reach allocatable × this. 1.0: no overcommit (the default, since a
     /// JVM with a pre-touched heap really uses what it is given).
-    pub memory_overcommit: f64,
+    pub(crate) memory_overcommit: f64,
     /// CPU kept for the host (kernel, Docker, blocklyd, network interrupts), in millicores.
     pub reserved_cpu_millis: u64,
 }
@@ -270,11 +275,11 @@ impl CapacityConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Intervals {
+pub(crate) struct Intervals {
     /// A full reconciliation against the runtime, besides the event stream.
-    pub resync_seconds: u64,
-    pub stats_seconds: u64,
-    pub disk_usage_seconds: u64,
+    pub(crate) resync_seconds: u64,
+    pub(crate) stats_seconds: u64,
+    pub(crate) disk_usage_seconds: u64,
 }
 
 impl Default for Intervals {
@@ -286,11 +291,16 @@ impl Default for Intervals {
 /// How archives reach the object store.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct TransferConfig {
+pub(crate) struct TransferConfig {
     /// The largest archive sent in one PUT, in MiB; a larger one goes in parts when the request
     /// offers them. The default is R2's limit for one PUT, the strictest of the stores Blockly
     /// uses; a store whose limit is lower sets it lower.
-    pub max_put_mb: u64,
+    pub(crate) max_put_mb: u64,
+    /// How long a transfer may go without receiving anything before it counts as stalled: a
+    /// store that hung mid-body, or a path that drops packets without a reset, never ends a body
+    /// by itself. Whatever arrives starts it over, so a slow but live download of any size never
+    /// trips it.
+    pub(crate) idle_seconds: u64,
 }
 
 const MIB: u64 = 1024 * 1024;
@@ -300,14 +310,25 @@ const MAX_PUT_MB: u64 = crate::protocol::MAX_SINGLE_PUT_BYTES / MIB;
 
 impl Default for TransferConfig {
     fn default() -> Self {
-        Self { max_put_mb: MAX_PUT_MB }
+        Self { max_put_mb: MAX_PUT_MB, idle_seconds: 120 }
     }
 }
 
 impl TransferConfig {
-    pub fn max_put_bytes(&self) -> u64 {
+    pub(crate) fn max_put_bytes(&self) -> u64 {
         self.max_put_mb.saturating_mul(MIB)
     }
+
+    pub(crate) fn idle(&self) -> Duration {
+        Duration::from_secs(self.idle_seconds)
+    }
+}
+
+/// What `Config::mode` makes of `[fleet]` and `[api.tls]`.
+#[derive(Clone, Copy, Debug)]
+pub enum Mode<'a> {
+    Standalone(&'a TlsConfig),
+    Fleet(&'a FleetConfig),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -320,10 +341,33 @@ pub enum ConfigError {
     Invalid(String),
 }
 
-/// A numeric `uid:gid`.
-pub fn parse_ids(value: &str) -> Option<(u32, u32)> {
-    let (uid, gid) = value.split_once(':')?;
-    Some((uid.parse().ok()?, gid.parse().ok()?))
+/// A numeric `uid:gid`, as the config writes one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Ids {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+}
+
+impl FromStr for Ids {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let numeric = || format!("{value} is not a numeric uid:gid");
+        let (uid, gid) = value.split_once(':').ok_or_else(numeric)?;
+        Ok(Self { uid: uid.parse().map_err(|_| numeric())?, gid: gid.parse().map_err(|_| numeric())? })
+    }
+}
+
+impl<'de> Deserialize<'de> for Ids {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+impl fmt::Display for Ids {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.uid, self.gid)
+    }
 }
 
 /// A node id: what the control plane issues (a UUID) or an operator picks.
@@ -339,7 +383,7 @@ fn name_ok(value: &str) -> bool {
 
 /// Where a listener without authentication may be bound: loopback, or an address the internet
 /// can't route to. An IPv4 address written as IPv6 (`::ffff:a.b.c.d`) is judged as itself.
-pub fn private_or_loopback(ip: IpAddr) -> bool {
+pub(crate) fn private_or_loopback(ip: IpAddr) -> bool {
     match ip.to_canonical() {
         IpAddr::V4(ip) => {
             let [a, b, ..] = ip.octets();
@@ -353,7 +397,7 @@ pub fn private_or_loopback(ip: IpAddr) -> bool {
 /// Whether the node can call the control plane at `url`: `https://host[:port]`, or a path under
 /// it, read as the fleet client reads it (`hyper::Uri`). Paths are added to it as text, so a query
 /// or a fragment would swallow them; a port out of range would be dialled as 443.
-pub fn fleet_url_ok(url: &str) -> bool {
+pub(crate) fn fleet_url_ok(url: &str) -> bool {
     url.starts_with("https://")
         && !url.contains('#')
         && url.parse::<hyper::Uri>().is_ok_and(|uri| {
@@ -381,6 +425,16 @@ impl Config {
         Ok(config)
     }
 
+    /// How the node is reached and trusted: on its own, with the TLS material `[api.tls]` names,
+    /// or in a fleet, which issues it at enrollment. A config with neither is refused.
+    pub fn mode(&self) -> Result<Mode<'_>, ConfigError> {
+        match (&self.fleet, &self.api.tls) {
+            (Some(fleet), _) => Ok(Mode::Fleet(fleet)),
+            (None, Some(tls)) => Ok(Mode::Standalone(tls)),
+            (None, None) => Err(ConfigError::Invalid("api.tls is required unless [fleet] provides it".into())),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         let bad = |m: String| Err(ConfigError::Invalid(m));
         if !(1..=MAX_PUT_MB).contains(&self.transfer.max_put_mb) {
@@ -388,21 +442,20 @@ impl Config {
                 "transfer.max_put_mb is the most one PUT carries, 1 to {MAX_PUT_MB}: no store takes more"
             ));
         }
-        match &self.fleet {
-            None => {
-                if !id_ok(&self.node_id) {
-                    return bad("node_id is 1-63 of a-z, 0-9 and '-'".into());
-                }
-                match &self.api.tls {
-                    None => return bad("api.tls is required unless [fleet] provides it".into()),
-                    Some(tls) if tls.allowed_clients.is_empty() => {
-                        return bad("api.tls.allowed_clients needs at least one client name".into());
-                    }
-                    Some(_) => {}
+        if self.transfer.idle_seconds == 0 {
+            return bad("transfer.idle_seconds is at least 1".into());
+        }
+        if self.fleet.is_none() && !id_ok(self.node_id.as_str()) {
+            return bad("node_id is 1-63 of a-z, 0-9 and '-'".into());
+        }
+        match self.mode()? {
+            Mode::Standalone(tls) => {
+                if tls.allowed_clients.is_empty() {
+                    return bad("api.tls.allowed_clients needs at least one client name".into());
                 }
             }
-            Some(fleet) => {
-                if !self.node_id.is_empty() {
+            Mode::Fleet(fleet) => {
+                if !self.node_id.as_str().is_empty() {
                     return bad("in fleet mode node_id comes from enrollment; leave it out".into());
                 }
                 if self.api.tls.is_some() {
@@ -457,16 +510,12 @@ impl Config {
         }
         // Root and its group neither run a workload nor own its data: uid 0 in a container is a
         // short step from root on the host, and files the host's root owns are the host's.
-        let owner = self.workloads.data_owner.as_ref().map(|owner| ("workloads.data_owner", owner));
-        for (key, ids) in std::iter::once(("workloads.user", &self.workloads.user)).chain(owner) {
-            match parse_ids(ids) {
-                Some((0, _)) | Some((_, 0)) => {
-                    return bad(format!(
-                        "{key} is {ids}, which is root: workloads never run as, or own data as, uid 0 or gid 0"
-                    ));
-                }
-                None => return bad(format!("{key} is numeric uid:gid")),
-                _ => {}
+        let owner = self.workloads.data_owner.map(|owner| ("workloads.data_owner", owner));
+        for (key, ids) in std::iter::once(("workloads.user", self.workloads.user)).chain(owner) {
+            if ids.uid == 0 || ids.gid == 0 {
+                return bad(format!(
+                    "{key} is {ids}, which is root: workloads never run as, or own data as, uid 0 or gid 0"
+                ));
             }
         }
         if self.workloads.allowed_images.is_empty() {
@@ -481,12 +530,9 @@ impl Config {
         Ok(())
     }
 
-    pub fn workload_ids(&self) -> (u32, u32) {
-        parse_ids(&self.workloads.user).expect("validated")
-    }
-
     pub fn data_owner_ids(&self) -> (u32, u32) {
-        self.workloads.data_owner.as_deref().and_then(parse_ids).unwrap_or_else(|| self.workload_ids())
+        let owner = self.workloads.data_owner.unwrap_or(self.workloads.user);
+        (owner.uid, owner.gid)
     }
 }
 
@@ -512,7 +558,7 @@ mod tests {
         config.validate().unwrap();
         assert_eq!(config.network.edge_ips, [IpAddr::from([127, 0, 0, 1])], "nothing is exposed unless asked");
         assert!(config.workloads.read_only_rootfs);
-        assert_eq!(config.workload_ids(), (1000, 1000));
+        assert_eq!(config.workloads.user, Ids { uid: 1000, gid: 1000 });
         assert_eq!(config.ops.listen.ip(), IpAddr::from([127, 0, 0, 1]));
         assert_eq!(config.transfer.max_put_bytes(), crate::protocol::MAX_SINGLE_PUT_BYTES, "R2's limit");
     }
@@ -601,7 +647,7 @@ mod tests {
         config.validate().unwrap();
         let fleet = config.fleet.expect("fleet mode");
         assert_eq!((fleet.heartbeat_seconds, fleet.restart_requires_contact_seconds), (5, 120));
-        assert!(config.api.tls.is_none() && config.node_id.is_empty());
+        assert!(config.api.tls.is_none() && config.node_id.as_str().is_empty());
     }
 
     #[test]
@@ -707,7 +753,8 @@ mod tests {
             let refused = workloads(toml).expect_err(toml).to_string();
             assert!(refused.contains(key) && refused.contains("root"), "{refused}");
         }
-        assert!(workloads("data_owner = \"root\"").unwrap_err().to_string().contains("numeric"));
+        let named = format!("{MINIMAL}\n[workloads]\ndata_owner = \"root\"\n");
+        assert!(toml::from_str::<Config>(&named).unwrap_err().to_string().contains("numeric uid:gid"));
         workloads("data_owner = \"101000:101000\"").unwrap();
         let unknown = MINIMAL.to_owned() + "\nprivileged = true\n";
         assert!(toml::from_str::<Config>(&unknown).is_err());

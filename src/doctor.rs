@@ -35,7 +35,7 @@ use serde::Serialize;
 use crate::runtime::ContainerRuntime;
 use crate::runtime::docker::DockerRuntime;
 
-pub use check::{Check, Status};
+pub(crate) use check::{Check, Status};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Report {
@@ -47,7 +47,7 @@ pub struct Report {
 
 impl Report {
     /// What `--preflight` reports: a failure blocklyd survives becomes a warning.
-    pub fn for_preflight(mut self) -> Self {
+    pub(crate) fn for_preflight(mut self) -> Self {
         for check in &mut self.checks {
             if check.status == Status::Fail && !check.gates_start {
                 check.status = Status::Warn;
@@ -103,7 +103,7 @@ pub struct Options {
 }
 
 /// Docker's own configuration file, which `--fix` writes.
-pub const DAEMON_JSON: &str = "/etc/docker/daemon.json";
+pub(crate) const DAEMON_JSON: &str = "/etc/docker/daemon.json";
 
 /// The configuration check alone (`check-config`), and the configuration when it loads.
 pub fn check_config(path: &Path) -> (Check, Option<crate::config::Config>) {

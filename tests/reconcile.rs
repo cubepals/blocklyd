@@ -6,8 +6,8 @@ mod support;
 use std::path::Path;
 use std::sync::Arc;
 
-use blocklyd::manager::Precondition;
-use blocklyd::protocol::{EnsureOutcome, WorkloadState};
+use blocklyd::manager::{Precondition, Records};
+use blocklyd::protocol::{EnsureOutcome, IssueCode, WorkloadState};
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::store::restore::RESTORE_COMPLETE;
 use support::{fixture, id, manager_on, spec};
@@ -48,7 +48,7 @@ async fn a_restarted_daemon_finds_everything_and_hands_out_no_port_twice() {
 
     // A new process: nothing in memory, the same disk and the same runtime.
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    let report = restarted.reconcile(true).await;
+    let report = restarted.reconcile(Records::FromDisk).await;
     assert!(report.error.is_none(), "{report:?}");
     assert_eq!(report.workloads, 2);
     let a_view = restarted.view(&id("a")).unwrap();
@@ -73,13 +73,13 @@ async fn a_lost_state_directory_is_rebuilt_from_container_labels() {
     std::fs::remove_file(&record).unwrap();
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    let report = restarted.reconcile(true).await;
+    let report = restarted.reconcile(Records::FromDisk).await;
     assert_eq!(report.adopted, 1);
     let view = restarted.view(&id("a")).unwrap();
     assert_eq!(view.state, WorkloadState::Running);
     assert_eq!(view.spec_digest, made.workload.spec_digest);
     assert_eq!(view.ports, made.workload.ports);
-    assert!(view.issues.iter().any(|i| i.code == "record_rebuilt"), "rebuilt, and says so");
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::RecordRebuilt), "rebuilt, and says so");
     let rebuilt: serde_json::Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
     for field in ["id", "generation", "spec", "specDigest", "ports", "containerName", "createdAt"] {
         assert_eq!(rebuilt[field], original[field], "{field}");
@@ -101,7 +101,7 @@ async fn a_create_interrupted_after_the_container_existed_is_completed() {
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    let report = restarted.reconcile(true).await;
+    let report = restarted.reconcile(Records::FromDisk).await;
     assert_eq!(report.adopted, 1);
     let view = restarted.view(&id("a")).unwrap();
     assert_eq!(view.state, WorkloadState::Created);
@@ -121,10 +121,10 @@ async fn a_create_interrupted_before_the_container_existed_is_finished_by_the_ne
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     let view = restarted.view(&id("a")).unwrap();
     assert_eq!(view.state, WorkloadState::Creating);
-    assert!(view.issues.iter().any(|i| i.code == "create_incomplete"));
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::CreateIncomplete));
     let done = restarted.ensure(id("a"), spec(), Precondition::None, None).await.unwrap();
     assert_eq!(done.workload.state, WorkloadState::Created);
     assert!(done.workload.issues.is_empty());
@@ -136,10 +136,10 @@ async fn a_container_the_runtime_lost_is_reported_not_recreated() {
     f.manager.ensure(id("a"), spec(), Precondition::None, None).await.unwrap();
     f.fake.vanish("blockly-test-a");
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     let view = restarted.view(&id("a")).unwrap();
     assert_eq!(view.state, WorkloadState::Missing);
-    assert!(view.issues.iter().any(|i| i.code == "container_missing"));
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::ContainerMissing));
     assert_eq!(f.fake.count_calls("create "), 1, "blocklyd doesn't recreate on its own: it holds no secrets");
     assert!(!view.ports.is_empty(), "its ports stay held for when it's asked back");
 }
@@ -147,14 +147,14 @@ async fn a_container_the_runtime_lost_is_reported_not_recreated() {
 #[tokio::test]
 async fn orphaned_data_is_reported_and_never_touched() {
     let f = fixture("").await;
-    f.manager.reconcile(true).await;
+    f.manager.reconcile(Records::FromDisk).await;
     let orphan = f.manager.store.workloads_dir().join("nobody").join("data");
     std::fs::create_dir_all(&orphan).unwrap();
     std::fs::write(orphan.join("level.dat"), b"someone's world").unwrap();
-    let report = f.manager.reconcile(true).await;
+    let report = f.manager.reconcile(Records::FromDisk).await;
     assert!(report.error.is_none());
     let host = f.manager.node_status().await;
-    assert!(host.issues.iter().any(|i| i.code == "orphan_data"));
+    assert!(host.issues.iter().any(|i| i.code == IssueCode::OrphanData));
     assert!(orphan.join("level.dat").exists());
 }
 
@@ -166,7 +166,7 @@ async fn another_deployments_containers_are_invisible() {
     let dir = tempfile::tempdir().unwrap();
     let other =
         support::manager_on(dir.path(), f.fake.clone() as Arc<dyn ContainerRuntime>, "deployment_id = \"prod\"\n");
-    let report = other.reconcile(true).await;
+    let report = other.reconcile(Records::FromDisk).await;
     assert_eq!(report.workloads, 0, "staging's containers are not production's to adopt");
     assert!(other.view(&id("a")).is_err());
 }
@@ -183,13 +183,13 @@ async fn two_records_claiming_one_port_are_both_flagged() {
     std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     for w in ["a", "b"] {
         let view = restarted.view(&id(w)).unwrap();
-        assert!(view.issues.iter().any(|i| i.code == "port_conflict"), "{w}: {:?}", view.issues);
+        assert!(view.issues.iter().any(|i| i.code == IssueCode::PortConflict), "{w}: {:?}", view.issues);
     }
     let b = restarted.view(&id("b")).unwrap();
-    assert!(b.issues.iter().any(|i| i.code == "port_mismatch"), "the record no longer matches b's container");
+    assert!(b.issues.iter().any(|i| i.code == IssueCode::PortMismatch), "the record no longer matches b's container");
 }
 
 /// A world in `dir` that says `what`.
@@ -221,14 +221,14 @@ async fn a_restore_cut_short_once_its_data_was_complete_is_finished_at_startup()
     world_saying(&store.restoring_dir(&id("exchanged")), "old");
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    assert!(restarted.reconcile(true).await.error.is_none());
+    assert!(restarted.reconcile(Records::FromDisk).await.error.is_none());
     for w in ["renamed", "exchanged"] {
         let data = restarted.store.data_dir(&id(w));
         assert_eq!(says(&data), "restored", "{w}");
         assert!(!data.join(RESTORE_COMPLETE).exists(), "{w}");
         assert!(!restarted.store.restoring_dir(&id(w)).exists(), "{w}");
         let issues = restarted.view(&id(w)).unwrap().issues;
-        assert!(issues.iter().any(|i| i.code == "restore_finished"), "{w}: and says so: {issues:?}");
+        assert!(issues.iter().any(|i| i.code == IssueCode::RestoreFinished), "{w}: and says so: {issues:?}");
     }
     // What the exchange replaced went where a finished restore puts it.
     let trashed: Vec<_> = std::fs::read_dir(restarted.store.trash_dir())
@@ -253,7 +253,7 @@ async fn a_restore_cut_short_before_it_replaced_anything_is_removed_at_startup()
     std::fs::write(f.manager.store.restoring_dir(&id("unswapped")).join(RESTORE_COMPLETE), b"").unwrap();
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    assert!(restarted.reconcile(true).await.error.is_none());
+    assert!(restarted.reconcile(Records::FromDisk).await.error.is_none());
     for w in ["unpacking", "unswapped"] {
         assert_eq!(says(&restarted.store.data_dir(&id(w))), "mine", "{w}: the data is as it was");
         assert!(!restarted.store.restoring_dir(&id(w)).exists(), "{w}");
@@ -277,15 +277,15 @@ async fn what_a_crash_left_in_the_spool_and_of_snapshots_is_cleared_at_startup()
     std::fs::write(store.snapshot_dir(&id("w"), &snapshot(damaged)).join("snapshot.json"), b"{not json").unwrap();
 
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    assert!(restarted.reconcile(true).await.error.is_none());
+    assert!(restarted.reconcile(Records::FromDisk).await.error.is_none());
     assert_eq!(std::fs::read_dir(store.spool_dir()).unwrap().count(), 0, "the spool is empty");
     assert!(!store.snapshot_dir(&id("w"), &snapshot(unfinished)).exists());
     assert!(store.snapshot_dir(&id("w"), &snapshot(damaged)).join("data/level.dat").exists(), "left for a human");
     let issues = restarted.node_status().await.issues;
-    assert!(issues.iter().any(|i| i.code == "unreadable_snapshot" && i.detail.contains(damaged)), "{issues:?}");
+    assert!(issues.iter().any(|i| i.code == IssueCode::UnreadableSnapshot && i.detail.contains(damaged)), "{issues:?}");
     // Only from disk: a pass on a schedule never looks.
     std::fs::write(store.spool_dir().join("w-1b6f.tar.gz"), b"a download under way").unwrap();
-    assert!(restarted.reconcile(false).await.error.is_none());
+    assert!(restarted.reconcile(Records::InMemory).await.error.is_none());
     assert!(store.spool_dir().join("w-1b6f.tar.gz").exists());
 }
 
@@ -295,12 +295,12 @@ async fn reconciliation_with_the_runtime_down_keeps_the_records() {
     f.manager.ensure(id("a"), spec(), Precondition::None, None).await.unwrap();
     f.fake.set_available(false);
     let restarted = manager_on(f.dir.path(), f.fake.clone(), "");
-    let report = restarted.reconcile(true).await;
+    let report = restarted.reconcile(Records::FromDisk).await;
     assert!(report.error.is_some());
     assert!(!restarted.reconciled());
     assert_eq!(restarted.view(&id("a")).unwrap().state, WorkloadState::Unknown, "known, but not observable");
     f.fake.set_available(true);
-    let report = restarted.reconcile(false).await;
+    let report = restarted.reconcile(Records::InMemory).await;
     assert!(report.error.is_none());
     assert_eq!(restarted.view(&id("a")).unwrap().state, WorkloadState::Created);
 }

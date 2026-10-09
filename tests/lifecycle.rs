@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use blocklyd::fleet::heartbeat::heartbeat_report;
-use blocklyd::manager::{NodeError, Precondition};
-use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, WorkloadState};
+use blocklyd::manager::{ConflictCode, NodeError, Precondition, Records};
+use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, IssueCode, WorkloadState};
 use blocklyd::store::Phase;
 use support::{fixture, id, spec, spec_with};
 use tokio_util::sync::CancellationToken;
@@ -161,7 +161,10 @@ async fn delete_while_running_stops_gracefully_and_keeps_data_by_default() {
     assert!(data.join("level.dat").exists());
     assert_eq!(f.manager.view(&id("w")).unwrap().state, WorkloadState::Retained);
     // A retained workload has no compute until the control plane asks for it again.
-    assert!(matches!(f.manager.start(id("w"), None).await, Err(NodeError::Conflict { code: "no_compute", .. })));
+    assert!(matches!(
+        f.manager.start(id("w"), None).await,
+        Err(NodeError::Conflict { code: ConflictCode::NoCompute, .. })
+    ));
     let back = f.manager.ensure(id("w"), spec(), Precondition::None, None).await.unwrap();
     assert_eq!(back.outcome, EnsureOutcome::Replaced);
     assert!(data.join("level.dat").exists(), "the world came back with it");
@@ -230,10 +233,10 @@ async fn a_container_lost_by_the_runtime_is_reported_and_made_again_on_request()
     f.manager.ensure(id("w"), spec(), Precondition::None, None).await.unwrap();
     f.fake.vanish("blockly-test-w");
     let err = f.manager.start(id("w"), None).await.unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "container_missing", .. }));
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::ContainerMissing, .. }));
     let view = f.manager.view(&id("w")).unwrap();
     assert_eq!(view.state, WorkloadState::Missing);
-    assert!(view.issues.iter().any(|i| i.code == "container_missing"));
+    assert!(view.issues.iter().any(|i| i.code == IssueCode::ContainerMissing));
     let back = f.manager.ensure(id("w"), spec(), Precondition::None, None).await.unwrap();
     assert_eq!(back.outcome, EnsureOutcome::Replaced);
     assert!(back.workload.issues.is_empty());
@@ -347,7 +350,7 @@ async fn exec_runs_once_per_idempotency_key() {
     let req = || ExecRequest { command: vec!["echo".into(), "hi".into()], timeout_seconds: 5 };
     assert!(matches!(
         f.manager.exec(id("w"), req(), None, None).await,
-        Err(NodeError::Conflict { code: "not_running", .. })
+        Err(NodeError::Conflict { code: ConflictCode::NotRunning, .. })
     ));
     f.manager.start(id("w"), None).await.unwrap();
     let first = f.manager.exec(id("w"), req(), Some("k1".into()), None).await.unwrap();
@@ -413,7 +416,7 @@ async fn a_follow_ends_when_its_reader_goes_away_however_quiet_the_workload() {
 #[tokio::test]
 async fn while_the_runtime_is_down_nothing_stale_is_passed_off_as_the_state() {
     let f = fixture("").await;
-    f.manager.reconcile(true).await;
+    f.manager.reconcile(Records::FromDisk).await;
     f.manager.ensure(id("w"), spec(), Precondition::None, None).await.unwrap();
     f.manager.start(id("w"), None).await.unwrap();
     assert_eq!(f.manager.view(&id("w")).unwrap().state, WorkloadState::Running);
@@ -425,7 +428,7 @@ async fn while_the_runtime_is_down_nothing_stale_is_passed_off_as_the_state() {
     f.fake.set_available(true);
     f.fake.crash("blockly-test-w", 0, false);
     assert_eq!(f.manager.health().await.status, "degraded", "back, but not looked at yet");
-    f.manager.reconcile(false).await;
+    f.manager.reconcile(Records::InMemory).await;
     assert_eq!(f.manager.health().await.status, "ok");
     assert_eq!(f.manager.view(&id("w")).unwrap().state, WorkloadState::Stopped, "the truth, once it has looked");
 }
@@ -470,7 +473,7 @@ async fn a_workload_found_dead_at_startup_is_not_restarted() {
     f.fake.crash("blockly-test-w", 255, false);
     let restarted = support::manager_on(f.dir.path(), f.fake.clone(), "");
     tokio::spawn(restarted.clone().restart_supervisor(tokio_util::sync::CancellationToken::new()));
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     restarted.stats(&id("w")).await.ok();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let view = restarted.view(&id("w")).unwrap();
@@ -494,10 +497,10 @@ async fn a_restart_of_blocklyd_doesnt_give_a_crash_loop_its_retries_again() {
 
     // blocklyd restarts, in the same boot, and finds the workload running again.
     let again = support::manager_on(f.dir.path(), f.fake.clone(), "");
-    again.reconcile(true).await;
+    again.reconcile(Records::FromDisk).await;
     tokio::spawn(again.clone().restart_supervisor(CancellationToken::new()));
     assert_eq!(again.view(&id("w")).unwrap().restart_count, 1, "remembered");
-    let beat = heartbeat_report(&again, "test-node", "session", None, 1).await;
+    let beat = heartbeat_report(&again, &"test-node".into(), "session", None, 1).await;
     assert_eq!(beat.workloads[0].restart_count, 1, "and reported");
 
     f.fake.crash("blockly-test-w", 3, false);
@@ -525,18 +528,18 @@ async fn a_restart_that_wouldnt_fit_is_refused_and_says_why() {
     f.manager.start(id("b"), None).await.unwrap();
     tokio::spawn(f.manager.clone().restart_supervisor(CancellationToken::new()));
     let view = support::until(&f.manager, "a", "the restart to be refused", |v| {
-        v.state == WorkloadState::Crashed && v.issues.iter().any(|i| i.code == "insufficient_capacity")
+        v.state == WorkloadState::Crashed && v.issues.iter().any(|i| i.code == IssueCode::InsufficientCapacity)
     })
     .await;
     assert_eq!(view.restart_count, 0, "no retry was spent");
     assert_eq!(f.fake.count_calls("start blockly-test-a"), 1, "only the requested start");
     // The reason stays through reconciliation, until a start that fits, and the control plane is
     // told it with the workload.
-    f.manager.reconcile(false).await;
-    assert!(f.manager.view(&id("a")).unwrap().issues.iter().any(|i| i.code == "insufficient_capacity"));
-    let beat = heartbeat_report(&f.manager, "test-node", "session", None, 1).await;
+    f.manager.reconcile(Records::InMemory).await;
+    assert!(f.manager.view(&id("a")).unwrap().issues.iter().any(|i| i.code == IssueCode::InsufficientCapacity));
+    let beat = heartbeat_report(&f.manager, &"test-node".into(), "session", None, 1).await;
     let reported = |w: &str| beat.workloads.iter().find(|r| r.id == w).map(|r| r.issues.clone()).unwrap();
-    assert_eq!(reported("a").iter().map(|i| i.code.as_str()).collect::<Vec<_>>(), ["insufficient_capacity"]);
+    assert_eq!(reported("a").iter().map(|i| i.code).collect::<Vec<_>>(), [IssueCode::InsufficientCapacity]);
     assert!(reported("b").is_empty());
     let wire = serde_json::to_value(&beat).unwrap();
     assert!(wire["workloads"].as_array().unwrap().iter().any(|w| w.get("issues").is_none()), "none is left out");
@@ -628,7 +631,7 @@ async fn an_exec_runs_in_the_container_it_was_checked_against_or_not_at_all() {
     assert!(replaced.restarted, "another container runs under the same name");
     drop(gate);
     let err = exec.await.unwrap().unwrap_err();
-    assert!(matches!(err, NodeError::Conflict { code: "not_running", .. }), "{err:?}");
+    assert!(matches!(err, NodeError::Conflict { code: ConflictCode::NotRunning, .. }), "{err:?}");
     let calls = f.fake.calls.lock().unwrap().clone();
     assert!(calls.iter().any(|c| c.starts_with("exec ") && !c.contains("blockly-test-w")), "by id: {calls:?}");
 }

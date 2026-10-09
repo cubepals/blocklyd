@@ -7,19 +7,20 @@ use super::*;
 impl Manager {
     // ─── fleet ─────────────────────────────────────────────────────────────────────────────
 
-    pub fn set_fleet(&self, node_id: &str, control_plane: &str) {
+    pub fn set_fleet(&self, node_id: &NodeId, control_plane: &str) {
         let mut fleet = self.fleet.lock().unwrap();
-        fleet.node_id = Some(node_id.to_owned());
+        fleet.node_id = Some(node_id.clone());
         fleet.control_plane = Some(control_plane.to_owned());
     }
 
     /// Records a heartbeat's outcome: the lifecycle the control plane holds for this node, or why
     /// it couldn't be reached.
-    pub fn fleet_contact(&self, result: Result<&str, &str>, latency: Duration) {
+    pub fn fleet_contact(&self, result: Result<Lifecycle, &str>, latency: Duration) {
+        let ok = result.is_ok();
         let mut fleet = self.fleet.lock().unwrap();
         match result {
             Ok(lifecycle) => {
-                fleet.lifecycle = Some(lifecycle.to_owned());
+                fleet.lifecycle = Some(lifecycle);
                 fleet.last_contact = Some(Instant::now());
                 fleet.last_contact_at = Some(now());
                 fleet.last_error = None;
@@ -32,7 +33,7 @@ impl Manager {
             }
         }
         drop(fleet);
-        self.metrics.heartbeat(result.is_ok());
+        self.metrics.heartbeat(ok);
     }
 
     /// The control plane answered a heartbeat sent at `sent`, granting `seconds` of execution
@@ -57,12 +58,12 @@ impl Manager {
 
     /// What the execution lease allows now. A node restarts nothing on its own without one: a
     /// node cut off from the control plane may have been replaced.
-    pub fn lease(&self) -> Lease {
+    pub(crate) fn lease(&self) -> Lease {
         if self.config.fleet.is_none() {
             return Lease::NotFleet;
         }
         let fleet = self.fleet.lock().unwrap();
-        if fleet.lifecycle.as_deref() == Some("lost") {
+        if fleet.lifecycle == Some(Lifecycle::Lost) {
             return Lease::Revoked;
         }
         match fleet.lease_until {
@@ -72,28 +73,28 @@ impl Manager {
     }
 
     /// What is left of the lease, in fleet mode once one was granted.
-    pub fn lease_remaining(&self) -> Option<Duration> {
+    pub(crate) fn lease_remaining(&self) -> Option<Duration> {
         self.config.fleet.as_ref()?;
         let until = self.fleet.lock().unwrap().lease_until?;
         Some(until.saturating_sub(boottime()))
     }
 
-    pub fn certificate_renewed(&self) {
+    pub(crate) fn certificate_renewed(&self) {
         self.fleet.lock().unwrap().renewed_at = Some(now());
     }
 
     /// Seconds since the control plane last answered a heartbeat, in fleet mode.
-    pub fn fleet_contact_age(&self) -> Option<f64> {
+    pub(crate) fn fleet_contact_age(&self) -> Option<f64> {
         self.fleet.lock().unwrap().last_contact.map(|at| at.elapsed().as_secs_f64())
     }
 
-    pub fn fleet_view(&self) -> Option<crate::protocol::FleetView> {
+    pub(crate) fn fleet_view(&self) -> Option<crate::protocol::FleetView> {
         let fleet = self.fleet.lock().unwrap().clone();
         let node_id = fleet.node_id?;
         Some(crate::protocol::FleetView {
-            node_id,
+            node_id: node_id.to_string(),
             control_plane: fleet.control_plane.unwrap_or_default(),
-            lifecycle: fleet.lifecycle,
+            lifecycle: fleet.lifecycle.as_ref().map(|l| l.as_str().to_owned()),
             last_contact_at: fleet.last_contact_at.map(format_time),
             last_contact_age_seconds: fleet.last_contact.map(|at| at.elapsed().as_secs()),
             last_error: fleet.last_error,

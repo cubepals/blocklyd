@@ -32,13 +32,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::tls::ServerCert;
 use crate::config::TlsConfig;
+use crate::ids::NodeId;
 use crate::protocol::wire::{RenewRequest, RenewResponse};
 use crate::tls::{TlsSetupError, load_certs, load_key};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityFile {
-    pub node_id: String,
+    pub node_id: NodeId,
     pub deployment_id: String,
     pub control_plane: String,
     pub allowed_clients: Vec<String>,
@@ -82,7 +83,7 @@ fn make_dir(dir: &Path) -> Result<(), IdentityError> {
 
 /// Whether `pem` holds exactly these certificates. Compared as DER: one certificate can be written
 /// as PEM in more than one way.
-pub fn same_certificates(pem: &str, certs: &[CertificateDer<'_>]) -> bool {
+pub(crate) fn same_certificates(pem: &str, certs: &[CertificateDer<'_>]) -> bool {
     let written: Result<Vec<CertificateDer<'_>>, _> = CertificateDer::pem_slice_iter(pem.as_bytes()).collect();
     written.is_ok_and(|written| {
         !written.is_empty() && written.iter().map(|c| c.as_ref()).eq(certs.iter().map(|c| c.as_ref()))
@@ -115,7 +116,7 @@ impl Identity {
     /// any attempt sends a request for it. The control plane answers a spent token again for the
     /// key that spent it, so a node whose answer was lost (a timeout, a reset connection, a
     /// restart) asks again with this key and gets its identity, where a new key would be refused.
-    pub fn enrollment_key(state_dir: &Path) -> Result<rcgen::KeyPair, IdentityError> {
+    pub(crate) fn enrollment_key(state_dir: &Path) -> Result<rcgen::KeyPair, IdentityError> {
         let path = Self::enrollment_key_path(state_dir);
         match fs::read_to_string(&path) {
             Ok(pem) => {
@@ -134,7 +135,7 @@ impl Identity {
 
     /// Where the enrollment key waits: removed once it is `node.key`, and by a node that has an
     /// identity already, which never asks with it.
-    pub fn enrollment_key_path(state_dir: &Path) -> PathBuf {
+    pub(crate) fn enrollment_key_path(state_dir: &Path) -> PathBuf {
         Self::dir_for(state_dir).join("enroll-key.pem")
     }
 
@@ -183,7 +184,7 @@ impl Identity {
 
     /// Stores a renewal as the next generation and switches to it. The old generation's files go
     /// once the switch is on disk.
-    pub fn renewed(&self, key_pem: &str, server_pem: &str, client_pem: &str) -> Result<Identity, IdentityError> {
+    pub(crate) fn renewed(&self, key_pem: &str, server_pem: &str, client_pem: &str) -> Result<Identity, IdentityError> {
         let mut file = self.file.clone();
         file.generation = self.file.generation + 1;
         let next = Identity { file, dir: self.dir.clone() };
@@ -226,7 +227,7 @@ impl Identity {
             .map_err(|e| IdentityError::Invalid(format!("client TLS: {e}")))
     }
 
-    pub fn node_id(&self) -> &str {
+    pub fn node_id(&self) -> &NodeId {
         &self.file.node_id
     }
 }
@@ -239,6 +240,15 @@ pub struct Credentials {
     server: Arc<ServerCert>,
     renewing: AtomicBool,
     last_attempt: Mutex<Option<Instant>>,
+}
+
+/// The renewal under way, which lets `Credentials::renewing` go when it ends, however it ends.
+struct Renewal(Arc<Credentials>);
+
+impl Drop for Renewal {
+    fn drop(&mut self) {
+        self.0.renewing.store(false, Ordering::SeqCst);
+    }
 }
 
 /// A failed renewal is tried again after this long, while the control plane keeps asking.
@@ -256,12 +266,12 @@ impl Credentials {
         }))
     }
 
-    pub fn client(&self) -> Arc<rustls::ClientConfig> {
+    pub(crate) fn client(&self) -> Arc<rustls::ClientConfig> {
         self.client.read().unwrap().clone()
     }
 
-    pub fn node_id(&self) -> String {
-        self.identity.lock().unwrap().node_id().to_owned()
+    pub(crate) fn node_id(&self) -> NodeId {
+        self.identity.lock().unwrap().node_id().clone()
     }
 
     pub fn generation(&self) -> u32 {
@@ -269,7 +279,7 @@ impl Credentials {
     }
 
     /// Starts a renewal in the background, unless one runs or one failed recently.
-    pub fn renew_soon(self: &Arc<Self>, control_plane: &str, manager: Arc<crate::manager::Manager>) {
+    pub(crate) fn renew_soon(self: &Arc<Self>, control_plane: &str, manager: Arc<crate::manager::Manager>) {
         {
             let mut last = self.last_attempt.lock().unwrap();
             if last.is_some_and(|at| at.elapsed() < RETRY_RENEWAL) {
@@ -280,10 +290,10 @@ impl Credentials {
             }
             *last = Some(Instant::now());
         }
-        let this = self.clone();
+        let renewal = Renewal(self.clone());
         let url = control_plane.to_owned();
         tokio::spawn(async move {
-            match this.renew(&url).await {
+            match renewal.0.renew(&url).await {
                 Ok(generation) => {
                     manager.certificate_renewed();
                     manager.metrics.renewal(true);
@@ -297,7 +307,6 @@ impl Credentials {
                     );
                 }
             }
-            this.renewing.store(false, Ordering::SeqCst);
         });
     }
 
@@ -314,7 +323,7 @@ impl Credentials {
             .pem()
             .context("encoding the certificate request")?;
         let url = format!("{}/fleet/v1/nodes/{}/renew", control_plane.trim_end_matches('/'), current.node_id());
-        let request = RenewRequest { node_id: current.node_id().to_owned(), csr_pem: csr };
+        let request = RenewRequest { node_id: current.node_id().to_string(), csr_pem: csr };
         let answer: RenewResponse =
             crate::http_client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
                 .await

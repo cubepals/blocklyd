@@ -24,10 +24,10 @@ use tokio_rustls::TlsConnector;
 
 use crate::protocol::redact;
 
-pub type Body = BoxBody<Bytes, std::io::Error>;
+pub(crate) type Body = BoxBody<Bytes, std::io::Error>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum ClientError {
+pub(crate) enum ClientError {
     #[error("{0} is not an http(s) URL")]
     BadUrl(String),
     #[error("{0}: {1}")]
@@ -44,7 +44,7 @@ pub enum ClientError {
 
 impl ClientError {
     /// Worth retrying: the far side may simply not be up yet.
-    pub fn is_transient(&self) -> bool {
+    pub(crate) fn is_transient(&self) -> bool {
         match self {
             Self::Connect(..) | Self::Timeout(..) | Self::Http(..) => true,
             // What rustls refused (a certificate, the protocol) tokio-rustls reports as invalid
@@ -62,16 +62,16 @@ impl ClientError {
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
-pub fn full(bytes: impl Into<Bytes>) -> Body {
+pub(crate) fn full(bytes: impl Into<Bytes>) -> Body {
     Full::new(bytes.into()).map_err(|never| match never {}).boxed()
 }
 
-pub fn empty() -> Body {
+pub(crate) fn empty() -> Body {
     full(Bytes::new())
 }
 
 /// A file as a request body, streamed rather than read into memory.
-pub async fn file_body(path: &Path) -> std::io::Result<(Body, u64)> {
+pub(crate) async fn file_body(path: &Path) -> std::io::Result<(Body, u64)> {
     let file = tokio::fs::File::open(path).await?;
     let length = file.metadata().await?.len();
     let stream = tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024).map(|chunk| chunk.map(Frame::data));
@@ -79,7 +79,7 @@ pub async fn file_body(path: &Path) -> std::io::Result<(Body, u64)> {
 }
 
 /// `length` bytes of a file from `offset` as a streaming body: one part of an upload in parts.
-pub async fn file_range_body(path: &Path, offset: u64, length: u64) -> std::io::Result<Body> {
+pub(crate) async fn file_range_body(path: &Path, offset: u64, length: u64) -> std::io::Result<Body> {
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
     let mut file = tokio::fs::File::open(path).await?;
     file.seek(std::io::SeekFrom::Start(offset)).await?;
@@ -89,7 +89,7 @@ pub async fn file_range_body(path: &Path, offset: u64, length: u64) -> std::io::
 }
 
 /// Client TLS settings: these roots, and a client identity for mutual TLS if given.
-pub fn tls_config(
+pub(crate) fn tls_config(
     roots: Vec<CertificateDer<'static>>,
     identity: Option<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)>,
     tls13_only: bool,
@@ -123,7 +123,7 @@ fn config_with(
 /// TLS to public endpoints (a presigned object-store URL): the system's CA bundle, loaded once it
 /// is found. Until then each transfer looks again, so a bundle installed after blocklyd started is
 /// used without a restart.
-pub fn public_tls() -> Result<Arc<rustls::ClientConfig>, String> {
+pub(crate) fn public_tls() -> Result<Arc<rustls::ClientConfig>, String> {
     static CONFIG: std::sync::OnceLock<Arc<rustls::ClientConfig>> = std::sync::OnceLock::new();
     if let Some(config) = CONFIG.get() {
         return Ok(config.clone());
@@ -154,7 +154,7 @@ fn bundle_tls(bundle: &Path) -> Result<Arc<rustls::ClientConfig>, String> {
 }
 
 /// Sends one request on a fresh connection and returns once the response head arrives.
-pub async fn send(
+pub(crate) async fn send(
     method: Method,
     url: &str,
     headers: &[(&str, String)],
@@ -204,7 +204,7 @@ pub async fn send(
 }
 
 /// Reads a whole (small) response body, refusing more than `limit` bytes.
-pub async fn read_body(response: Response<Incoming>, limit: usize) -> Result<Bytes, String> {
+pub(crate) async fn read_body(response: Response<Incoming>, limit: usize) -> Result<Bytes, String> {
     Limited::new(response.into_body(), limit)
         .collect()
         .await
@@ -216,7 +216,7 @@ pub async fn read_body(response: Response<Incoming>, limit: usize) -> Result<Byt
 /// carries the status and body. `timeout` bounds the whole exchange, the answer's body included:
 /// a body that stops coming after its head would otherwise hold the caller (a heartbeat, an
 /// enrollment) forever.
-pub async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwned>(
+pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwned>(
     method: Method,
     url: &str,
     request: &Req,
@@ -245,7 +245,7 @@ pub async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwned>(
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum JsonError {
+pub(crate) enum JsonError {
     #[error(transparent)]
     Transport(ClientError),
     #[error("HTTP {0}: {1}")]
@@ -255,7 +255,7 @@ pub enum JsonError {
 }
 
 impl JsonError {
-    pub fn is_transient(&self) -> bool {
+    pub(crate) fn is_transient(&self) -> bool {
         match self {
             Self::Transport(e) => e.is_transient(),
             Self::Status(code, _) => *code >= 500 || *code == 429,

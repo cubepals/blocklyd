@@ -21,22 +21,25 @@ impl Manager {
         match record.phase {
             Phase::Creating => {
                 return Err(NodeError::Conflict {
-                    code: "not_created",
+                    code: ConflictCode::NotCreated,
                     message: "the workload's creation didn't finish; PUT its spec again".into(),
                 });
             }
             Phase::Retained => {
                 return Err(NodeError::Conflict {
-                    code: "no_compute",
+                    code: ConflictCode::NoCompute,
                     message: "the workload was decommissioned; PUT its spec to bring it back".into(),
                 });
             }
             Phase::Active => {}
         }
         let Some(info) = self.observe(&record).await? else {
-            self.set_issue(id, Issue::new("container_missing", "the runtime no longer has this workload's container"));
+            self.set_issue(
+                id,
+                Issue::new(IssueCode::ContainerMissing, "the runtime no longer has this workload's container"),
+            );
             return Err(NodeError::Conflict {
-                code: "container_missing",
+                code: ConflictCode::ContainerMissing,
                 message: "the container is gone; PUT the spec to make it again".into(),
             });
         };
@@ -49,10 +52,10 @@ impl Manager {
         record.restart_count = 0;
         record.stop_requested_at = None;
         record.updated_at = now_str();
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(id, e))?;
         self.state.lock().unwrap().last_failure.remove(id);
-        self.clear_issue(id, "insufficient_capacity");
+        self.clear_issue(id, IssueCode::InsufficientCapacity);
         self.observe(&record).await?;
         Ok(PowerResponse { changed: true, forced: false, workload: self.view(id)? })
     }
@@ -79,7 +82,7 @@ impl Manager {
         result
     }
 
-    pub async fn kill(self: &Arc<Self>, id: WorkloadId, epoch: Option<u64>) -> Result<PowerResponse, NodeError> {
+    pub(crate) async fn kill(self: &Arc<Self>, id: WorkloadId, epoch: Option<u64>) -> Result<PowerResponse, NodeError> {
         let lock = self.lock_for(&id);
         let _guard = lock.lock().await;
         let started = Instant::now();
@@ -110,18 +113,15 @@ impl Manager {
         // Persisted before the signal, so the exit reads as a stop even if blocklyd dies now.
         record.stop_requested_at = Some(now_str());
         record.updated_at = now_str();
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         let result = if kill {
             self.runtime.kill(&record.container_name).await
         } else {
             let seconds = grace.unwrap_or(record.spec.stop.timeout_seconds);
-            self.state.lock().unwrap().stopping.insert(id.clone());
-            let r = self
-                .runtime
+            let _stopping = self.mark_stopping(id);
+            self.runtime
                 .stop(&record.container_name, record.spec.stop.signal.as_str(), Duration::from_secs(seconds as u64))
-                .await;
-            self.state.lock().unwrap().stopping.remove(id);
-            r
+                .await
         };
         self.note(result)?;
         let after = self.observe(&record).await?;

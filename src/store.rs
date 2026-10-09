@@ -43,12 +43,12 @@ use crate::durable::{self, WriteError};
 use crate::ids::WorkloadId;
 use crate::protocol::{Proto, SpecRecord};
 
-pub mod leftovers;
+pub(crate) mod leftovers;
 mod quarantine;
 pub mod restore;
 mod snapshots;
 
-pub const RECORD_VERSION: u32 = 1;
+pub(crate) const RECORD_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -136,8 +136,8 @@ impl From<WriteError> for StoreError {
 /// A record file that couldn't be read. Reported, never deleted: a human decides.
 #[derive(Debug, Clone)]
 pub struct BadRecord {
-    pub path: PathBuf,
-    pub problem: String,
+    pub(crate) path: PathBuf,
+    pub(crate) problem: String,
 }
 
 #[derive(Clone, Debug)]
@@ -157,11 +157,11 @@ impl Store {
 
     /// The store at `root` as it stands, making and changing nothing: for looking (`doctor`),
     /// not serving.
-    pub fn existing(root: &Path) -> Self {
+    pub(crate) fn existing(root: &Path) -> Self {
         Self { root: root.to_owned() }
     }
 
-    pub fn root(&self) -> &Path {
+    pub(crate) fn root(&self) -> &Path {
         &self.root
     }
 
@@ -237,7 +237,7 @@ impl Store {
     }
 
     /// Workload directories that hold no record: data blocklyd doesn't know. Never deleted.
-    pub fn orphan_dirs(&self, known: &std::collections::BTreeSet<WorkloadId>) -> Vec<PathBuf> {
+    pub(crate) fn orphan_dirs(&self, known: &std::collections::BTreeSet<WorkloadId>) -> Vec<PathBuf> {
         let Ok(entries) = fs::read_dir(self.workloads_dir()) else { return Vec::new() };
         entries
             .filter_map(Result::ok)
@@ -255,7 +255,7 @@ impl Store {
 
     /// Atomic replace: a crash leaves the old record or the new one, never half of either. Two
     /// saves of one record at once each write a file of their own, and the last rename wins.
-    pub fn save(&self, record: &WorkloadRecord) -> Result<(), StoreError> {
+    pub(crate) fn save(&self, record: &WorkloadRecord) -> Result<(), StoreError> {
         let dir = self.workload_dir(&record.id);
         fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir).map_err(io_err("creating", &dir))?;
         let bytes = serde_json::to_vec_pretty(record).expect("records serialize");
@@ -264,7 +264,7 @@ impl Store {
 
     /// Makes `data/` if missing and gives it to the workload's user. Returns whether it was
     /// made now, so a failed create only ever removes a directory it made itself.
-    pub fn ensure_data_dir(&self, id: &WorkloadId, owner: (u32, u32)) -> Result<bool, StoreError> {
+    pub(crate) fn ensure_data_dir(&self, id: &WorkloadId, owner: (u32, u32)) -> Result<bool, StoreError> {
         let dir = self.data_dir(id);
         let parent = self.workload_dir(id);
         fs::DirBuilder::new().recursive(true).mode(0o700).create(&parent).map_err(io_err("creating", &parent))?;
@@ -293,7 +293,7 @@ impl Store {
 
     /// Undoes a create that failed before anything ran: removes the record, and the data
     /// directory only if it is empty (`remove_dir` refuses otherwise), so data can't be lost.
-    pub fn abandon(&self, id: &WorkloadId) {
+    pub(crate) fn abandon(&self, id: &WorkloadId) {
         let _ = fs::remove_file(self.record_path(id));
         let _ = fs::remove_dir(self.data_dir(id));
         let _ = fs::remove_dir(self.workload_dir(id));
@@ -306,7 +306,7 @@ impl Store {
     }
 
     /// Moves the whole workload directory (record and data) into the trash, in one rename.
-    pub fn trash(&self, id: &WorkloadId, now_unix: i64) -> Result<Option<PathBuf>, StoreError> {
+    pub(crate) fn trash(&self, id: &WorkloadId, now_unix: i64) -> Result<Option<PathBuf>, StoreError> {
         let from = self.workload_dir(id);
         if !from.exists() {
             return Ok(None);
@@ -318,7 +318,7 @@ impl Store {
     }
 
     /// Purges trash entries older than `retention_secs`. Returns what it removed.
-    pub fn purge_trash(&self, now_unix: i64, retention_secs: i64) -> Vec<PathBuf> {
+    pub(crate) fn purge_trash(&self, now_unix: i64, retention_secs: i64) -> Vec<PathBuf> {
         let Ok(entries) = fs::read_dir(self.trash_dir()) else { return Vec::new() };
         let mut purged = Vec::new();
         for entry in entries.filter_map(Result::ok) {
@@ -339,14 +339,6 @@ pub struct RestingPort {
     pub protocol: Proto,
     pub port: u16,
     pub released_at_unix: i64,
-}
-
-/// Bytes a directory tree occupies on disk (allocated blocks, not apparent sizes), without
-/// following symlinks or leaving the filesystem. A workload's data can't lead it anywhere else:
-/// it is `tree::disk_usage`, which never opens a directory by path. Blocking: call from
-/// `spawn_blocking`.
-pub fn disk_usage(root: &Path) -> io::Result<u64> {
-    crate::tree::disk_usage(root)
 }
 
 #[cfg(test)]

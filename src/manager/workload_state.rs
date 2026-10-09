@@ -5,13 +5,29 @@ use crate::protocol::WorkloadState;
 use crate::runtime::{ContainerInfo, ContainerStatus, parse_time};
 use crate::store::{Phase, WorkloadRecord};
 
-pub fn derive_state(
+/// Whether a stop blocklyd was asked for is under way: a container still running then reads as
+/// stopping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stopping {
+    Underway,
+    NotAsked,
+}
+
+/// Whether what blocklyd last saw of the runtime is current (`Manager::trustworthy`), or history
+/// after an outage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sight {
+    Current,
+    Stale,
+}
+
+pub(crate) fn derive_state(
     record: &WorkloadRecord,
     info: Option<&ContainerInfo>,
-    stopping: bool,
-    trustworthy: bool,
+    stopping: Stopping,
+    sight: Sight,
 ) -> WorkloadState {
-    let state = derive_power_state(record, info, stopping, trustworthy);
+    let state = derive_power_state(record, info, stopping, sight);
     let at_rest = matches!(
         state,
         WorkloadState::Created | WorkloadState::Stopped | WorkloadState::Crashed | WorkloadState::Missing
@@ -22,25 +38,22 @@ pub fn derive_state(
 pub(super) fn derive_power_state(
     record: &WorkloadRecord,
     info: Option<&ContainerInfo>,
-    stopping: bool,
-    trustworthy: bool,
+    stopping: Stopping,
+    sight: Sight,
 ) -> WorkloadState {
     match record.phase {
         Phase::Retained => WorkloadState::Retained,
         Phase::Creating if info.is_none() => WorkloadState::Creating,
         // What blocklyd last saw is history, not the state: a daemon stop may have killed it.
-        _ if !trustworthy => WorkloadState::Unknown,
+        _ if sight == Sight::Stale => WorkloadState::Unknown,
         _ => match info {
             None => WorkloadState::Missing,
             Some(i) => match i.status {
                 ContainerStatus::Created => WorkloadState::Created,
-                ContainerStatus::Running | ContainerStatus::Paused => {
-                    if stopping {
-                        WorkloadState::Stopping
-                    } else {
-                        WorkloadState::Running
-                    }
-                }
+                ContainerStatus::Running | ContainerStatus::Paused => match stopping {
+                    Stopping::Underway => WorkloadState::Stopping,
+                    Stopping::NotAsked => WorkloadState::Running,
+                },
                 ContainerStatus::Restarting => WorkloadState::Restarting,
                 ContainerStatus::Removing => WorkloadState::Stopping,
                 ContainerStatus::Exited | ContainerStatus::Dead => {
@@ -101,22 +114,43 @@ mod tests {
         let at = "2026-09-28T10:00:00Z";
         let later = "2026-09-28T10:00:05Z";
         let r = record(Phase::Active, None);
-        assert_eq!(derive_state(&r, Some(&exited(0, false, later)), false, true), WorkloadState::Stopped);
-        assert_eq!(derive_state(&r, Some(&exited(1, false, later)), false, true), WorkloadState::Crashed);
-        assert_eq!(derive_state(&r, Some(&exited(137, true, later)), false, true), WorkloadState::Crashed);
+        assert_eq!(
+            derive_state(&r, Some(&exited(0, false, later)), Stopping::NotAsked, Sight::Current),
+            WorkloadState::Stopped
+        );
+        assert_eq!(
+            derive_state(&r, Some(&exited(1, false, later)), Stopping::NotAsked, Sight::Current),
+            WorkloadState::Crashed
+        );
+        assert_eq!(
+            derive_state(&r, Some(&exited(137, true, later)), Stopping::NotAsked, Sight::Current),
+            WorkloadState::Crashed
+        );
         let asked = record(Phase::Active, Some(at));
-        assert_eq!(derive_state(&asked, Some(&exited(137, false, later)), false, true), WorkloadState::Stopped);
+        assert_eq!(
+            derive_state(&asked, Some(&exited(137, false, later)), Stopping::NotAsked, Sight::Current),
+            WorkloadState::Stopped
+        );
         // A crash before the stop request is still a crash.
         let long_before = "2026-09-28T09:00:00Z";
-        assert_eq!(derive_state(&asked, Some(&exited(1, false, long_before)), false, true), WorkloadState::Crashed);
+        assert_eq!(
+            derive_state(&asked, Some(&exited(1, false, long_before)), Stopping::NotAsked, Sight::Current),
+            WorkloadState::Crashed
+        );
     }
 
     #[test]
     fn missing_vs_unknown_depends_on_whether_the_runtime_answered() {
         let r = record(Phase::Active, None);
-        assert_eq!(derive_state(&r, None, false, true), WorkloadState::Missing);
-        assert_eq!(derive_state(&r, None, false, false), WorkloadState::Unknown);
-        assert_eq!(derive_state(&record(Phase::Retained, None), None, false, true), WorkloadState::Retained);
-        assert_eq!(derive_state(&record(Phase::Creating, None), None, false, true), WorkloadState::Creating);
+        assert_eq!(derive_state(&r, None, Stopping::NotAsked, Sight::Current), WorkloadState::Missing);
+        assert_eq!(derive_state(&r, None, Stopping::NotAsked, Sight::Stale), WorkloadState::Unknown);
+        assert_eq!(
+            derive_state(&record(Phase::Retained, None), None, Stopping::NotAsked, Sight::Current),
+            WorkloadState::Retained
+        );
+        assert_eq!(
+            derive_state(&record(Phase::Creating, None), None, Stopping::NotAsked, Sight::Current),
+            WorkloadState::Creating
+        );
     }
 }

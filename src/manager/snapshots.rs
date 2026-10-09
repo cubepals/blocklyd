@@ -37,7 +37,7 @@ impl Manager {
         }
         if record.phase == Phase::Creating {
             return Err(NodeError::Conflict {
-                code: "not_created",
+                code: ConflictCode::NotCreated,
                 message: "the workload's creation didn't finish; PUT its spec again".into(),
             });
         }
@@ -46,7 +46,7 @@ impl Manager {
         });
         if running && !request.quiesced {
             return Err(NodeError::Conflict {
-                code: "not_quiesced",
+                code: ConflictCode::NotQuiesced,
                 message: "stop the workload, or pause its saving and say so (quiesced), before a snapshot".into(),
             });
         }
@@ -59,12 +59,15 @@ impl Manager {
             tokio::task::spawn_blocking(move || crate::tarball::tree_bytes(&data)).await.unwrap_or(0)
         };
         self.admit_disk(need, "a snapshot")?;
-        let into = self.store.prepare_snapshot(id, &request.id)?;
+        let into = {
+            let (store, id, snapshot) = (self.store.clone(), id.clone(), request.id.clone());
+            blocking(move || store.prepare_snapshot(&id, &snapshot)).await??
+        };
         let copied = {
             let (into, beside) = (into.clone(), self.store.snapshot_dir(id, &request.id));
             // Watched as it is written: snapshots of other workloads may be admitted beside it.
             let mut watch = self.floor_watch();
-            tokio::task::spawn_blocking(move || {
+            blocking(move || {
                 // On disk before snapshot.json says the snapshot exists.
                 let disk = crate::durable::FilesystemSync::begin(&beside)?;
                 let copied = crate::tree::copy_tree(&data, &into, None, &[], &mut |copied| {
@@ -72,13 +75,12 @@ impl Manager {
                 })?;
                 disk.finish().map(|()| copied)
             })
-            .await
-            .map_err(|e| NodeError::Internal(format!("copying panicked: {e}")))?
+            .await?
         };
         let copied = match copied {
             Ok(copied) => copied,
             Err(e) => {
-                let _ = self.store.remove_snapshot(id, &request.id);
+                let _ = self.remove_snapshot(id, &request.id).await;
                 return Err(archive::copy_failed("copying the data", e));
             }
         };
@@ -94,8 +96,12 @@ impl Manager {
             spec_digest: record.spec_digest.clone(),
             duration_ms: started.elapsed().as_millis() as u64,
         };
-        if let Err(e) = self.store.finish_snapshot(&view) {
-            let _ = self.store.remove_snapshot(id, &request.id);
+        let finished = {
+            let (store, view) = (self.store.clone(), view.clone());
+            blocking(move || store.finish_snapshot(&view)).await?
+        };
+        if let Err(e) = finished {
+            let _ = self.remove_snapshot(id, &request.id).await;
             return Err(e.into());
         }
         tracing::info!(
@@ -125,19 +131,22 @@ impl Manager {
         let _guard = lock.lock().await;
         if self.state.lock().unwrap().uploading.contains(&(id.clone(), snapshot.clone())) {
             return Err(NodeError::Conflict {
-                code: "snapshot_busy",
+                code: ConflictCode::SnapshotBusy,
                 message: "the snapshot is being uploaded; delete it once that ends".into(),
             });
         }
-        let store = self.store.clone();
-        let (id2, snapshot2) = (id.clone(), snapshot.clone());
-        let existed = tokio::task::spawn_blocking(move || store.remove_snapshot(&id2, &snapshot2))
-            .await
-            .map_err(|e| NodeError::Internal(format!("removing panicked: {e}")))??;
+        let existed = self.remove_snapshot(&id, &snapshot).await?;
         if existed {
             tracing::info!(workload = %id, %snapshot, "snapshot removed");
         }
         Ok(SnapshotDeleteResponse { existed })
+    }
+
+    /// Removes a snapshot's tree, finished or not, off the async threads. Returns whether there was
+    /// one.
+    async fn remove_snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Result<bool, NodeError> {
+        let (store, id, snapshot) = (self.store.clone(), id.clone(), snapshot.clone());
+        Ok(blocking(move || store.remove_snapshot(&id, &snapshot)).await??)
     }
 
     /// A snapshot as a gzip tarball, PUT to a presigned URL. It doesn't hold the workload's lock:
@@ -149,28 +158,25 @@ impl Manager {
         request: UploadRequest,
     ) -> Result<ExportResponse, NodeError> {
         let started = Instant::now();
-        let key = (id.clone(), snapshot.clone());
         let result = async {
             if let Some(parts) = &request.parts {
                 parts.validate().map_err(NodeError::Invalid)?;
             }
-            {
+            let uploading = {
                 let lock = self.lock_for(&id);
                 let _guard = lock.lock().await;
                 if self.store.snapshot(&id, &snapshot).is_none() {
                     return Err(NodeError::SnapshotNotFound(snapshot.to_string()));
                 }
-                if !self.state.lock().unwrap().uploading.insert(key.clone()) {
-                    return Err(NodeError::Conflict {
-                        code: "snapshot_busy",
-                        message: "this snapshot is being uploaded already".into(),
-                    });
-                }
-            }
+                self.mark_uploading(&id, &snapshot).ok_or_else(|| NodeError::Conflict {
+                    code: ConflictCode::SnapshotBusy,
+                    message: "this snapshot is being uploaded already".into(),
+                })?
+            };
             let root = self.store.snapshot_dir(&id, &snapshot).join("data");
             let packed =
                 self.pack_and_put(root, Vec::new(), &request.url, &request.headers, request.parts.as_ref()).await;
-            self.state.lock().unwrap().uploading.remove(&key);
+            drop(uploading);
             let (packed, parts) = packed?;
             tracing::info!(
                 workload = %id,

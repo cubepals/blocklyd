@@ -15,14 +15,14 @@ use crate::runtime::{ContainerRuntime, RuntimeError, RuntimeInfo};
 const DOCKER_WAIT: Duration = Duration::from_secs(5);
 
 /// Blockly's Docker daemon settings, as `deploy/` ships them.
-pub const DEPLOY_DAEMON_JSON: &str = include_str!("../../deploy/daemon.json");
+pub(crate) const DEPLOY_DAEMON_JSON: &str = include_str!("../../deploy/daemon.json");
 
-pub fn deploy_daemon_json() -> Map<String, Value> {
+pub(crate) fn deploy_daemon_json() -> Map<String, Value> {
     serde_json::from_str(DEPLOY_DAEMON_JSON).expect("deploy/daemon.json is a JSON object")
 }
 
 /// `daemon.json` as it is on disk: Ok(None) when there is none.
-pub fn read_daemon_json(path: &Path) -> Result<Option<Map<String, Value>>, String> {
+pub(crate) fn read_daemon_json(path: &Path) -> Result<Option<Map<String, Value>>, String> {
     match std::fs::read_to_string(path) {
         Ok(text) => {
             serde_json::from_str(&text).map(Some).map_err(|e| format!("{} isn't a JSON object: {e}", path.display()))
@@ -38,7 +38,7 @@ async fn waited<T>(call: impl Future<Output = Result<T, RuntimeError>>) -> Resul
         .unwrap_or_else(|_| Err(RuntimeError::Timeout(format!("Docker didn't answer in {}s", DOCKER_WAIT.as_secs()))))
 }
 
-pub async fn checks(runtime: &dyn ContainerRuntime, network: &str, daemon_json: &Path) -> Vec<Check> {
+pub(crate) async fn checks(runtime: &dyn ContainerRuntime, network: &str, daemon_json: &Path) -> Vec<Check> {
     let on_disk = read_daemon_json(daemon_json);
     let mut checks = Vec::new();
     match waited(runtime.info()).await {
@@ -133,7 +133,7 @@ fn log_driver(info: &RuntimeInfo, on_disk: Option<&Map<String, Value>>) -> Check
 }
 
 /// Settings in Blockly's daemon.json that the host's lacks or sets otherwise.
-pub fn differences(on_disk: &Map<String, Value>) -> Vec<String> {
+pub(crate) fn differences(on_disk: &Map<String, Value>) -> Vec<String> {
     deploy_daemon_json().into_iter().filter(|(k, v)| on_disk.get(k) != Some(v)).map(|(k, _)| k).collect()
 }
 

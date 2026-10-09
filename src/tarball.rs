@@ -21,7 +21,6 @@ use std::io::{self, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use flate2::Compression;
@@ -32,58 +31,42 @@ use sha2::{Digest, Sha256};
 use crate::tree::{Kind, NoRoom};
 
 /// Unpacked bytes an archive may expand to. A world is a few GB; this stops a gzip bomb.
-pub const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+pub(crate) const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 /// Entries an archive may hold. Worlds hold thousands; this bounds the work a bad one causes.
-pub const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
+pub(crate) const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
 /// What a restore lets tar read of a member besides the data it unpacks: its long name, long link
 /// and PAX records, or the data of an entry it skips. Go's archive/tar and libarchive stop there
 /// too; no ordinary writer comes near it.
 const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 /// The longest one download's body may take, however steadily it comes: the control plane gives
 /// up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
-pub const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);
-
-static DOWNLOAD_IDLE_MS: AtomicU64 = AtomicU64::new(120_000);
-
-/// How long a transfer may go without receiving anything before it counts as stalled: a store
-/// that hung mid-body, or a path that drops packets without a reset, never ends a body by itself.
-/// Whatever arrives starts it over, so a slow but live download of any size never trips it.
-pub fn download_idle() -> Duration {
-    Duration::from_millis(DOWNLOAD_IDLE_MS.load(Ordering::Relaxed))
-}
-
-/// Shortens `download_idle` for the whole process, so a test sees a stall end without waiting two
-/// minutes. Nothing else calls it.
-#[doc(hidden)]
-pub fn set_download_idle(idle: Duration) {
-    DOWNLOAD_IDLE_MS.store(idle.as_millis() as u64, Ordering::Relaxed);
-}
+pub(crate) const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);
 
 /// The parts an archive of `size` bytes fills, `part_size` each but the last: one at least, so
 /// an empty archive is still an object.
-pub fn parts_needed(size: u64, part_size: u64) -> u64 {
+pub(crate) fn parts_needed(size: u64, part_size: u64) -> u64 {
     size.div_ceil(part_size.max(1)).max(1)
 }
 
 /// Counts and hashes what passes through.
-pub struct Hashing<W> {
+pub(crate) struct Hashing<W> {
     inner: W,
     hasher: Sha256,
     bytes: u64,
 }
 
 impl<W> Hashing<W> {
-    pub fn new(inner: W) -> Self {
+    pub(crate) fn new(inner: W) -> Self {
         Self { inner, hasher: Sha256::new(), bytes: 0 }
     }
-    pub fn update(&mut self, data: &[u8]) {
+    pub(crate) fn update(&mut self, data: &[u8]) {
         self.hasher.update(data);
         self.bytes += data.len() as u64;
     }
-    pub fn bytes(&self) -> u64 {
+    pub(crate) fn bytes(&self) -> u64 {
         self.bytes
     }
-    pub fn finish(self) -> (W, String, u64) {
+    pub(crate) fn finish(self) -> (W, String, u64) {
         (self.inner, hex::encode(self.hasher.finalize()), self.bytes)
     }
 }
@@ -102,7 +85,7 @@ impl<W: Write> Write for Hashing<W> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packed {
     pub size_bytes: u64,
-    pub sha256: String,
+    pub(crate) sha256: String,
     /// Directories, files and links in the archive.
     pub entries: u64,
 }
@@ -164,9 +147,9 @@ fn exactly(file: &mut File, size: u64) -> impl Read {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unpacked {
-    pub entries: u64,
+    pub(crate) entries: u64,
     /// Links, devices and the like: never unpacked.
-    pub skipped: u64,
+    pub(crate) skipped: u64,
     pub bytes: u64,
 }
 
@@ -181,7 +164,7 @@ pub enum UnpackError {
     /// The caller said the disk can't take more.
     #[error("{0}")]
     NoRoom(String),
-    #[error("{0}")]
+    #[error(transparent)]
     Io(#[from] io::Error),
 }
 
@@ -341,8 +324,8 @@ fn chown_tree(dir: &Path, owner: (u32, u32)) -> io::Result<()> {
 }
 
 /// Bytes a directory holds, for disk admission before an export. Blocking.
-pub fn tree_bytes(dir: &Path) -> u64 {
-    crate::store::disk_usage(dir).unwrap_or(0)
+pub(crate) fn tree_bytes(dir: &Path) -> u64 {
+    crate::tree::disk_usage(dir).unwrap_or(0)
 }
 
 #[cfg(test)]

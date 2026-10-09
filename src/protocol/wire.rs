@@ -21,7 +21,7 @@ pub struct EnrollRequest {
     pub token: String,
     /// PKCS#10, PEM. The key never leaves the node.
     pub csr_pem: String,
-    pub facts: NodeFacts,
+    pub(crate) facts: NodeFacts,
 }
 
 /// What the node says about itself when it joins. The control plane records it; the token, not
@@ -104,42 +104,42 @@ pub struct NodeCapacity {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
-pub struct NodeAddresses {
+pub(crate) struct NodeAddresses {
     /// blocklyd's API, `host:port`.
-    pub api: String,
+    pub(crate) api: String,
     /// Where the edge reaches game ports.
-    pub edge: String,
+    pub(crate) edge: String,
     /// Where the control plane reaches console and status ports.
-    pub control: String,
+    pub(crate) control: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct HeartbeatRequest {
-    pub node_id: String,
+    pub(crate) node_id: String,
     /// New each time blocklyd starts. Two sessions beating for one node id at once are two
     /// hosts with one identity.
-    pub session_id: String,
-    pub boot_id: Option<String>,
+    pub(crate) session_id: String,
+    pub(crate) boot_id: Option<String>,
     /// Counts up within a session, so a late or replayed beat can be told apart.
-    pub seq: u64,
-    pub daemon_version: String,
-    pub protocol: ProtocolVersions,
-    pub features: Vec<String>,
+    pub(crate) seq: u64,
+    pub(crate) daemon_version: String,
+    pub(crate) protocol: ProtocolVersions,
+    pub(crate) features: Vec<String>,
     /// Docker answers.
-    pub runtime_up: bool,
+    pub(crate) runtime_up: bool,
     /// A full pass has looked since the runtime last didn't answer: the states below are current.
-    pub reconciled: bool,
-    pub capacity: NodeCapacity,
+    pub(crate) reconciled: bool,
+    pub(crate) capacity: NodeCapacity,
     pub workloads: Vec<WorkloadReport>,
-    pub issues: Vec<Issue>,
+    pub(crate) issues: Vec<Issue>,
     /// Where the node is reached now; the control plane follows a change.
     #[serde(default)]
-    pub addresses: Option<NodeAddresses>,
+    pub(crate) addresses: Option<NodeAddresses>,
     /// An upgrade this node gave up on, going back to the binary it had (cli/upgrade.rs).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub upgrade_failed: Option<UpgradeFailure>,
+    pub(crate) upgrade_failed: Option<UpgradeFailure>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -155,8 +155,8 @@ pub struct UpgradeFailure {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct UpgradeOffer {
-    pub version: String,
-    pub sha256: String,
+    pub(crate) version: String,
+    pub(crate) sha256: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -164,18 +164,18 @@ pub struct UpgradeOffer {
 #[serde(rename_all = "camelCase")]
 pub struct WorkloadReport {
     pub id: String,
-    pub epoch: Option<u64>,
-    pub superseded_by: Option<u64>,
-    pub state: WorkloadState,
-    pub spec_digest: String,
-    pub generation: u64,
-    pub memory_mb: u32,
+    pub(crate) epoch: Option<u64>,
+    pub(crate) superseded_by: Option<u64>,
+    pub(crate) state: WorkloadState,
+    pub(crate) spec_digest: String,
+    pub(crate) generation: u64,
+    pub(crate) memory_mb: u32,
     pub restart_count: u32,
-    pub exit: Option<ExitInfo>,
-    pub last_failure_at: Option<String>,
-    pub changed_at: String,
+    pub(crate) exit: Option<ExitInfo>,
+    pub(crate) last_failure_at: Option<String>,
+    pub(crate) changed_at: String,
     /// Port name → host port.
-    pub ports: BTreeMap<String, u16>,
+    pub(crate) ports: BTreeMap<String, u16>,
     /// What the node found wrong with the workload and can't mend itself: a restart refused for
     /// want of room, data over the size its spec promised. Left out when there is none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -231,6 +231,6 @@ pub struct RenewResponse {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct Fence {
-    pub workload: String,
-    pub current_epoch: u64,
+    pub(crate) workload: String,
+    pub(crate) current_epoch: u64,
 }

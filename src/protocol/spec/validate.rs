@@ -8,11 +8,11 @@ use crate::protocol::{FieldError, RESERVED_LABEL_PREFIX};
 
 /// The host's own bounds. The protocol validates shape; the host decides what it allows.
 #[derive(Clone, Debug)]
-pub struct SpecPolicy {
-    pub allowed_images: Vec<String>,
-    pub min_memory_mb: u32,
-    pub max_memory_mb: u32,
-    pub max_cpu_millis: u32,
+pub(crate) struct SpecPolicy {
+    pub(crate) allowed_images: Vec<String>,
+    pub(crate) min_memory_mb: u32,
+    pub(crate) max_memory_mb: u32,
+    pub(crate) max_cpu_millis: u32,
 }
 
 const MAX_ENV: usize = 256;
@@ -48,7 +48,7 @@ fn label_key_ok(key: &str) -> bool {
 }
 
 /// An absolute container path of plain components: no `.`, `..`, empty or odd characters.
-pub fn mount_path_ok(path: &str) -> bool {
+pub(crate) fn mount_path_ok(path: &str) -> bool {
     if !path.starts_with('/') || path.len() > 128 || path == "/" {
         return false;
     }
@@ -74,7 +74,7 @@ fn no_nul(s: &str) -> bool {
 
 impl WorkloadSpec {
     /// Every problem at once, so a client fixes a request in one round.
-    pub fn validate(&self, policy: &SpecPolicy) -> Result<(), Vec<FieldError>> {
+    pub(crate) fn validate(&self, policy: &SpecPolicy) -> Result<(), Vec<FieldError>> {
         let mut errors = Vec::new();
         let mut err = |field: &str, problem: String| errors.push(FieldError { field: field.into(), problem });
 

@@ -17,6 +17,7 @@ use blocklyd::config::{Config, FleetConfig};
 use blocklyd::fleet::enroll::ensure_identity;
 use blocklyd::fleet::heartbeat;
 use blocklyd::fleet::identity::{Credentials, Identity, IdentityFile};
+use blocklyd::manager::Records;
 use blocklyd::protocol::wire::{
     EnrollRequest, EnrollResponse, HeartbeatResponse, NodeCapacity, NodeFacts, RenewRequest, RenewResponse,
 };
@@ -371,9 +372,9 @@ impl Node {
         let (api, certificate) = blocklyd::api::tls::reloadable_server_config(&identity.server_tls().unwrap()).unwrap();
         let credentials = Credentials::new(identity, certificate).unwrap();
         let manager = support::manager_on(self.dir.path(), Arc::new(FakeRuntime::new()), "");
-        manager.reconcile(true).await;
+        manager.reconcile(Records::FromDisk).await;
         let stop = CancellationToken::new();
-        let upgrader = Upgrader::new(&self.config.state_dir, &cp.url, Arc::default(), stop.clone());
+        let upgrader = Arc::new(Upgrader::new(&self.config.state_dir, &cp.url, Arc::default(), stop.clone()));
         tokio::spawn(heartbeat::run(manager, credentials.clone(), upgrader, cp.url.clone(), 1, stop.clone()));
         Serving { api, credentials, stop }
     }
@@ -487,7 +488,7 @@ async fn an_answer_lost_on_the_way_is_asked_for_again_with_the_same_key() {
     let asked = cp.enrollments();
     assert_eq!(asked.len(), 3, "the first start's attempt, then the second start's two");
     assert!(asked.iter().all(|request| *request == asked[0]), "one token, and one key, every time");
-    assert_eq!(identity.node_id(), cp.node_of(&node.token).unwrap(), "the node the first attempt made");
+    assert_eq!(identity.node_id().as_str(), cp.node_of(&node.token).unwrap(), "the node the first attempt made");
     assert_eq!(public_key(&identity.key_path()), asked[0].1, "its key is the one every attempt asked with");
     assert!(!node.identity_dir().join("enroll-key.pem").exists(), "it became node.key");
     assert!(!node.token_file().exists(), "spent, and removed");
@@ -531,7 +532,7 @@ async fn a_handshake_cut_short_is_tried_again_and_one_a_stranger_vouches_for_is_
         }
     });
     let identity = node.enroll().await.expect("enrolled once the endpoint answered");
-    assert_eq!(identity.node_id(), cp.node_of(&node.token).unwrap());
+    assert_eq!(identity.node_id().as_str(), cp.node_of(&node.token).unwrap());
 }
 
 #[tokio::test]
@@ -653,7 +654,7 @@ async fn a_pasted_token_sends_only_its_secret_once_it_names_this_deployment_and_
     write("test", cp.ca_pem());
     let identity = node.enroll().await.unwrap();
     assert_eq!(cp.enrollments()[0].0, node.token, "the secret alone, as a bare token is sent");
-    assert_eq!(identity.node_id(), cp.node_of(&node.token).unwrap());
+    assert_eq!(identity.node_id().as_str(), cp.node_of(&node.token).unwrap());
     assert!(!node.token_file().exists(), "spent, and removed");
 }
 

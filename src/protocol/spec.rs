@@ -14,20 +14,17 @@ use sha2::{Digest, Sha256};
 
 mod validate;
 
-pub use validate::*;
+pub(crate) use validate::*;
 
 /// A secret value: never logged, never persisted by blocklyd, never returned.
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(transparent)]
-pub struct Secret(String);
+pub(crate) struct Secret(String);
 
 impl Secret {
-    pub fn expose(&self) -> &str {
+    pub(crate) fn expose(&self) -> &str {
         &self.0
-    }
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
     }
 }
 
@@ -42,54 +39,54 @@ impl fmt::Debug for Secret {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkloadSpec {
     /// An image reference. Must match the host's `allowed_images` prefixes.
-    pub image: String,
+    pub(crate) image: String,
     /// Replaces the image's entrypoint; absent, the image starts as it was built to.
     #[serde(default)]
-    pub entrypoint: Option<Vec<String>>,
+    pub(crate) entrypoint: Option<Vec<String>>,
     #[serde(default)]
-    pub env: BTreeMap<String, String>,
+    pub(crate) env: BTreeMap<String, String>,
     /// Environment the workload needs but nobody else may see (Blockly: `RCON_PASSWORD`).
     #[serde(default)]
-    pub secrets: BTreeMap<String, Secret>,
-    pub resources: Resources,
-    pub storage: Storage,
+    pub(crate) secrets: BTreeMap<String, Secret>,
+    pub(crate) resources: Resources,
+    pub(crate) storage: Storage,
     #[serde(default)]
-    pub ports: Vec<PortSpec>,
+    pub(crate) ports: Vec<PortSpec>,
     #[serde(default)]
-    pub stop: StopSpec,
+    pub(crate) stop: StopSpec,
     #[serde(default)]
     pub restart: RestartSpec,
     #[serde(default)]
-    pub labels: BTreeMap<String, String>,
+    pub(crate) labels: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Resources {
+pub(crate) struct Resources {
     /// Hard memory limit (no swap). Blockly's size: 3072 for a 3 GB server.
-    pub memory_mb: u32,
+    pub(crate) memory_mb: u32,
     /// CPU ceiling in thousandths of a core (CFS quota). Also what the JVM counts as its
     /// processors. Absent: no ceiling, weight only.
     #[serde(default)]
-    pub cpu_millis: Option<u32>,
+    pub(crate) cpu_millis: Option<u32>,
     /// Share of CPU under contention, relative (cgroup weight). Absent: proportional to memory.
     #[serde(default)]
-    pub cpu_weight: Option<u32>,
+    pub(crate) cpu_weight: Option<u32>,
     /// Processes and threads. Absent: the host default (4096).
     #[serde(default)]
-    pub pids_limit: Option<u32>,
+    pub(crate) pids_limit: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Storage {
+pub(crate) struct Storage {
     /// Where the workload's persistent data appears inside it (Blockly: `/data`).
-    pub mount_path: String,
+    pub(crate) mount_path: String,
     /// The size the control plane promised. Reported against measured usage; not enforced in v1
     /// (no per-directory quota on a plain filesystem).
-    pub size_gb: u32,
+    pub(crate) size_gb: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -102,7 +99,7 @@ pub enum Proto {
 }
 
 impl Proto {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Proto::Tcp => "tcp",
             Proto::Udp => "udp",
@@ -115,7 +112,7 @@ impl Proto {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "lowercase")]
-pub enum Audience {
+pub(crate) enum Audience {
     Edge,
     Control,
 }
@@ -123,23 +120,24 @@ pub enum Audience {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PortSpec {
-    pub name: String,
-    pub container_port: u16,
+pub(crate) struct PortSpec {
+    pub(crate) name: String,
+    pub(crate) container_port: u16,
     #[serde(default)]
-    pub protocol: Proto,
-    pub audience: Vec<Audience>,
+    pub(crate) protocol: Proto,
+    pub(crate) audience: Vec<Audience>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
-pub enum StopSignal {
+#[allow(clippy::upper_case_acronyms, reason = "the names are the signals as the wire spells them")]
+pub(crate) enum StopSignal {
     SIGTERM,
     SIGINT,
 }
 
 impl StopSignal {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             StopSignal::SIGTERM => "SIGTERM",
             StopSignal::SIGINT => "SIGINT",
@@ -151,11 +149,11 @@ impl StopSignal {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
-pub struct StopSpec {
+pub(crate) struct StopSpec {
     /// Sent first; the workload saves and exits on it (Blockly's image: `stop` on the console).
-    pub signal: StopSignal,
+    pub(crate) signal: StopSignal,
     /// How long the workload gets after the signal before it is killed.
-    pub timeout_seconds: u32,
+    pub(crate) timeout_seconds: u32,
 }
 
 impl Default for StopSpec {
@@ -167,7 +165,7 @@ impl Default for StopSpec {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]
-pub enum RestartPolicy {
+pub(crate) enum RestartPolicy {
     /// Never started again by the host: a crash stays a crash until the control plane acts.
     No,
     /// Started again after a failing exit, up to `maxRetries` times (Blockly's Fly and Docker
@@ -184,7 +182,7 @@ pub enum RestartPolicy {
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct RestartSpec {
-    pub policy: RestartPolicy,
+    pub(crate) policy: RestartPolicy,
     pub max_retries: u32,
 }
 
@@ -225,16 +223,16 @@ impl WorkloadSpec {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SpecRecord {
-    pub image: String,
-    pub entrypoint: Option<Vec<String>>,
-    pub env: BTreeMap<String, String>,
-    pub secret_names: Vec<String>,
-    pub resources: Resources,
-    pub storage: Storage,
-    pub ports: Vec<PortSpec>,
-    pub stop: StopSpec,
-    pub restart: RestartSpec,
-    pub labels: BTreeMap<String, String>,
+    pub(crate) image: String,
+    pub(crate) entrypoint: Option<Vec<String>>,
+    pub(crate) env: BTreeMap<String, String>,
+    pub(crate) secret_names: Vec<String>,
+    pub(crate) resources: Resources,
+    pub(crate) storage: Storage,
+    pub(crate) ports: Vec<PortSpec>,
+    pub(crate) stop: StopSpec,
+    pub(crate) restart: RestartSpec,
+    pub(crate) labels: BTreeMap<String, String>,
 }
 
 impl SpecRecord {

@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::protocol::Proto;
 use crate::store::{Store, StoreError};
 
-pub fn checks(config: &Config, config_path: &Path) -> Vec<Check> {
+pub(crate) fn checks(config: &Config, config_path: &Path) -> Vec<Check> {
     let dir = &config.state_dir;
     let metadata = match std::fs::metadata(dir) {
         Ok(metadata) => metadata,
@@ -146,13 +146,13 @@ fn disk(dir: &Path, min_free_mb: u64) -> Check {
 }
 
 /// Ports this host's workloads hold, from their records: in use by blocklyd itself, not taken.
-pub fn held_ports(state_dir: &Path) -> HashSet<(Proto, u16)> {
+pub(crate) fn held_ports(state_dir: &Path) -> HashSet<(Proto, u16)> {
     let Ok((records, _)) = Store::existing(state_dir).load_all() else { return HashSet::new() };
     records.iter().flat_map(|r| r.ports.iter().map(|p| (p.protocol, p.host_port))).collect()
 }
 
 /// Whether this state directory holds any workload (`--fix` leaves such a host alone).
-pub fn has_workloads(state_dir: &Path) -> bool {
+pub(crate) fn has_workloads(state_dir: &Path) -> bool {
     let workloads: PathBuf = Store::existing(state_dir).workloads_dir();
     std::fs::read_dir(workloads).is_ok_and(|mut entries| entries.next().is_some())
 }
