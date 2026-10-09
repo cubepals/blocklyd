@@ -78,12 +78,12 @@ impl Manager {
 
     /// Capacity as this node sees it: physical, reserved, what its workloads were given, and
     /// what they use.
-    pub fn capacity(&self) -> crate::fleet::wire::NodeCapacity {
+    pub fn capacity(&self) -> crate::protocol::wire::NodeCapacity {
         let facts = host::facts();
         let (disk_total, disk_available) = host::disk(self.store.root()).unzip();
         let (ports_allocated, ports_total) = self.ports_usage();
         let (used_memory, used_cores) = self.running_usage();
-        crate::fleet::wire::NodeCapacity {
+        crate::protocol::wire::NodeCapacity {
             memory_total_mb: self.memory_total_mb,
             reserved_memory_mb: self.config.capacity.reserved_memory_mb,
             allocatable_memory_mb: self.allocatable_memory_mb(),
@@ -111,9 +111,9 @@ impl Manager {
 
     /// Where the control plane and the edge reach this node, as its configuration says now: the
     /// control plane follows a change, so the node's identity doesn't hang on an address.
-    pub fn addresses(&self) -> Option<crate::fleet::wire::NodeAddresses> {
+    pub fn addresses(&self) -> Option<crate::protocol::wire::NodeAddresses> {
         let fleet = self.config.fleet.as_ref()?;
-        Some(crate::fleet::wire::NodeAddresses {
+        Some(crate::protocol::wire::NodeAddresses {
             api: fleet.api_address.unwrap_or(self.config.api.listen).to_string(),
             edge: self.config.network.edge_ips.first()?.to_string(),
             control: self.config.network.control_ips.first()?.to_string(),
@@ -127,11 +127,11 @@ impl Manager {
         session: &str,
         boot_id: Option<String>,
         seq: u64,
-    ) -> crate::fleet::wire::HeartbeatRequest {
+    ) -> crate::protocol::wire::HeartbeatRequest {
         let workloads = self
             .list(None)
             .into_iter()
-            .map(|v| crate::fleet::wire::WorkloadReport {
+            .map(|v| crate::protocol::wire::WorkloadReport {
                 id: v.id.to_string(),
                 epoch: v.epoch,
                 superseded_by: v.superseded_by,
@@ -148,7 +148,7 @@ impl Manager {
             })
             .collect();
         let issues = self.state.lock().unwrap().host_issues.clone();
-        crate::fleet::wire::HeartbeatRequest {
+        crate::protocol::wire::HeartbeatRequest {
             node_id: node_id.to_owned(),
             session_id: session.to_owned(),
             boot_id,

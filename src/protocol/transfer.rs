@@ -10,6 +10,22 @@ use serde::{Deserialize, Serialize};
 use super::FieldError;
 use crate::ids::{SnapshotId, WorkloadId};
 
+/// The largest archive one presigned PUT may carry. S3-compatible stores refuse a single PUT above
+/// about 5 GiB; Cloudflare R2, the strictest, above 5 GiB less 5 MiB
+/// (<https://developers.cloudflare.com/r2/platform/limits/>). A larger archive goes in parts, as
+/// the store's multipart upload, when the request offers them (`PartsTarget`).
+pub const MAX_SINGLE_PUT_BYTES: u64 = 5 * 1024 * 1024 * 1024 - 5 * 1024 * 1024;
+/// The bounds S3 puts on a multipart upload: every part but the last is at least 5 MiB, none is
+/// larger than one PUT may be, and there are at most 10,000 of them.
+pub const MIN_PART_BYTES: u64 = 5 * 1024 * 1024;
+pub const MAX_PART_BYTES: u64 = MAX_SINGLE_PUT_BYTES;
+pub const MAX_PARTS: u64 = 10_000;
+
+/// The URL without its query string: safe to log.
+pub fn redact(url: &str) -> String {
+    url.split('?').next().unwrap_or(url).to_owned()
+}
+
 /// `POST /v1/workloads/{id}/export`: the workload's data as a gzip tarball, PUT to a presigned
 /// URL. The URL is used once, and never stored or logged.
 #[derive(Clone, Deserialize, Serialize)]
@@ -52,7 +68,7 @@ pub fn validate_exclude(exclude: &[String]) -> Result<(), Vec<FieldError>> {
 impl fmt::Debug for ExportRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ExportRequest")
-            .field("url", &crate::fleet::client::redact(&self.url))
+            .field("url", &redact(&self.url))
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("quiesced", &self.quiesced)
             .field("exclude", &self.exclude)
@@ -79,14 +95,14 @@ pub struct PartsTarget {
 impl PartsTarget {
     pub fn validate(&self) -> Result<(), Vec<FieldError>> {
         let mut errors = Vec::new();
-        let (min, max) = (crate::transfer::MIN_PART_BYTES, crate::transfer::MAX_PART_BYTES);
+        let (min, max) = (MIN_PART_BYTES, MAX_PART_BYTES);
         if !(min..=max).contains(&self.part_size) {
             errors.push(FieldError {
                 field: "parts.partSize".into(),
                 problem: format!("between {min} and {max} bytes, as the store takes them"),
             });
         }
-        let most = crate::transfer::MAX_PARTS;
+        let most = MAX_PARTS;
         if self.urls.is_empty() || self.urls.len() as u64 > most {
             errors.push(FieldError { field: "parts.urls".into(), problem: format!("1 to {most} of them") });
         }
@@ -168,7 +184,7 @@ impl RestoreRequest {
 impl fmt::Debug for RestoreRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RestoreRequest")
-            .field("url", &self.url.as_deref().map(crate::fleet::client::redact))
+            .field("url", &self.url.as_deref().map(redact))
             .field("sha256", &self.sha256)
             .field("snapshot", &self.snapshot)
             .finish()
@@ -205,6 +221,25 @@ pub struct SnapshotRequest {
     pub quiesced: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "lowercase")]
+pub enum Method {
+    /// The copy shares the source's blocks until either changes: instant, and free until then.
+    Reflink,
+    /// Every byte was copied.
+    Copy,
+}
+
+impl Method {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Reflink => "reflink",
+            Self::Copy => "copy",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
@@ -217,7 +252,7 @@ pub struct SnapshotView {
     /// The files' bytes. With shared blocks, most of them aren't new on disk.
     pub size_bytes: u64,
     pub files: u64,
-    pub method: crate::tree::Method,
+    pub method: Method,
     /// The workload was running, with its saving paused, when it was taken.
     pub quiesced: bool,
     pub spec_digest: String,
@@ -264,9 +299,22 @@ pub struct UploadRequest {
 impl fmt::Debug for UploadRequest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("UploadRequest")
-            .field("url", &crate::fleet::client::redact(&self.url))
+            .field("url", &redact(&self.url))
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field("parts", &self.parts)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signatures_never_reach_a_log() {
+        assert_eq!(
+            redact("https://r2.example/archives/a.tar.gz?X-Amz-Signature=secret&X-Amz-Credential=key"),
+            "https://r2.example/archives/a.tar.gz"
+        );
     }
 }

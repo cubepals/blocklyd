@@ -18,7 +18,7 @@ use blocklyd::config::{Config, FleetConfig};
 use blocklyd::fleet::enroll::ensure_identity;
 use blocklyd::fleet::heartbeat;
 use blocklyd::fleet::identity::{Credentials, Identity, IdentityFile};
-use blocklyd::fleet::wire::{
+use blocklyd::protocol::wire::{
     EnrollRequest, EnrollResponse, HeartbeatResponse, NodeCapacity, NodeFacts, RenewRequest, RenewResponse,
 };
 use blocklyd::runtime::fake::FakeRuntime;

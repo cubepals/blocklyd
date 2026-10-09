@@ -22,10 +22,10 @@ use tracing::{debug, info, warn};
 
 use super::client;
 use super::identity::Credentials;
-use super::wire::{HeartbeatRequest, HeartbeatResponse};
 use crate::cli::upgrade::Upgrader;
 use crate::ids::WorkloadId;
 use crate::manager::Manager;
+use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse};
 
 pub async fn run(
     manager: Arc<Manager>,

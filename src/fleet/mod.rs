@@ -15,7 +15,7 @@ pub mod enroll;
 pub mod heartbeat;
 pub mod identity;
 pub mod token;
-pub mod wire;
+pub use crate::protocol::wire;
 
 /// The version this blocklyd reports to the control plane, which offers an upgrade to an older one.
 /// A debug build reports BLOCKLYD_TEST_VERSION instead when it is set, so an end-to-end test can

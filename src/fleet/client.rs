@@ -22,6 +22,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+use crate::protocol::redact;
+
 pub type Body = BoxBody<Bytes, std::io::Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -59,11 +61,6 @@ impl ClientError {
 
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
-
-/// The URL without its query string: safe to log.
-pub fn redact(url: &str) -> String {
-    url.split('?').next().unwrap_or(url).to_owned()
-}
 
 pub fn full(bytes: impl Into<Bytes>) -> Body {
     Full::new(bytes.into()).map_err(|never| match never {}).boxed()
@@ -270,14 +267,6 @@ impl JsonError {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn signatures_never_reach_a_log() {
-        assert_eq!(
-            redact("https://r2.example/archives/a.tar.gz?X-Amz-Signature=secret&X-Amz-Credential=key"),
-            "https://r2.example/archives/a.tar.gz"
-        );
-    }
 
     /// A server that reads one request and answers every connection with `answer`, raw, then
     /// writes nothing more: it closes the connection if `close`, and otherwise holds it open.

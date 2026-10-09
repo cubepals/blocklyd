@@ -23,9 +23,9 @@ use tracing::{info, warn};
 
 use super::client::{self, JsonError};
 use super::identity::{Identity, IdentityFile, same_certificates};
-use super::wire::{EnrollRequest, EnrollResponse, NodeFacts};
 use crate::api::tls::load_certs;
 use crate::config::{Config, FleetConfig};
+use crate::protocol::wire::{EnrollRequest, EnrollResponse, NodeFacts};
 
 /// The node's identity: the one on disk, or a new one from enrollment. Retries while the
 /// control plane can't be reached (a host is often up before it is); gives up on a refusal.

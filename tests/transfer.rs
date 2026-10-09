@@ -186,7 +186,7 @@ async fn a_download_the_disk_has_no_room_for_is_refused_before_it_is_spooled() {
 #[tokio::test]
 async fn an_archive_too_large_for_one_upload_is_refused_with_its_sizes() {
     // What the control plane takes as final: a status, a code and both sizes.
-    let limit = blocklyd::transfer::MAX_SINGLE_PUT_BYTES;
+    let limit = blocklyd::protocol::MAX_SINGLE_PUT_BYTES;
     let response = NodeError::ArchiveTooLarge { size_bytes: 6 << 30, limit_bytes: limit }.into_response();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();

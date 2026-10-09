@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Timespec, Timestamps};
 use rustix::io::Errno;
 
+pub use crate::protocol::Method;
+
 /// Directories deeper than this are refused rather than walked: no world nests like that, and
 /// the walk holds a descriptor per level.
 pub const MAX_DEPTH: usize = 128;
@@ -281,25 +283,6 @@ fn count(dir: OwnedFd, device: u64, depth: usize, total: &mut u64) -> io::Result
         }
     }
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "lowercase")]
-pub enum Method {
-    /// The copy shares the source's blocks until either changes: instant, and free until then.
-    Reflink,
-    /// Every byte was copied.
-    Copy,
-}
-
-impl Method {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Reflink => "reflink",
-            Self::Copy => "copy",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

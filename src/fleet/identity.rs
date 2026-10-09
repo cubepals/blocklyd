@@ -30,9 +30,9 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize};
 
-use super::wire::{RenewRequest, RenewResponse};
 use crate::api::tls::{ServerCert, TlsSetupError, load_certs, load_key};
 use crate::config::TlsConfig;
+use crate::protocol::wire::{RenewRequest, RenewResponse};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

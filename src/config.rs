@@ -296,7 +296,7 @@ pub struct TransferConfig {
 const MIB: u64 = 1024 * 1024;
 
 /// R2's limit for one PUT, in MiB: the default, and the most `max_put_mb` may be.
-const MAX_PUT_MB: u64 = crate::transfer::MAX_SINGLE_PUT_BYTES / MIB;
+const MAX_PUT_MB: u64 = crate::protocol::MAX_SINGLE_PUT_BYTES / MIB;
 
 impl Default for TransferConfig {
     fn default() -> Self {
@@ -514,7 +514,7 @@ mod tests {
         assert!(config.workloads.read_only_rootfs);
         assert_eq!(config.workload_ids(), (1000, 1000));
         assert_eq!(config.ops.listen.ip(), IpAddr::from([127, 0, 0, 1]));
-        assert_eq!(config.transfer.max_put_bytes(), crate::transfer::MAX_SINGLE_PUT_BYTES, "R2's limit");
+        assert_eq!(config.transfer.max_put_bytes(), crate::protocol::MAX_SINGLE_PUT_BYTES, "R2's limit");
     }
 
     #[test]

@@ -20,10 +20,8 @@ use schemars::SchemaGenerator;
 use schemars::generate::{Contract, SchemaSettings};
 use serde_json::{Value, json};
 
+use super::wire::{EnrollRequest, EnrollResponse, HeartbeatRequest, HeartbeatResponse, RenewRequest, RenewResponse};
 use super::*;
-use crate::fleet::wire::{
-    EnrollRequest, EnrollResponse, HeartbeatRequest, HeartbeatResponse, RenewRequest, RenewResponse,
-};
 
 /// Where the documents are committed, and where a release takes them from.
 const OPENAPI: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/openapi");

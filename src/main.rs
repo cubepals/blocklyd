@@ -220,12 +220,12 @@ fn print_report(report: &doctor::Report, json: bool, preflight: bool) -> anyhow:
 }
 
 /// What a node says about itself when it enrolls.
-fn facts(config: &Config, fleet: &FleetConfig) -> blocklyd::fleet::wire::NodeFacts {
+fn facts(config: &Config, fleet: &FleetConfig) -> blocklyd::protocol::wire::NodeFacts {
     let host = blocklyd::host::facts();
     let memory_total_mb = host.memory_total_bytes.map_or(0, |b| b / (1024 * 1024));
     let (disk_total, disk_available) = blocklyd::host::disk(&config.state_dir).unzip();
     let [low, high] = config.network.port_range;
-    blocklyd::fleet::wire::NodeFacts {
+    blocklyd::protocol::wire::NodeFacts {
         hostname: host.hostname,
         boot_id: blocklyd::host::boot_id(),
         machine_id_sha256: blocklyd::fleet::enroll::machine_id_sha256(),
@@ -235,7 +235,7 @@ fn facts(config: &Config, fleet: &FleetConfig) -> blocklyd::fleet::wire::NodeFac
         api_address: fleet.api_address.unwrap_or(config.api.listen),
         edge_ips: config.network.edge_ips.clone(),
         control_ips: config.network.control_ips.clone(),
-        capacity: blocklyd::fleet::wire::NodeCapacity {
+        capacity: blocklyd::protocol::wire::NodeCapacity {
             memory_total_mb,
             reserved_memory_mb: config.capacity.reserved_memory_mb,
             allocatable_memory_mb: config.capacity.allocatable_mb(memory_total_mb),

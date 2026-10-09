@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn an_archive_one_put_cant_carry_is_refused_before_it_is_sent() {
-        let limit = crate::transfer::MAX_SINGLE_PUT_BYTES;
+        let limit = crate::protocol::MAX_SINGLE_PUT_BYTES;
         assert_eq!(limit, 5 * 1024 * 1024 * 1024 - 5 * 1024 * 1024, "R2's: 5 GiB less 5 MiB");
         assert_eq!(crate::config::TransferConfig::default().max_put_bytes(), limit, "the default is R2's");
         assert!(one_put(limit, limit).is_ok());
