@@ -67,7 +67,7 @@ impl Manager {
             let (into, beside) = (into.clone(), self.store.snapshot_dir(id, &request.id));
             // Watched as it is written: snapshots of other workloads may be admitted beside it.
             let mut watch = self.floor_watch();
-            tokio::task::spawn_blocking(move || {
+            blocking(move || {
                 // On disk before snapshot.json says the snapshot exists.
                 let disk = crate::durable::FilesystemSync::begin(&beside)?;
                 let copied = crate::tree::copy_tree(&data, &into, None, &[], &mut |copied| {
@@ -75,8 +75,7 @@ impl Manager {
                 })?;
                 disk.finish().map(|()| copied)
             })
-            .await
-            .map_err(|e| NodeError::Internal(format!("copying panicked: {e}")))?
+            .await?
         };
         let copied = match copied {
             Ok(copied) => copied,

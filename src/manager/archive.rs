@@ -90,18 +90,17 @@ impl Manager {
         };
         self.admit_disk(need, "the archive's spool")?;
         let spool_dir = self.store.spool_dir();
-        std::fs::create_dir_all(&spool_dir).map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+        std::fs::create_dir_all(&spool_dir).map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let spool = spool_dir.join(format!("{}.tar.gz", uuid::Uuid::new_v4()));
         let _cleanup = RemoveOnDrop(spool.clone());
         let packed = {
             let spool = spool.clone();
             // Watched as it is written, as a restore is: admitted alone, it may not be alone.
             let mut watch = self.floor_watch();
-            tokio::task::spawn_blocking(move || {
+            blocking(move || {
                 crate::tarball::pack(&root, &spool, &exclude, &mut |read| watch.wrote(read).map_err(|e| e.to_string()))
             })
-            .await
-            .map_err(|e| NodeError::Internal(format!("packing panicked: {e}")))?
+            .await?
             .map_err(|e| copy_failed("packing the data", e))?
         };
         let limit = self.config.transfer.max_put_bytes();
@@ -110,14 +109,15 @@ impl Manager {
             return Ok((packed, Some(put)));
         }
         one_put(packed.size_bytes, limit)?;
-        let (body, length) =
-            crate::http_client::file_body(&spool).await.map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+        let (body, length) = crate::http_client::file_body(&spool)
+            .await
+            .map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let mut headers: Vec<(&str, String)> = extra_headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
         headers.push(("content-length", length.to_string()));
         let response =
             crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
                 .await
-                .map_err(|e| NodeError::Transfer(format!("uploading the archive: {e}")))?;
+                .map_err(|e| NodeError::TransferBroke { what: "uploading the archive", source: e.into() })?;
         if !response.status().is_success() {
             let status = response.status();
             let text = crate::http_client::read_body(response, 4096).await.unwrap_or_default();
@@ -257,7 +257,7 @@ impl Manager {
             Duration::from_secs(3600),
         )
         .await
-        .map_err(|e| NodeError::Transfer(format!("downloading the archive: {e}")))?;
+        .map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
         if !response.status().is_success() {
             return Err(NodeError::Transfer(format!("the store answered HTTP {}", response.status())));
         }
@@ -267,11 +267,11 @@ impl Manager {
             self.admit_disk(length, "the archive's download")?;
         }
         let spool_dir = self.store.spool_dir();
-        std::fs::create_dir_all(&spool_dir).map_err(|e| NodeError::Internal(format!("spool: {e}")))?;
+        std::fs::create_dir_all(&spool_dir).map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let spool = spool_dir.join(format!("{id}-{}.tar.gz", uuid::Uuid::new_v4()));
         let _cleanup = RemoveOnDrop(spool.clone());
         let mut file = crate::tarball::Hashing::new(
-            std::fs::File::create(&spool).map_err(|e| NodeError::Internal(format!("spool: {e}")))?,
+            std::fs::File::create(&spool).map_err(|source| NodeError::Io { what: "spool".into(), source })?,
         );
         let mut body = response.into_body();
         let mut watch = self.floor_watch();
@@ -291,7 +291,8 @@ impl Manager {
             .await
             .map_err(stalled)?
         {
-            let frame = frame.map_err(|e| NodeError::Transfer(format!("downloading the archive: {e}")))?;
+            let frame =
+                frame.map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
             if let Ok(data) = frame.into_data() {
                 file.write_all(&data).map_err(|e| write_failed("spool", e))?;
                 watch.wrote(file.bytes())?;
@@ -310,7 +311,7 @@ impl Manager {
         let unpacked = {
             let (spool, into, beside) = (spool.clone(), into.to_owned(), self.store.workload_dir(id));
             let mut watch = self.floor_watch();
-            tokio::task::spawn_blocking(move || {
+            blocking(move || {
                 // On disk before anything calls it complete (`Store::swap_in_restored`).
                 let disk = crate::durable::FilesystemSync::begin(&beside)?;
                 let unpacked = crate::tarball::unpack(&spool, &into, owner, &mut |written| {
@@ -319,8 +320,7 @@ impl Manager {
                 disk.finish()?;
                 Ok(unpacked)
             })
-            .await
-            .map_err(|e| NodeError::Internal(format!("unpacking panicked: {e}")))?
+            .await?
         };
         let unpacked = unpacked.map_err(|e| match e {
             crate::tarball::UnpackError::NoRoom(message) => NodeError::InsufficientDisk(message),
@@ -353,7 +353,7 @@ impl Manager {
         let from = self.store.snapshot_dir(id, snapshot).join("data");
         let (into, beside) = (into.to_owned(), self.store.workload_dir(id));
         let mut watch = self.floor_watch();
-        let copied = tokio::task::spawn_blocking(move || {
+        let copied = blocking(move || {
             // On disk before anything calls it complete (`Store::swap_in_restored`).
             let disk = crate::durable::FilesystemSync::begin(&beside)?;
             let copied = crate::tree::copy_tree(&from, &into, Some(owner), &[], &mut |copied| {
@@ -361,8 +361,7 @@ impl Manager {
             })?;
             disk.finish().map(|()| copied)
         })
-        .await
-        .map_err(|e| NodeError::Internal(format!("copying panicked: {e}")))?
+        .await?
         .map_err(|e| copy_failed("copying the snapshot", e))?;
         Ok(RestoreResponse {
             size_bytes: copied.walked.bytes,
@@ -467,11 +466,10 @@ async fn put_part(
 /// A write that failed for want of space reached the disk's floor the hard way; any other failure
 /// is blocklyd's own.
 fn write_failed(what: &str, e: std::io::Error) -> NodeError {
-    let message = format!("{what}: {e}");
     if e.kind() == std::io::ErrorKind::StorageFull {
-        NodeError::InsufficientDisk(message)
+        NodeError::InsufficientDisk(format!("{what}: {e}"))
     } else {
-        NodeError::Internal(message)
+        NodeError::Io { what: what.to_owned(), source: e }
     }
 }
 
@@ -515,7 +513,9 @@ mod tests {
         let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
         assert!(matches!(copy_failed("copying", full), NodeError::InsufficientDisk(_)));
         let failed = std::io::Error::other("Input/output error");
-        assert!(matches!(copy_failed("copying", failed), NodeError::Internal(m) if m == "copying: Input/output error"));
+        let failed = copy_failed("copying", failed);
+        assert!(matches!(failed, NodeError::Io { .. }), "{failed:?}");
+        assert_eq!(failed.to_string(), "copying: Input/output error", "as the API answers it");
     }
 
     #[test]

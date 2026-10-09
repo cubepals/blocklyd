@@ -164,7 +164,7 @@ pub enum UnpackError {
     /// The caller said the disk can't take more.
     #[error("{0}")]
     NoRoom(String),
-    #[error("{0}")]
+    #[error(transparent)]
     Io(#[from] io::Error),
 }
 

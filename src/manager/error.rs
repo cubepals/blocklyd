@@ -4,9 +4,13 @@
 use crate::ids::WorkloadId;
 use crate::protocol::FieldError;
 use crate::runtime::RuntimeError;
-use crate::store::WorkloadRecord;
+use crate::store::{StoreError, WorkloadRecord};
 
-#[derive(Debug, Clone, thiserror::Error)]
+/// Whatever made a transfer break, kept as its error's source.
+pub type TransferCause = Box<dyn std::error::Error + Send + Sync>;
+
+/// Each failure says on the wire what its message says; one with a cause keeps it as its source.
+#[derive(Debug, thiserror::Error)]
 pub enum NodeError {
     #[error("the request is not valid")]
     Invalid(Vec<FieldError>),
@@ -33,9 +37,15 @@ pub enum NodeError {
     #[error("{0}")]
     Timeout(String),
     #[error("the container runtime refused: {0}")]
-    Runtime(String),
+    Runtime(#[source] RuntimeError),
     #[error("{0}")]
     Internal(String),
+    /// blocklyd's own failure, at `what`: answered as `Internal` is.
+    #[error("{what}: {source}")]
+    Io { what: String, source: std::io::Error },
+    /// The state directory's: answered as `Internal` is.
+    #[error(transparent)]
+    Store(#[from] StoreError),
     #[error("this request acts for epoch {asked}; this copy belongs to epoch {current:?}, which is newer")]
     StaleEpoch { asked: u64, current: Option<u64> },
     #[error("this copy belongs to epoch {current:?}; PUT the spec with epoch {asked} first")]
@@ -50,6 +60,10 @@ pub enum NodeError {
     ChecksumMismatch { expected: String, actual: String },
     #[error("{0}")]
     Transfer(String),
+    /// The object store couldn't be reached, or stopped answering, at `what`: answered as
+    /// `Transfer` is.
+    #[error("{what}: {source}")]
+    TransferBroke { what: &'static str, source: TransferCause },
     #[error("the archive is {size_bytes} bytes; one upload to the store carries at most {limit_bytes}")]
     ArchiveTooLarge { size_bytes: u64, limit_bytes: u64 },
 }
@@ -126,13 +140,7 @@ impl From<RuntimeError> for NodeError {
         match e {
             RuntimeError::Unavailable(m) => NodeError::RuntimeUnavailable(m),
             RuntimeError::Timeout(m) => NodeError::Timeout(m),
-            other => NodeError::Runtime(other.to_string()),
+            other => NodeError::Runtime(other),
         }
-    }
-}
-
-impl From<crate::store::StoreError> for NodeError {
-    fn from(e: crate::store::StoreError) -> Self {
-        NodeError::Internal(e.to_string())
     }
 }
