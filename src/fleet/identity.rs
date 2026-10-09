@@ -241,6 +241,15 @@ pub struct Credentials {
     last_attempt: Mutex<Option<Instant>>,
 }
 
+/// The renewal under way, which lets `Credentials::renewing` go when it ends, however it ends.
+struct Renewal(Arc<Credentials>);
+
+impl Drop for Renewal {
+    fn drop(&mut self) {
+        self.0.renewing.store(false, Ordering::SeqCst);
+    }
+}
+
 /// A failed renewal is tried again after this long, while the control plane keeps asking.
 const RETRY_RENEWAL: Duration = Duration::from_secs(600);
 
@@ -280,10 +289,10 @@ impl Credentials {
             }
             *last = Some(Instant::now());
         }
-        let this = self.clone();
+        let renewal = Renewal(self.clone());
         let url = control_plane.to_owned();
         tokio::spawn(async move {
-            match this.renew(&url).await {
+            match renewal.0.renew(&url).await {
                 Ok(generation) => {
                     manager.certificate_renewed();
                     manager.metrics.renewal(true);
@@ -297,7 +306,6 @@ impl Credentials {
                     );
                 }
             }
-            this.renewing.store(false, Ordering::SeqCst);
         });
     }
 

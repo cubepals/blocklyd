@@ -54,9 +54,9 @@ impl Manager {
                     unrecorded.get_or_insert(e);
                 }
                 let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
-                self.state.lock().unwrap().stopping.insert(id.clone());
+                let stopping = self.mark_stopping(id);
                 let result = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
-                self.state.lock().unwrap().stopping.remove(id);
+                drop(stopping);
                 self.note(result)?;
                 stopped = true;
             }
@@ -91,6 +91,10 @@ impl Manager {
                 .collect()
         };
         for (id, by) in superseded {
+            // Only a hint that the workload is busy: the lock is let go at once, so a verb may
+            // still take it before the fence below does, which then waits its turn. Busy or not,
+            // the fence is safe to send; skipping a busy one only keeps resyncs from piling
+            // fences up behind a long stop or delete.
             if self.lock_for(&id).try_lock().is_err() {
                 continue;
             }

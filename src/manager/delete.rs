@@ -47,9 +47,9 @@ impl Manager {
                 record.stop_requested_at = Some(now_str());
                 self.save_record(&record)?;
                 let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
-                self.state.lock().unwrap().stopping.insert(id.clone());
+                let stopping = self.mark_stopping(id);
                 let stopped = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
-                self.state.lock().unwrap().stopping.remove(id);
+                drop(stopping);
                 // A stop that fails is still followed by a forced removal.
                 if let Err(e) = self.note(stopped)
                     && e.is_unavailable()

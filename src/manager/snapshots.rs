@@ -149,28 +149,25 @@ impl Manager {
         request: UploadRequest,
     ) -> Result<ExportResponse, NodeError> {
         let started = Instant::now();
-        let key = (id.clone(), snapshot.clone());
         let result = async {
             if let Some(parts) = &request.parts {
                 parts.validate().map_err(NodeError::Invalid)?;
             }
-            {
+            let uploading = {
                 let lock = self.lock_for(&id);
                 let _guard = lock.lock().await;
                 if self.store.snapshot(&id, &snapshot).is_none() {
                     return Err(NodeError::SnapshotNotFound(snapshot.to_string()));
                 }
-                if !self.state.lock().unwrap().uploading.insert(key.clone()) {
-                    return Err(NodeError::Conflict {
-                        code: "snapshot_busy",
-                        message: "this snapshot is being uploaded already".into(),
-                    });
-                }
-            }
+                self.mark_uploading(&id, &snapshot).ok_or_else(|| NodeError::Conflict {
+                    code: "snapshot_busy",
+                    message: "this snapshot is being uploaded already".into(),
+                })?
+            };
             let root = self.store.snapshot_dir(&id, &snapshot).join("data");
             let packed =
                 self.pack_and_put(root, Vec::new(), &request.url, &request.headers, request.parts.as_ref()).await;
-            self.state.lock().unwrap().uploading.remove(&key);
+            drop(uploading);
             let (packed, parts) = packed?;
             tracing::info!(
                 workload = %id,

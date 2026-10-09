@@ -36,6 +36,7 @@
 //! - `label_record.rs`: the record as a container's label carries it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::Hash;
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -133,6 +134,20 @@ struct StatsSample {
 impl State {
     fn stopping(&self, id: &WorkloadId) -> Stopping {
         if self.stopping.contains(id) { Stopping::Underway } else { Stopping::NotAsked }
+    }
+}
+
+/// A key held in one of `State`'s sets (`stopping`, `uploading`) while the work it marks runs, and
+/// taken out when this drops: also on an early return, or when the request's future is dropped.
+struct Marked<'a, K: Eq + Hash> {
+    state: &'a Mutex<State>,
+    set: fn(&mut State) -> &mut HashSet<K>,
+    key: K,
+}
+
+impl<K: Eq + Hash> Drop for Marked<'_, K> {
+    fn drop(&mut self) {
+        (self.set)(&mut self.state.lock().unwrap()).remove(&self.key);
     }
 }
 
@@ -361,6 +376,20 @@ impl Manager {
             _ => self.docker_up.store(true, Ordering::SeqCst),
         }
         result
+    }
+
+    /// Marks the workload as stopping, for as long as the guard lives.
+    fn mark_stopping(&self, id: &WorkloadId) -> Marked<'_, WorkloadId> {
+        let set: fn(&mut State) -> &mut HashSet<WorkloadId> = |s| &mut s.stopping;
+        set(&mut self.state.lock().unwrap()).insert(id.clone());
+        Marked { state: &self.state, set, key: id.clone() }
+    }
+
+    /// Marks the snapshot as uploading, for as long as the guard lives; None if it is already.
+    fn mark_uploading(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Option<Marked<'_, (WorkloadId, SnapshotId)>> {
+        let set: fn(&mut State) -> &mut HashSet<(WorkloadId, SnapshotId)> = |s| &mut s.uploading;
+        let key = (id.clone(), snapshot.clone());
+        set(&mut self.state.lock().unwrap()).insert(key.clone()).then_some(Marked { state: &self.state, set, key })
     }
 
     fn lock_for(&self, id: &WorkloadId) -> Arc<tokio::sync::Mutex<()>> {

@@ -115,13 +115,10 @@ impl Manager {
             self.runtime.kill(&record.container_name).await
         } else {
             let seconds = grace.unwrap_or(record.spec.stop.timeout_seconds);
-            self.state.lock().unwrap().stopping.insert(id.clone());
-            let r = self
-                .runtime
+            let _stopping = self.mark_stopping(id);
+            self.runtime
                 .stop(&record.container_name, record.spec.stop.signal.as_str(), Duration::from_secs(seconds as u64))
-                .await;
-            self.state.lock().unwrap().stopping.remove(id);
-            r
+                .await
         };
         self.note(result)?;
         let after = self.observe(&record).await?;
