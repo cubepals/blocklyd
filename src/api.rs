@@ -5,6 +5,10 @@
 //! its other internal protocol (the edge's) is versioned HTTP/JSON, and nothing here needs a
 //! bidirectional stream: exec is request/response (the console is RCON), logs are one-way. JSON is
 //! also what an operator can read with curl at 3 a.m.
+//!
+//! Parts (`api/`):
+//! - `error.rs`: errors as the protocol states them: an HTTP status and a stable code.
+//! - `tls.rs`: the API's side of mutual TLS: its certificate, and who a client certificate proves.
 
 // Handlers answer early with a ready-made `Response`, axum's own idiom for rejections.
 #![allow(clippy::result_large_err)]

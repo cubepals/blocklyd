@@ -1,6 +1,10 @@
 //! The seam between blocklyd and whatever runs containers. The manager speaks only these types;
 //! Docker is one implementation (docker.rs), an in-memory fake another (fake.rs). A containerd or
 //! microVM backend would be a third, and the protocol would not change.
+//!
+//! Parts (`runtime/`):
+//! - `docker.rs`: the Docker Engine API, over the local unix socket.
+//! - `fake.rs`: an in-memory runtime for tests, with the Docker behaviour blocklyd depends on.
 
 pub mod docker;
 pub mod fake;

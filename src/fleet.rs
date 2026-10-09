@@ -1,8 +1,12 @@
 //! Fleet mode: how a node joins a control plane and reports to it.
 //!
-//! - `token`: the enrollment token's two forms, the pasted `bk1.` one and the bare secret.
-//! - `enroll`: a one-time token plus a certificate request gives a durable identity.
-//! - `heartbeat`: the node's whole state, every few seconds; the answer can only fence.
+//! Parts (`fleet/`):
+//! - `token.rs`: the enrollment token's two forms, the pasted `bk1.` one and the bare secret.
+//! - `enroll.rs`: a one-time token plus a certificate request gives a durable identity.
+//! - `identity.rs`: that identity on disk, and its renewal; the TLS settings it gives.
+//! - `heartbeat.rs`: the node's whole state, every few seconds; the answer can only fence.
+//!
+//! What a node and its control plane send each other is `protocol::wire`.
 //!
 //! Upgrading blocklyd itself when a heartbeat's answer offers it is `crate::upgrade`.
 //!
