@@ -13,15 +13,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use blocklyd::cli::upgrade::Upgrader;
 use blocklyd::config::{Config, FleetConfig};
 use blocklyd::fleet::enroll::ensure_identity;
 use blocklyd::fleet::heartbeat;
 use blocklyd::fleet::identity::{Credentials, Identity, IdentityFile};
-use blocklyd::fleet::wire::{
+use blocklyd::protocol::wire::{
     EnrollRequest, EnrollResponse, HeartbeatResponse, NodeCapacity, NodeFacts, RenewRequest, RenewResponse,
 };
 use blocklyd::runtime::fake::FakeRuntime;
+use blocklyd::upgrade::Upgrader;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;

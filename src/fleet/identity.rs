@@ -30,9 +30,10 @@ use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
 use serde::{Deserialize, Serialize};
 
-use super::wire::{RenewRequest, RenewResponse};
-use crate::api::tls::{ServerCert, TlsSetupError, load_certs, load_key};
+use crate::api::tls::ServerCert;
 use crate::config::TlsConfig;
+use crate::protocol::wire::{RenewRequest, RenewResponse};
+use crate::tls::{TlsSetupError, load_certs, load_key};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -221,7 +222,7 @@ impl Identity {
         let roots = load_certs(&self.dir.join("ca.pem"))?;
         let chain = load_certs(&self.client_cert_path())?;
         let key = load_key(&self.key_path())?;
-        super::client::tls_config(roots, Some((chain, key)), true)
+        crate::http_client::tls_config(roots, Some((chain, key)), true)
             .map_err(|e| IdentityError::Invalid(format!("client TLS: {e}")))
     }
 
@@ -315,7 +316,7 @@ impl Credentials {
         let url = format!("{}/fleet/v1/nodes/{}/renew", control_plane.trim_end_matches('/'), current.node_id());
         let request = RenewRequest { node_id: current.node_id().to_owned(), csr_pem: csr };
         let answer: RenewResponse =
-            super::client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
+            crate::http_client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
                 .await
                 .context("asking the control plane")?;
         let ca = load_certs(&current.dir.join("ca.pem")).context("reading the fleet CA")?;

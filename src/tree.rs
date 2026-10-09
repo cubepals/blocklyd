@@ -12,7 +12,7 @@
 //! - a file is read through the descriptor that was opened and checked.
 //!
 //! `copy_tree` uses it for local snapshots, sharing blocks with the source (`FICLONE`) where the
-//! filesystem can, and `transfer::pack` for archives. `disk_usage` measures a tree by the same
+//! filesystem can, and `tarball::pack` for archives. `disk_usage` measures a tree by the same
 //! rules, opening only its directories.
 
 use std::ffi::{CString, OsStr};
@@ -25,6 +25,8 @@ use std::path::{Path, PathBuf};
 
 use rustix::fs::{AtFlags, Dir, FileType, Mode, OFlags, Timespec, Timestamps};
 use rustix::io::Errno;
+
+pub use crate::protocol::Method;
 
 /// Directories deeper than this are refused rather than walked: no world nests like that, and
 /// the walk holds a descriptor per level.
@@ -283,25 +285,6 @@ fn count(dir: OwnedFd, device: u64, depth: usize, total: &mut u64) -> io::Result
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "lowercase")]
-pub enum Method {
-    /// The copy shares the source's blocks until either changes: instant, and free until then.
-    Reflink,
-    /// Every byte was copied.
-    Copy,
-}
-
-impl Method {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Reflink => "reflink",
-            Self::Copy => "copy",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Copied {
     pub walked: Walked,
@@ -314,8 +297,8 @@ fn no_reflink(e: Errno) -> bool {
 }
 
 /// A long write its caller's `room` stopped: the disk is under the floor the caller keeps. It comes
-/// back inside the `io::Error` that `copy_tree` and `transfer::pack` return, so the caller can tell
-/// it from the disk's own failures (`NoRoom::of`), as `transfer::UnpackError::NoRoom` is told apart.
+/// back inside the `io::Error` that `copy_tree` and `tarball::pack` return, so the caller can tell
+/// it from the disk's own failures (`NoRoom::of`), as `tarball::UnpackError::NoRoom` is told apart.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct NoRoom(pub String);

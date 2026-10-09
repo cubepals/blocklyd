@@ -31,6 +31,9 @@
 //! - `node.rs`: what the node reports about itself as a whole.
 //! - `reconcile.rs`: makes the records agree with what Docker has.
 //! - `persist.rs`: writes a record from memory, in turn with every other write of the state.
+//! - `error.rs`: what an operation fails with, and the epoch check every mutating verb makes.
+//! - `workload_state.rs`: the state a record and its container make together.
+//! - `label_record.rs`: the record as a container's label carries it.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
@@ -44,9 +47,14 @@ use time::OffsetDateTime;
 use tokio::sync::OnceCell;
 use tokio::sync::mpsc;
 
+use crate::clock::now;
 use crate::config::Config;
 use crate::host;
 use crate::ids::{SnapshotId, WorkloadId};
+use crate::labels::{
+    LABEL_DEPLOYMENT, LABEL_DIGEST, LABEL_EPOCH, LABEL_GENERATION, LABEL_MANAGED, LABEL_NODE, LABEL_RECORD,
+    LABEL_WORKLOAD,
+};
 use crate::metrics::Metrics;
 use crate::ports::{PortAllocator, PortError, Probe};
 use crate::protocol::{
@@ -54,21 +62,24 @@ use crate::protocol::{
     EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse, FieldError,
     Issue, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse, ProtocolVersions, PutPart,
     ReconcileView, RestoreRequest, RestoreResponse, SnapshotDeleteResponse, SnapshotList, SnapshotRequest,
-    SnapshotResponse, SnapshotView, SpecPolicy, SpecRecord, StatsView, StorageView, UploadRequest, WorkloadSpec,
-    WorkloadState, WorkloadView,
+    SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest, WorkloadSpec, WorkloadState,
+    WorkloadView,
 };
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
     RuntimeError, RuntimeInfo, format_time, parse_time,
 };
-use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Recovery, Store, WorkloadRecord};
+use crate::store::restore::Recovery;
+use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Store, WorkloadRecord};
 
 mod archive;
 mod delete;
 mod ensure;
+mod error;
 mod exec;
 mod fence;
 mod fleet;
+mod label_record;
 mod logs;
 mod node;
 mod persist;
@@ -79,128 +90,17 @@ mod room;
 mod snapshots;
 mod stats;
 mod view;
+mod workload_state;
 
+pub use error::{EpochRule, NodeError, check_epoch};
+pub use label_record::LabelRecord;
 pub use logs::lines_of;
 pub use node::WorkloadSample;
-
-pub const LABEL_MANAGED: &str = "blocklyd.managed";
-pub const LABEL_DEPLOYMENT: &str = "blocklyd.deployment";
-pub const LABEL_NODE: &str = "blocklyd.node";
-pub const LABEL_WORKLOAD: &str = "blocklyd.workload";
-pub const LABEL_GENERATION: &str = "blocklyd.generation";
-pub const LABEL_DIGEST: &str = "blocklyd.spec-digest";
-pub const LABEL_EPOCH: &str = "blocklyd.epoch";
-/// The whole record (minus secrets) as JSON: enough to rebuild blocklyd's state from the
-/// runtime alone if the state directory is lost.
-pub const LABEL_RECORD: &str = "blocklyd.record";
-
-pub fn now() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
-}
+pub use workload_state::derive_state;
+use workload_state::{clean_exit, derive_power_state};
 
 fn now_str() -> String {
     format_time(now())
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum NodeError {
-    #[error("the request is not valid")]
-    Invalid(Vec<FieldError>),
-    #[error("no workload {0}")]
-    NotFound(WorkloadId),
-    #[error("no snapshot {0} of this workload on this node")]
-    SnapshotNotFound(String),
-    #[error("the workload's current spec is not the one the request expected")]
-    PreconditionFailed { current: Option<String> },
-    #[error("{message}")]
-    Conflict { code: &'static str, message: String },
-    #[error("{0}")]
-    InsufficientCapacity(String),
-    #[error("{0}")]
-    InsufficientDisk(String),
-    #[error("{0}")]
-    NoFreePorts(String),
-    #[error("deleting data needs the {} header set to the workload id", crate::protocol::CONFIRM_DELETE_HEADER)]
-    ConfirmationRequired,
-    #[error("this idempotency key was used for a different request")]
-    IdempotencyMismatch,
-    #[error("{0}")]
-    RuntimeUnavailable(String),
-    #[error("{0}")]
-    Timeout(String),
-    #[error("the container runtime refused: {0}")]
-    Runtime(String),
-    #[error("{0}")]
-    Internal(String),
-    #[error("this request acts for epoch {asked}; this copy belongs to epoch {current:?}, which is newer")]
-    StaleEpoch { asked: u64, current: Option<u64> },
-    #[error("this copy belongs to epoch {current:?}; PUT the spec with epoch {asked} first")]
-    EpochAhead { asked: u64, current: Option<u64> },
-    #[error("this copy was superseded by epoch {by}; it will not run again")]
-    Superseded { by: u64 },
-    #[error("this workload belongs to epoch {current}; send it in the {} header", crate::protocol::EPOCH_HEADER)]
-    EpochRequired { current: u64 },
-    #[error("{0}")]
-    InvalidArchive(String),
-    #[error("the archive's sha256 is {actual}, not {expected}")]
-    ChecksumMismatch { expected: String, actual: String },
-    #[error("{0}")]
-    Transfer(String),
-    #[error("the archive is {size_bytes} bytes; one upload to the store carries at most {limit_bytes}")]
-    ArchiveTooLarge { size_bytes: u64, limit_bytes: u64 },
-}
-
-/// How a verb treats the placement epoch it is sent.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EpochRule {
-    /// Runs the copy (start, exec): only for exactly its epoch, and never once superseded.
-    Exact,
-    /// Tears the copy down (stop, kill, delete): its epoch or any newer one, since a newer
-    /// placement may always clean up an older copy.
-    Teardown,
-    /// Places the workload here (ensure): its epoch, or a newer one that takes the copy over.
-    Place,
-}
-
-/// The fencing check every mutating verb makes before touching the runtime. Workloads made
-/// without an epoch keep the single-node protocol: none is asked for and none is checked.
-pub fn check_epoch(record: &WorkloadRecord, asked: Option<u64>, rule: EpochRule) -> Result<(), NodeError> {
-    match (asked, record.epoch) {
-        (None, None) => {}
-        (None, Some(current)) => return Err(NodeError::EpochRequired { current }),
-        (Some(asked), current) => {
-            let floor = current.unwrap_or(0);
-            if asked < floor {
-                return Err(NodeError::StaleEpoch { asked, current });
-            }
-            if asked > floor && rule == EpochRule::Exact {
-                return Err(NodeError::EpochAhead { asked, current });
-            }
-        }
-    }
-    if let Some(by) = record.superseded_by {
-        let revived = rule == EpochRule::Place && asked.is_some_and(|a| a > by);
-        if rule != EpochRule::Teardown && !revived {
-            return Err(NodeError::Superseded { by });
-        }
-    }
-    Ok(())
-}
-
-impl From<RuntimeError> for NodeError {
-    fn from(e: RuntimeError) -> Self {
-        match e {
-            RuntimeError::Unavailable(m) => NodeError::RuntimeUnavailable(m),
-            RuntimeError::Timeout(m) => NodeError::Timeout(m),
-            other => NodeError::Runtime(other.to_string()),
-        }
-    }
-}
-
-impl From<crate::store::StoreError> for NodeError {
-    fn from(e: crate::store::StoreError) -> Self {
-        NodeError::Internal(e.to_string())
-    }
 }
 
 /// HTTP conditional semantics on `PUT /v1/workloads/{id}`.
@@ -351,12 +251,6 @@ fn endpoint(ip: &IpAddr, port: u16) -> String {
         IpAddr::V4(v4) => format!("{v4}:{port}"),
         IpAddr::V6(v6) => format!("[{v6}]:{port}"),
     }
-}
-
-/// Requested stops end with these without being failures: SIGTERM handled late (143), SIGINT
-/// (130), or a clean exit.
-fn clean_exit(code: i64) -> bool {
-    matches!(code, 0 | 130 | 143)
 }
 
 impl Manager {
@@ -646,34 +540,6 @@ fn restart_backoff(attempt: u32) -> Duration {
     Duration::from_millis(500u64.saturating_mul(1 << attempt.min(5))).min(Duration::from_secs(10))
 }
 
-/// The record as a label carries it.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LabelRecord {
-    pub version: u32,
-    pub generation: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub epoch: Option<u64>,
-    pub spec_digest: String,
-    pub ports: Vec<AllocatedPort>,
-    pub spec: SpecRecord,
-    pub created_at: String,
-}
-
-impl LabelRecord {
-    fn of(record: &WorkloadRecord) -> Self {
-        Self {
-            version: RECORD_VERSION,
-            generation: record.generation,
-            epoch: record.epoch,
-            spec_digest: record.spec_digest.clone(),
-            ports: record.ports.clone(),
-            spec: record.spec.clone(),
-            created_at: record.created_at.clone(),
-        }
-    }
-}
-
 /// A start that fails because the port is taken says so plainly, and names the workload.
 fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
     let text = e.to_string();
@@ -681,114 +547,5 @@ fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
         NodeError::Conflict { code: "port_conflict", message: format!("{id}: a host port it holds is in use: {text}") }
     } else {
         e.into()
-    }
-}
-
-pub fn derive_state(
-    record: &WorkloadRecord,
-    info: Option<&ContainerInfo>,
-    stopping: bool,
-    trustworthy: bool,
-) -> WorkloadState {
-    let state = derive_power_state(record, info, stopping, trustworthy);
-    let at_rest = matches!(
-        state,
-        WorkloadState::Created | WorkloadState::Stopped | WorkloadState::Crashed | WorkloadState::Missing
-    );
-    if record.superseded_by.is_some() && at_rest { WorkloadState::Fenced } else { state }
-}
-
-fn derive_power_state(
-    record: &WorkloadRecord,
-    info: Option<&ContainerInfo>,
-    stopping: bool,
-    trustworthy: bool,
-) -> WorkloadState {
-    match record.phase {
-        Phase::Retained => WorkloadState::Retained,
-        Phase::Creating if info.is_none() => WorkloadState::Creating,
-        // What blocklyd last saw is history, not the state: a daemon stop may have killed it.
-        _ if !trustworthy => WorkloadState::Unknown,
-        _ => match info {
-            None => WorkloadState::Missing,
-            Some(i) => match i.status {
-                ContainerStatus::Created => WorkloadState::Created,
-                ContainerStatus::Running | ContainerStatus::Paused => {
-                    if stopping {
-                        WorkloadState::Stopping
-                    } else {
-                        WorkloadState::Running
-                    }
-                }
-                ContainerStatus::Restarting => WorkloadState::Restarting,
-                ContainerStatus::Removing => WorkloadState::Stopping,
-                ContainerStatus::Exited | ContainerStatus::Dead => {
-                    let requested = parse_time(record.stop_requested_at.as_deref());
-                    // A little slack: the runtime's clock and ours are the same host's, but its
-                    // timestamps are finer and a stop can be recorded a hair after the exit.
-                    let after_request =
-                        requested.is_some_and(|r| i.finished_at.is_none_or(|f| f >= r - time::Duration::seconds(2)));
-                    if after_request || (clean_exit(i.exit_code) && !i.oom_killed) {
-                        WorkloadState::Stopped
-                    } else {
-                        WorkloadState::Crashed
-                    }
-                }
-                ContainerStatus::Unknown => WorkloadState::Unknown,
-            },
-        },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::store::Phase;
-
-    fn record(phase: Phase, stop_requested_at: Option<&str>) -> WorkloadRecord {
-        let mut r = crate::store::tests::record("w");
-        r.phase = phase;
-        r.stop_requested_at = stop_requested_at.map(str::to_owned);
-        r
-    }
-
-    fn exited(code: i64, oom: bool, finished: &str) -> ContainerInfo {
-        ContainerInfo {
-            id: "c".into(),
-            name: "n".into(),
-            labels: BTreeMap::new(),
-            env: BTreeMap::new(),
-            status: ContainerStatus::Exited,
-            exit_code: code,
-            oom_killed: oom,
-            started_at: None,
-            finished_at: parse_time(Some(finished)),
-            restart_count: 0,
-            health: None,
-        }
-    }
-
-    #[test]
-    fn exits_are_stops_or_crashes_by_what_was_asked() {
-        let at = "2026-09-28T10:00:00Z";
-        let later = "2026-09-28T10:00:05Z";
-        let r = record(Phase::Active, None);
-        assert_eq!(derive_state(&r, Some(&exited(0, false, later)), false, true), WorkloadState::Stopped);
-        assert_eq!(derive_state(&r, Some(&exited(1, false, later)), false, true), WorkloadState::Crashed);
-        assert_eq!(derive_state(&r, Some(&exited(137, true, later)), false, true), WorkloadState::Crashed);
-        let asked = record(Phase::Active, Some(at));
-        assert_eq!(derive_state(&asked, Some(&exited(137, false, later)), false, true), WorkloadState::Stopped);
-        // A crash before the stop request is still a crash.
-        let long_before = "2026-09-28T09:00:00Z";
-        assert_eq!(derive_state(&asked, Some(&exited(1, false, long_before)), false, true), WorkloadState::Crashed);
-    }
-
-    #[test]
-    fn missing_vs_unknown_depends_on_whether_the_runtime_answered() {
-        let r = record(Phase::Active, None);
-        assert_eq!(derive_state(&r, None, false, true), WorkloadState::Missing);
-        assert_eq!(derive_state(&r, None, false, false), WorkloadState::Unknown);
-        assert_eq!(derive_state(&record(Phase::Retained, None), None, false, true), WorkloadState::Retained);
-        assert_eq!(derive_state(&record(Phase::Creating, None), None, false, true), WorkloadState::Creating);
     }
 }

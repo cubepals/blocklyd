@@ -14,7 +14,7 @@ use serde_json::{Map, Value};
 use super::docker::{deploy_daemon_json, differences, read_daemon_json};
 use super::state::has_workloads;
 use crate::config::Config;
-use crate::manager::LABEL_MANAGED;
+use crate::labels::LABEL_MANAGED;
 use crate::runtime::ContainerRuntime;
 use crate::store::Store;
 
@@ -112,7 +112,7 @@ fn backup_path(path: &Path) -> PathBuf {
     if !plain.exists() {
         return plain;
     }
-    path.with_extension(format!("json.bak.{}", crate::manager::now().unix_timestamp()))
+    path.with_extension(format!("json.bak.{}", crate::clock::now().unix_timestamp()))
 }
 
 /// Docker reads daemon.json when it starts. With no container at all a restart costs nothing;

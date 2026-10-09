@@ -34,9 +34,9 @@ use super::reenroll::{Reenroll, reenroll};
 use super::service::{Service, Systemd};
 use crate::config::Config;
 use crate::doctor;
-use crate::fleet::client;
 use crate::fleet::identity::{Identity, write_atomic};
 use crate::fleet::token::JoinToken;
+use crate::http_client as client;
 use crate::infer::API_PORT;
 
 /// The paths as the host sees them; under `root` when one is given.
@@ -231,7 +231,7 @@ fn report(token: &JoinToken, config: &Config, file: &Path, kept: bool, written: 
 /// The fleet CA as the token's endpoint serves it, once it is the one the token names.
 async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
     let url = format!("{}/fleet/v1/ca.pem", token.url.trim_end_matches('/'));
-    let provider = crate::api::tls::provider();
+    let provider = crate::tls::provider();
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()

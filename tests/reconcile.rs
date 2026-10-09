@@ -9,7 +9,7 @@ use std::sync::Arc;
 use blocklyd::manager::Precondition;
 use blocklyd::protocol::{EnsureOutcome, WorkloadState};
 use blocklyd::runtime::ContainerRuntime;
-use blocklyd::store::RESTORE_COMPLETE;
+use blocklyd::store::restore::RESTORE_COMPLETE;
 use support::{fixture, id, manager_on, spec};
 use tokio_util::sync::CancellationToken;
 

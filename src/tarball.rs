@@ -39,16 +39,6 @@ pub const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
 /// and PAX records, or the data of an entry it skips. Go's archive/tar and libarchive stop there
 /// too; no ordinary writer comes near it.
 const MAX_METADATA_BYTES: u64 = 1024 * 1024;
-/// The largest archive one presigned PUT may carry. S3-compatible stores refuse a single PUT above
-/// about 5 GiB; Cloudflare R2, the strictest, above 5 GiB less 5 MiB
-/// (<https://developers.cloudflare.com/r2/platform/limits/>). A larger archive goes in parts, as
-/// the store's multipart upload, when the request offers them (`PartsTarget`).
-pub const MAX_SINGLE_PUT_BYTES: u64 = 5 * 1024 * 1024 * 1024 - 5 * 1024 * 1024;
-/// The bounds S3 puts on a multipart upload: every part but the last is at least 5 MiB, none is
-/// larger than one PUT may be, and there are at most 10,000 of them.
-pub const MIN_PART_BYTES: u64 = 5 * 1024 * 1024;
-pub const MAX_PART_BYTES: u64 = MAX_SINGLE_PUT_BYTES;
-pub const MAX_PARTS: u64 = 10_000;
 /// The longest one download's body may take, however steadily it comes: the control plane gives
 /// up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
 pub const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);

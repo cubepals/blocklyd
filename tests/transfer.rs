@@ -14,7 +14,7 @@ use axum::response::IntoResponse;
 use axum::routing::put;
 use blocklyd::manager::{NodeError, Precondition};
 use blocklyd::protocol::{ExportRequest, RestoreRequest};
-use blocklyd::store::RESTORE_COMPLETE;
+use blocklyd::store::restore::RESTORE_COMPLETE;
 use sha2::Digest;
 use support::{fixture, id, spec};
 
@@ -126,7 +126,7 @@ async fn announcing(length: u64) -> String {
 #[tokio::test]
 async fn a_download_that_stops_coming_fails_and_lets_go_of_the_workload() {
     // Two minutes without a byte is a stall on a host; a second is, here.
-    blocklyd::transfer::set_download_idle(std::time::Duration::from_secs(1));
+    blocklyd::tarball::set_download_idle(std::time::Duration::from_secs(1));
     let f = fixture("").await;
     let made = f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     let data = std::path::PathBuf::from(&made.workload.locate.data_dir);
@@ -186,7 +186,7 @@ async fn a_download_the_disk_has_no_room_for_is_refused_before_it_is_spooled() {
 #[tokio::test]
 async fn an_archive_too_large_for_one_upload_is_refused_with_its_sizes() {
     // What the control plane takes as final: a status, a code and both sizes.
-    let limit = blocklyd::transfer::MAX_SINGLE_PUT_BYTES;
+    let limit = blocklyd::protocol::MAX_SINGLE_PUT_BYTES;
     let response = NodeError::ArchiveTooLarge { size_bytes: 6 << 30, limit_bytes: limit }.into_response();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
     let body = axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap();
@@ -542,7 +542,7 @@ async fn parts_too_few_for_the_archive_are_refused_before_anything_is_sent() {
 
 #[tokio::test]
 async fn a_part_the_store_failed_to_take_is_sent_again() {
-    blocklyd::transfer::set_download_idle(std::time::Duration::from_secs(1));
+    blocklyd::tarball::set_download_idle(std::time::Duration::from_secs(1));
     let f = fixture("[transfer]\nmax_put_mb = 1\n").await;
     // A store that answers the first PUT of part 2 with a 503, then takes it; and whose first
     // answer to part 3 stops after its head, so the node never hears the end of it.

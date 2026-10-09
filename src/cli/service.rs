@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use hyper::Method;
 
-use crate::fleet::client;
+use crate::http_client as client;
 
 pub trait Service {
     /// `systemctl` with these arguments; an error when it fails.

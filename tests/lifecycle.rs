@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use blocklyd::fleet::heartbeat::heartbeat_report;
 use blocklyd::manager::{NodeError, Precondition};
 use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, WorkloadState};
 use blocklyd::store::Phase;
@@ -496,7 +497,7 @@ async fn a_restart_of_blocklyd_doesnt_give_a_crash_loop_its_retries_again() {
     again.reconcile(true).await;
     tokio::spawn(again.clone().restart_supervisor(CancellationToken::new()));
     assert_eq!(again.view(&id("w")).unwrap().restart_count, 1, "remembered");
-    let beat = again.heartbeat_report("test-node", "session", None, 1).await;
+    let beat = heartbeat_report(&again, "test-node", "session", None, 1).await;
     assert_eq!(beat.workloads[0].restart_count, 1, "and reported");
 
     f.fake.crash("blockly-test-w", 3, false);
@@ -533,7 +534,7 @@ async fn a_restart_that_wouldnt_fit_is_refused_and_says_why() {
     // told it with the workload.
     f.manager.reconcile(false).await;
     assert!(f.manager.view(&id("a")).unwrap().issues.iter().any(|i| i.code == "insufficient_capacity"));
-    let beat = f.manager.heartbeat_report("test-node", "session", None, 1).await;
+    let beat = heartbeat_report(&f.manager, "test-node", "session", None, 1).await;
     let reported = |w: &str| beat.workloads.iter().find(|r| r.id == w).map(|r| r.issues.clone()).unwrap();
     assert_eq!(reported("a").iter().map(|i| i.code.as_str()).collect::<Vec<_>>(), ["insufficient_capacity"]);
     assert!(reported("b").is_empty());

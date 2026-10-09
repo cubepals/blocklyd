@@ -18,6 +18,7 @@
 //! - `transfer.rs`: moving a workload's data: export, restore, snapshots and their upload.
 //! - `exec.rs`: running one command inside a workload.
 //! - `node.rs`: what the node reports about itself.
+//! - `wire.rs`: what a node and its control plane send each other: enrollment, heartbeats, renewal.
 //! - `schema.rs`: tests only; these types as the OpenAPI documents the control plane's TypeScript
 //!   types are generated from.
 
@@ -30,6 +31,7 @@ mod node;
 mod schema;
 mod spec;
 mod transfer;
+pub mod wire;
 mod workload;
 
 pub use exec::*;

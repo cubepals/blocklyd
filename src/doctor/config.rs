@@ -46,7 +46,7 @@ fn material(path: &Path, config: &Config) -> anyhow::Result<String> {
             Ok(format!("{} is valid (node {}, deployment {})", path.display(), config.node_id, config.deployment_id))
         }
         (Some(fleet), _) => {
-            crate::api::tls::load_certs(&fleet.ca).context("fleet.ca")?;
+            crate::tls::load_certs(&fleet.ca).context("fleet.ca")?;
             match Identity::load(&config.state_dir)? {
                 Some(identity) => Ok(format!(
                     "{} is valid (fleet mode, enrolled as node {}, deployment {})",

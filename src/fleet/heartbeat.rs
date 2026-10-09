@@ -4,6 +4,8 @@
 //! on the node. Workloads keep running, and the next beat that gets through reports the whole
 //! state again.
 //!
+//! A beat's body is `heartbeat_report`, put together from what the manager holds.
+//!
 //! The node never stops a workload because it lost contact: self-fencing on a lease would make a
 //! control-plane outage stop every server in the fleet (docs/fleet.md, "Epochs and fencing"). The
 //! lease only governs what the node does unasked, restarting a failed workload or resuming one the
@@ -11,7 +13,7 @@
 //! brings nothing back on its own.
 //!
 //! An answer may also offer a newer blocklyd, which the node installs and restarts into
-//! (cli/upgrade.rs); a beat accepted once reconciled ends the trial of one just installed.
+//! (upgrade.rs); a beat accepted once reconciled ends the trial of one just installed.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,12 +22,59 @@ use hyper::Method;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use super::client;
 use super::identity::Credentials;
-use super::wire::{HeartbeatRequest, HeartbeatResponse};
-use crate::cli::upgrade::Upgrader;
+use crate::http_client as client;
 use crate::ids::WorkloadId;
 use crate::manager::Manager;
+use crate::protocol::ProtocolVersions;
+use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse, WorkloadReport};
+use crate::upgrade::Upgrader;
+
+/// Everything this node holds, for a heartbeat.
+pub async fn heartbeat_report(
+    manager: &Manager,
+    node_id: &str,
+    session: &str,
+    boot_id: Option<String>,
+    seq: u64,
+) -> HeartbeatRequest {
+    let workloads = manager
+        .list(None)
+        .into_iter()
+        .map(|v| WorkloadReport {
+            id: v.id.to_string(),
+            epoch: v.epoch,
+            superseded_by: v.superseded_by,
+            state: v.state,
+            spec_digest: v.spec_digest,
+            generation: v.generation,
+            memory_mb: v.resources.memory_mb,
+            restart_count: v.restart_count,
+            exit: v.exit,
+            last_failure_at: v.last_failure_at,
+            changed_at: v.changed_at,
+            ports: v.ports.iter().map(|p| (p.name.clone(), p.host_port)).collect(),
+            issues: v.issues,
+        })
+        .collect();
+    let issues = manager.host_issues();
+    HeartbeatRequest {
+        node_id: node_id.to_owned(),
+        session_id: session.to_owned(),
+        boot_id,
+        seq,
+        daemon_version: crate::fleet::daemon_version(),
+        protocol: ProtocolVersions::ours(),
+        features: crate::protocol::features(),
+        runtime_up: manager.docker_up(),
+        reconciled: manager.reconciled(),
+        capacity: manager.capacity(),
+        workloads,
+        issues,
+        addresses: manager.addresses(),
+        upgrade_failed: None,
+    }
+}
 
 pub async fn run(
     manager: Arc<Manager>,
@@ -44,7 +93,7 @@ pub async fn run(
     let mut failing_since: Option<u64> = None;
     loop {
         seq += 1;
-        let mut request: HeartbeatRequest = manager.heartbeat_report(&node_id, &session, boot.clone(), seq).await;
+        let mut request: HeartbeatRequest = heartbeat_report(&manager, &node_id, &session, boot.clone(), seq).await;
         request.upgrade_failed = upgrader.failure();
         let timeout = interval.max(Duration::from_secs(2)).min(Duration::from_secs(10));
         let sent = Instant::now();

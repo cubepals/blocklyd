@@ -1,6 +1,6 @@
 //! Fences a workload a newer placement has superseded: restarts off, stopped, never started
 //! again, and stopped again should a recorded fence find it running. The epoch check every other
-//! verb makes is `check_epoch` in `manager.rs`; removing the copy is `delete.rs`.
+//! verb makes is `check_epoch` in `error.rs`; removing the copy is `delete.rs`.
 
 use super::*;
 

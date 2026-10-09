@@ -22,6 +22,8 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+use crate::protocol::redact;
+
 pub type Body = BoxBody<Bytes, std::io::Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -59,11 +61,6 @@ impl ClientError {
 
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
-
-/// The URL without its query string: safe to log.
-pub fn redact(url: &str) -> String {
-    url.split('?').next().unwrap_or(url).to_owned()
-}
 
 pub fn full(bytes: impl Into<Bytes>) -> Body {
     Full::new(bytes.into()).map_err(|never| match never {}).boxed()
@@ -112,7 +109,7 @@ fn config_with(
 ) -> Result<Arc<rustls::ClientConfig>, rustls::Error> {
     let versions: &[&rustls::SupportedProtocolVersion] =
         if tls13_only { &[&rustls::version::TLS13] } else { rustls::DEFAULT_VERSIONS };
-    let builder = rustls::ClientConfig::builder_with_provider(crate::api::tls::provider())
+    let builder = rustls::ClientConfig::builder_with_provider(crate::tls::provider())
         .with_protocol_versions(versions)?
         .with_root_certificates(store);
     let mut config = match identity {
@@ -144,7 +141,7 @@ pub fn public_tls() -> Result<Arc<rustls::ClientConfig>, String> {
 /// advises for a system's store, rather than failing every transfer; the fleet CA, one root that
 /// must parse, keeps the strict `tls_config`.
 fn bundle_tls(bundle: &Path) -> Result<Arc<rustls::ClientConfig>, String> {
-    let certs = crate::api::tls::load_certs(bundle).map_err(|e| e.to_string())?;
+    let certs = crate::tls::load_certs(bundle).map_err(|e| e.to_string())?;
     let mut store = rustls::RootCertStore::empty();
     let (added, ignored) = store.add_parsable_certificates(certs);
     if added == 0 {
@@ -271,14 +268,6 @@ impl JsonError {
 mod tests {
     use super::*;
 
-    #[test]
-    fn signatures_never_reach_a_log() {
-        assert_eq!(
-            redact("https://r2.example/archives/a.tar.gz?X-Amz-Signature=secret&X-Amz-Credential=key"),
-            "https://r2.example/archives/a.tar.gz"
-        );
-    }
-
     /// A server that reads one request and answers every connection with `answer`, raw, then
     /// writes nothing more: it closes the connection if `close`, and otherwise holds it open.
     async fn answering(answer: &'static [u8], close: bool) -> String {
@@ -336,7 +325,7 @@ mod tests {
         let good = crate::certs::authority("a public CA").unwrap().pem;
         std::fs::write(&bundle, format!("{broken}{good}")).unwrap();
         bundle_tls(&bundle).expect("the root that parses is trusted");
-        let roots = crate::api::tls::load_certs(&bundle).unwrap();
+        let roots = crate::tls::load_certs(&bundle).unwrap();
         assert!(tls_config(roots, None, true).is_err(), "a fleet CA that doesn't parse is still refused");
         std::fs::write(&bundle, broken).unwrap();
         let none = bundle_tls(&bundle).unwrap_err();

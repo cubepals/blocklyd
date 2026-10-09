@@ -108,14 +108,16 @@ development uses.
 |---|---|
 | `main.rs` | CLI, startup (enroll, reconcile, then serve), shutdown |
 | `manager.rs` | every operation, the per-workload lock, epochs, restarts and resumes, the lease, snapshots |
-| `api/` | the HTTP API, mutual TLS, errors |
-| `fleet/` | enrollment, heartbeats, identity and renewal, the small HTTPS client |
-| `runtime/` | the container runtime (Docker, and a fake for tests) |
+| `api.rs` | the HTTP API, mutual TLS, errors |
+| `fleet.rs` | enrollment, heartbeats, identity and renewal |
+| `upgrade.rs` | upgrading itself to the control plane's blocklyd, and going back if it fails |
+| `runtime.rs` | the container runtime (Docker, and a fake for tests) |
 | `store.rs` | the state directory: records, snapshots, trash |
-| `tree.rs`, `transfer.rs` | the safe walk, copies (reflink), archives |
+| `tree.rs`, `tarball.rs` | the safe walk, copies (reflink), archives |
 | `reconcile.rs` | the Docker event stream and periodic passes |
 | `protocol.rs`, `ids.rs` | the wire types and identifiers |
-| `config.rs`, `host.rs`, `ports.rs`, `metrics.rs`, `certs.rs` | the rest |
+| `http_client.rs`, `tls.rs` | the small HTTPS client, certificates and keys |
+| `config.rs`, `host.rs`, `ports.rs`, `metrics.rs`, `certs.rs`, `labels.rs`, `clock.rs` | the rest |
 
 Where a comment or a message names `docs/fleet.md`, `docs/fleet-operations.md` or
 `bun scripts/fleet.ts`, it means [Cubepals'](https://github.com/cubepals/cubepals): the fleet's

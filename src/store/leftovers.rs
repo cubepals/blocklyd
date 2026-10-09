@@ -126,7 +126,7 @@ mod tests {
             created_at: "2026-10-01T00:00:00Z".into(),
             size_bytes: 1,
             files: 1,
-            method: crate::tree::Method::Copy,
+            method: crate::protocol::Method::Copy,
             quiesced: false,
             spec_digest: "sha256:x".into(),
             duration_ms: 1,

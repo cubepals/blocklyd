@@ -21,11 +21,11 @@ use anyhow::{Context, bail};
 use hyper::Method;
 use tracing::{info, warn};
 
-use super::client::{self, JsonError};
 use super::identity::{Identity, IdentityFile, same_certificates};
-use super::wire::{EnrollRequest, EnrollResponse, NodeFacts};
-use crate::api::tls::load_certs;
 use crate::config::{Config, FleetConfig};
+use crate::http_client::{self as client, JsonError};
+use crate::protocol::wire::{EnrollRequest, EnrollResponse, NodeFacts};
+use crate::tls::load_certs;
 
 /// The node's identity: the one on disk, or a new one from enrollment. Retries while the
 /// control plane can't be reached (a host is often up before it is); gives up on a refusal.
@@ -113,7 +113,7 @@ pub async fn ensure_identity(config: &Config, fleet: &FleetConfig, facts: NodeFa
         deployment_id: response.deployment_id.clone(),
         control_plane: fleet.url.clone(),
         allowed_clients: response.allowed_clients.clone(),
-        enrolled_at: crate::runtime::format_time(crate::manager::now()),
+        enrolled_at: crate::runtime::format_time(crate::clock::now()),
         generation: 0,
     };
     let identity = Identity::save(

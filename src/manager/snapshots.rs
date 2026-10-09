@@ -56,7 +56,7 @@ impl Manager {
         // free, copies could pile up on a node near its floor and need that space later.
         let need = {
             let data = data.clone();
-            tokio::task::spawn_blocking(move || crate::transfer::tree_bytes(&data)).await.unwrap_or(0)
+            tokio::task::spawn_blocking(move || crate::tarball::tree_bytes(&data)).await.unwrap_or(0)
         };
         self.admit_disk(need, "a snapshot")?;
         let into = self.store.prepare_snapshot(id, &request.id)?;

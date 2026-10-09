@@ -12,7 +12,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::{ExitInfo, Issue, ProtocolVersions, WorkloadState};
+use super::{ExitInfo, Issue, ProtocolVersions, WorkloadState};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
