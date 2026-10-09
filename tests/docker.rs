@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
-use blocklyd::manager::{Manager, NodeError, Precondition};
+use blocklyd::manager::{Manager, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, EnsureOutcome, ExecRequest, WorkloadSpec, WorkloadState};
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::runtime::docker::DockerRuntime;
@@ -122,7 +122,7 @@ async fn lifecycle_hardening_and_graceful_stop() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let m = daemon(dir.path(), &dep);
-    assert!(m.reconcile(true).await.error.is_none());
+    assert!(m.reconcile(Records::FromDisk).await.error.is_none());
 
     let made = m.ensure(id("w"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
     assert_eq!(made.outcome, EnsureOutcome::Created);
@@ -175,7 +175,7 @@ async fn crashes_restart_by_policy_then_stay_crashed() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let m = daemon(dir.path(), &dep);
-    m.reconcile(true).await;
+    m.reconcile(Records::FromDisk).await;
     // Fails three seconds in, every time: the host retries twice, then gives up.
     m.ensure(id("c"), shell("echo up; sleep 3; echo failing; exit 3", 256), Precondition::None, None).await.unwrap();
     m.start(id("c"), None).await.unwrap();
@@ -197,7 +197,7 @@ async fn the_memory_limit_is_hard_and_an_oom_kill_is_reported() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let m = daemon(dir.path(), &dep);
-    m.reconcile(true).await;
+    m.reconcile(Records::FromDisk).await;
     let mut spec = shell("sleep 1; head -c 400m /dev/zero | tail > /dev/null; sleep 60", 64);
     spec.restart.max_retries = 0;
     m.ensure(id("oom"), spec, Precondition::None, None).await.unwrap();
@@ -242,7 +242,7 @@ async fn an_exec_past_its_timeout_is_killed_inside_the_container() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let m = daemon(dir.path(), &dep);
-    m.reconcile(true).await;
+    m.reconcile(Records::FromDisk).await;
     m.ensure(id("e"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
     m.start(id("e"), None).await.unwrap();
     let started = Instant::now();
@@ -282,7 +282,7 @@ async fn a_short_exec_timeout_kills_the_exec_and_leaves_the_workload_running() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let m = daemon(dir.path(), &dep);
-    m.reconcile(true).await;
+    m.reconcile(Records::FromDisk).await;
     m.ensure(id("s"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
     m.start(id("s"), None).await.unwrap();
     let before = m.view(&id("s")).unwrap();
@@ -306,14 +306,14 @@ async fn a_restarted_daemon_adopts_running_workloads_without_touching_them() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let first = daemon(dir.path(), &dep);
-    first.reconcile(true).await;
+    first.reconcile(Records::FromDisk).await;
     first.ensure(id("r"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
     first.start(id("r"), None).await.unwrap();
     let before = first.view(&id("r")).unwrap();
     drop(first);
 
     let second = daemon(dir.path(), &dep);
-    let report = second.reconcile(true).await;
+    let report = second.reconcile(Records::FromDisk).await;
     assert!(report.error.is_none());
     let after = second.view(&id("r")).unwrap();
     assert_eq!(after.state, WorkloadState::Running);
@@ -330,7 +330,7 @@ async fn workloads_cannot_reach_each_other() {
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
     let m = daemon(dir.path(), &dep);
-    m.reconcile(true).await;
+    m.reconcile(Records::FromDisk).await;
     m.ensure(id("a"), shell("nc -lk -p 8080 -e echo hi & while true; do sleep 1; done", 256), Precondition::None, None)
         .await
         .unwrap();
@@ -380,7 +380,7 @@ async fn a_port_another_process_holds_is_skipped() {
         "deployment_id = \"{dep}\"\n[network]\nport_range = [48000, 48010]\nport_quarantine_seconds = 0\n{HOST_OWNERSHIP}"
     );
     let m = manager_probed(dir.path(), docker(), &text, probe);
-    m.reconcile(true).await;
+    m.reconcile(Records::FromDisk).await;
     let made = m.ensure(id("p"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
     assert_eq!(made.workload.ports[0].host_port, 48001, "48000 is someone else's");
     assert!(m.start(id("p"), None).await.unwrap().changed);
@@ -396,7 +396,7 @@ async fn with_docker_gone_the_daemon_answers_and_says_why() {
     let _cleanup = Cleanup(dep.clone());
     let missing = Arc::new(DockerRuntime::new(std::path::Path::new("/nonexistent/docker.sock")).unwrap());
     let m = manager_on(dir.path(), missing, &extra(&dep));
-    let report = m.reconcile(true).await;
+    let report = m.reconcile(Records::FromDisk).await;
     assert!(report.error.is_some());
     assert_eq!(m.health().await.status, "degraded");
     let started = Instant::now();

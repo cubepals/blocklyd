@@ -47,15 +47,26 @@ pub fn authority(name: &str) -> anyhow::Result<Authority> {
     Ok(Authority { pem: cert.pem(), issuer: Issuer::new(params, key) })
 }
 
-/// A leaf certificate: `server` for a node (serverAuth), otherwise a client (clientAuth).
-pub fn leaf(ca: &Authority, dns: &[String], ips: &[IpAddr], server: bool) -> anyhow::Result<(String, String)> {
+/// What a leaf certificate authenticates.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    /// A node (serverAuth).
+    Server,
+    /// A client (clientAuth).
+    Client,
+}
+
+/// A leaf certificate for `role`.
+pub fn leaf(ca: &Authority, dns: &[String], ips: &[IpAddr], role: Role) -> anyhow::Result<(String, String)> {
     let key = KeyPair::generate()?;
     let mut params = CertificateParams::new(dns.to_vec())?;
     for ip in ips {
         params.subject_alt_names.push(SanType::IpAddress(*ip));
     }
-    params.extended_key_usages =
-        vec![if server { ExtendedKeyUsagePurpose::ServerAuth } else { ExtendedKeyUsagePurpose::ClientAuth }];
+    params.extended_key_usages = vec![match role {
+        Role::Server => ExtendedKeyUsagePurpose::ServerAuth,
+        Role::Client => ExtendedKeyUsagePurpose::ClientAuth,
+    }];
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, dns.first().cloned().unwrap_or_else(|| "blockly".into()));
@@ -79,12 +90,12 @@ pub fn generate(
     fs::create_dir_all(out)?;
     let ca = authority("Blockly fleet dev CA (throwaway)")?;
     for name in extra_clients {
-        let (cert, key) = leaf(&ca, std::slice::from_ref(name), &[], false)?;
+        let (cert, key) = leaf(&ca, std::slice::from_ref(name), &[], Role::Client)?;
         write(&out.join(format!("client-{name}.pem")), &cert, 0o644)?;
         write(&out.join(format!("client-{name}.key")), &key, 0o600)?;
     }
-    let (node_cert, node_key) = leaf(&ca, node_dns, node_ips, true)?;
-    let (client_cert, client_key) = leaf(&ca, &[client.to_owned()], &[], false)?;
+    let (node_cert, node_key) = leaf(&ca, node_dns, node_ips, Role::Server)?;
+    let (client_cert, client_key) = leaf(&ca, &[client.to_owned()], &[], Role::Client)?;
     let paths = DevCerts {
         ca_cert: out.join("ca.pem"),
         node_cert: out.join("node.pem"),

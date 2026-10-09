@@ -66,7 +66,7 @@ impl Manager {
         }
         let Ok(Some(info)) = self.observe(&record).await else { return Restart::Done };
         // Still failed, and not a requested stop (which reads as stopped, not crashed).
-        if derive_state(&record, Some(&info), false, true) != WorkloadState::Crashed {
+        if derive_state(&record, Some(&info), Stopping::NotAsked, Sight::Current) != WorkloadState::Crashed {
             return Restart::Done;
         }
         match self.lease() {
@@ -249,7 +249,7 @@ mod tests {
         let fake = Arc::new(FakeRuntime::new());
         let store = Store::open(&config.state_dir).unwrap();
         let m = Manager::new(Arc::new(config), fake.clone(), store, Arc::new(Metrics::new()), Arc::new(|_, _| true));
-        assert!(m.reconcile(true).await.error.is_none());
+        assert!(m.reconcile(Records::FromDisk).await.error.is_none());
         let spec = serde_json::from_value(serde_json::json!({
             "image": "alpine:3.22",
             "resources": { "memoryMb": 1024 },

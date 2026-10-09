@@ -7,12 +7,8 @@ use super::*;
 
 impl Manager {
     pub(super) fn state_of(&self, record: &WorkloadRecord, info: Option<&ContainerInfo>) -> WorkloadState {
-        let stopping = self.state.lock().unwrap().stopping.contains(&record.id);
-        pending_restart(
-            &self.state.lock().unwrap(),
-            &record.id,
-            derive_state(record, info, stopping, self.trustworthy()),
-        )
+        let state = self.state.lock().unwrap();
+        pending_restart(&state, &record.id, derive_state(record, info, state.stopping(&record.id), self.sight()))
     }
 
     // ─── views ─────────────────────────────────────────────────────────────────────────────
@@ -21,19 +17,12 @@ impl Manager {
         let state = self.state.lock().unwrap();
         let record = state.records.get(id).ok_or_else(|| NodeError::NotFound(id.clone()))?;
         let info = state.observed.get(id).and_then(|o| o.info.as_ref());
-        let stopping = state.stopping.contains(id);
-        Ok(self.build_view(&state, record, info, stopping))
+        Ok(self.build_view(&state, record, info))
     }
 
-    fn build_view(
-        &self,
-        state: &State,
-        record: &WorkloadRecord,
-        info: Option<&ContainerInfo>,
-        stopping: bool,
-    ) -> WorkloadView {
+    fn build_view(&self, state: &State, record: &WorkloadRecord, info: Option<&ContainerInfo>) -> WorkloadView {
         let workload_state =
-            pending_restart(state, &record.id, derive_state(record, info, stopping, self.trustworthy()));
+            pending_restart(state, &record.id, derive_state(record, info, state.stopping(&record.id), self.sight()));
         let exit = info
             .filter(|i| matches!(i.status, ContainerStatus::Exited | ContainerStatus::Dead))
             .map(|i| ExitInfo { code: i.exit_code, oom_killed: i.oom_killed, at: i.finished_at.map(format_time) });
@@ -121,7 +110,7 @@ impl Manager {
             .values()
             .map(|r| {
                 let info = state.observed.get(&r.id).and_then(|o| o.info.as_ref());
-                self.build_view(&state, r, info, state.stopping.contains(&r.id))
+                self.build_view(&state, r, info)
             })
             .filter(|v| match since {
                 None => true,
@@ -138,7 +127,7 @@ impl Manager {
         let mut counts: BTreeMap<WorkloadState, u64> = WorkloadState::ALL.iter().map(|s| (*s, 0)).collect();
         for r in state.records.values() {
             let info = state.observed.get(&r.id).and_then(|o| o.info.as_ref());
-            let derived = derive_state(r, info, state.stopping.contains(&r.id), self.trustworthy());
+            let derived = derive_state(r, info, state.stopping(&r.id), self.sight());
             *counts.entry(pending_restart(&state, &r.id, derived)).or_default() += 1;
         }
         counts

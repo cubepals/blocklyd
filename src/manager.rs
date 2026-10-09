@@ -96,7 +96,8 @@ pub use error::{EpochRule, NodeError, check_epoch};
 pub use label_record::LabelRecord;
 pub use logs::lines_of;
 pub use node::WorkloadSample;
-pub use workload_state::derive_state;
+pub use reconcile::Records;
+pub use workload_state::{Sight, Stopping, derive_state};
 use workload_state::{clean_exit, derive_power_state};
 
 fn now_str() -> String {
@@ -127,6 +128,12 @@ struct StatsSample {
     at: Instant,
     raw: RawStats,
     cores: Option<f64>,
+}
+
+impl State {
+    fn stopping(&self, id: &WorkloadId) -> Stopping {
+        if self.stopping.contains(id) { Stopping::Underway } else { Stopping::NotAsked }
+    }
 }
 
 impl StatsSample {
@@ -336,6 +343,11 @@ impl Manager {
         self.docker_up() && self.reconciled()
     }
 
+    /// `trustworthy`, as a state is derived with it.
+    fn sight(&self) -> Sight {
+        if self.trustworthy() { Sight::Current } else { Sight::Stale }
+    }
+
     /// Records whether the runtime answered; every runtime error funnels through here. An
     /// outage also forgets that blocklyd was reconciled: whatever happened while it couldn't
     /// look (a daemon stop kills workloads) is unknown until a full pass has looked again.
@@ -501,7 +513,7 @@ impl Manager {
             r.superseded_by.is_none()
                 && r.spec.restart.policy == crate::protocol::RestartPolicy::OnFailure
                 && attempt < r.spec.restart.max_retries
-                && derive_power_state(r, info.as_ref(), false, true) == WorkloadState::Crashed
+                && derive_power_state(r, info.as_ref(), Stopping::NotAsked, Sight::Current) == WorkloadState::Crashed
         });
         state.observed.insert(id.clone(), Observed { info, era });
         if was_running && failed && restartable {

@@ -17,6 +17,7 @@ use blocklyd::config::{Config, FleetConfig};
 use blocklyd::fleet::enroll::ensure_identity;
 use blocklyd::fleet::heartbeat;
 use blocklyd::fleet::identity::{Credentials, Identity, IdentityFile};
+use blocklyd::manager::Records;
 use blocklyd::protocol::wire::{
     EnrollRequest, EnrollResponse, HeartbeatResponse, NodeCapacity, NodeFacts, RenewRequest, RenewResponse,
 };
@@ -371,7 +372,7 @@ impl Node {
         let (api, certificate) = blocklyd::api::tls::reloadable_server_config(&identity.server_tls().unwrap()).unwrap();
         let credentials = Credentials::new(identity, certificate).unwrap();
         let manager = support::manager_on(self.dir.path(), Arc::new(FakeRuntime::new()), "");
-        manager.reconcile(true).await;
+        manager.reconcile(Records::FromDisk).await;
         let stop = CancellationToken::new();
         let upgrader = Arc::new(Upgrader::new(&self.config.state_dir, &cp.url, Arc::default(), stop.clone()));
         tokio::spawn(heartbeat::run(manager, credentials.clone(), upgrader, cp.url.clone(), 1, stop.clone()));

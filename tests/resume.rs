@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use blocklyd::config::FleetConfig;
-use blocklyd::manager::{Manager, Precondition};
+use blocklyd::manager::{Manager, Precondition, Records};
 use blocklyd::metrics::Metrics;
 use blocklyd::protocol::WorkloadState;
 use blocklyd::runtime::fake::FakeRuntime;
@@ -43,7 +43,7 @@ async fn running_then_host_down(fleet: bool) -> (tempfile::TempDir, Arc<FakeRunt
     let dir = tempfile::tempdir().unwrap();
     let fake = Arc::new(FakeRuntime::new());
     let first = daemon(dir.path(), &fake, "boot-1", fleet);
-    first.reconcile(true).await;
+    first.reconcile(Records::FromDisk).await;
     first.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     first.start(id("w"), Some(1)).await.unwrap();
     fake.crash(NAME, 143, false);
@@ -52,7 +52,7 @@ async fn running_then_host_down(fleet: bool) -> (tempfile::TempDir, Arc<FakeRunt
 
 async fn after_restart(dir: &Path, fake: &Arc<FakeRuntime>, fleet: bool) -> Arc<Manager> {
     let second = daemon(dir, fake, "boot-2", fleet);
-    assert!(second.reconcile(true).await.error.is_none());
+    assert!(second.reconcile(Records::FromDisk).await.error.is_none());
     tokio::spawn(second.clone().restart_supervisor(CancellationToken::new()));
     second
 }
@@ -69,7 +69,7 @@ const QUIET: Duration = Duration::from_secs(1);
 async fn a_workload_the_host_went_down_under_comes_back_by_itself() {
     let (dir, fake) = running_then_host_down(false).await;
     let second = daemon(dir.path(), &fake, "boot-2", false);
-    second.reconcile(true).await;
+    second.reconcile(Records::FromDisk).await;
     assert_eq!(second.view(&id("w")).unwrap().state, WorkloadState::Restarting, "coming back, not stopped");
     tokio::spawn(second.clone().restart_supervisor(CancellationToken::new()));
     until(&second, WorkloadState::Running).await;
@@ -99,7 +99,7 @@ async fn a_node_held_lost_resumes_nothing_now_or_after_the_next_restart() {
     assert_eq!(fake.count_calls("start "), 1);
     // Given up for good: the next restart of the host finds nothing to bring back either.
     let third = daemon(dir.path(), &fake, "boot-3", false);
-    third.reconcile(true).await;
+    third.reconcile(Records::FromDisk).await;
     assert_eq!(third.view(&id("w")).unwrap().state, WorkloadState::Stopped);
 }
 
@@ -139,7 +139,7 @@ async fn what_had_stopped_before_the_host_went_down_stays_stopped() {
     let dir = tempfile::tempdir().unwrap();
     let fake = Arc::new(FakeRuntime::new());
     let first = daemon(dir.path(), &fake, "boot-1", false);
-    first.reconcile(true).await;
+    first.reconcile(Records::FromDisk).await;
     // One stopped on request; one that exited on its own, which blocklyd saw.
     for w in ["asked", "quit"] {
         first.ensure(id(w), spec(), Precondition::None, None).await.unwrap();
@@ -149,7 +149,7 @@ async fn what_had_stopped_before_the_host_went_down_stays_stopped() {
     fake.crash("blockly-test-quit", 0, false);
     first.stats(&id("quit")).await.ok();
     let second = daemon(dir.path(), &fake, "boot-2", false);
-    second.reconcile(true).await;
+    second.reconcile(Records::FromDisk).await;
     tokio::spawn(second.clone().restart_supervisor(CancellationToken::new()));
     tokio::time::sleep(QUIET).await;
     for w in ["asked", "quit"] {
@@ -163,7 +163,7 @@ async fn a_restart_of_blocklyd_alone_is_not_a_restart_of_the_host() {
     let (dir, fake) = running_then_host_down(false).await;
     // The same boot: blocklyd restarted, and found the workload dead with nobody watching.
     let again = daemon(dir.path(), &fake, "boot-1", false);
-    again.reconcile(true).await;
+    again.reconcile(Records::FromDisk).await;
     tokio::spawn(again.clone().restart_supervisor(CancellationToken::new()));
     tokio::time::sleep(QUIET).await;
     assert_eq!(again.view(&id("w")).unwrap().state, WorkloadState::Stopped);

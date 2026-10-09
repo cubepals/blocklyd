@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::put;
-use blocklyd::manager::{NodeError, Precondition};
+use blocklyd::manager::{NodeError, Precondition, Records};
 use blocklyd::protocol::{ExportRequest, RestoreRequest};
 use blocklyd::store::restore::RESTORE_COMPLETE;
 use sha2::Digest;
@@ -162,7 +162,7 @@ async fn a_restore_onto_a_disk_below_its_floor_is_refused_and_changes_nothing() 
     std::fs::write(data.join("world/level.dat"), b"day two").unwrap();
     // The same node, now keeping a floor no disk is above.
     let full = support::manager_on(f.dir.path(), f.fake.clone(), "[capacity]\nmin_free_disk_mb = 1000000000\n");
-    assert!(full.reconcile(true).await.error.is_none());
+    assert!(full.reconcile(Records::FromDisk).await.error.is_none());
     let err = full.restore(id("w"), restore_from(format!("{base}/w.tar.gz"), None), Some(1)).await.unwrap_err();
     assert!(matches!(err, NodeError::InsufficientDisk(_)), "{err:?}");
     assert_eq!(std::fs::read(data.join("world/level.dat")).unwrap(), b"day two", "the data is as it was");

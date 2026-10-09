@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use blocklyd::fleet::heartbeat::heartbeat_report;
-use blocklyd::manager::{NodeError, Precondition};
+use blocklyd::manager::{NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, WorkloadState};
 use blocklyd::store::Phase;
 use support::{fixture, id, spec, spec_with};
@@ -413,7 +413,7 @@ async fn a_follow_ends_when_its_reader_goes_away_however_quiet_the_workload() {
 #[tokio::test]
 async fn while_the_runtime_is_down_nothing_stale_is_passed_off_as_the_state() {
     let f = fixture("").await;
-    f.manager.reconcile(true).await;
+    f.manager.reconcile(Records::FromDisk).await;
     f.manager.ensure(id("w"), spec(), Precondition::None, None).await.unwrap();
     f.manager.start(id("w"), None).await.unwrap();
     assert_eq!(f.manager.view(&id("w")).unwrap().state, WorkloadState::Running);
@@ -425,7 +425,7 @@ async fn while_the_runtime_is_down_nothing_stale_is_passed_off_as_the_state() {
     f.fake.set_available(true);
     f.fake.crash("blockly-test-w", 0, false);
     assert_eq!(f.manager.health().await.status, "degraded", "back, but not looked at yet");
-    f.manager.reconcile(false).await;
+    f.manager.reconcile(Records::InMemory).await;
     assert_eq!(f.manager.health().await.status, "ok");
     assert_eq!(f.manager.view(&id("w")).unwrap().state, WorkloadState::Stopped, "the truth, once it has looked");
 }
@@ -470,7 +470,7 @@ async fn a_workload_found_dead_at_startup_is_not_restarted() {
     f.fake.crash("blockly-test-w", 255, false);
     let restarted = support::manager_on(f.dir.path(), f.fake.clone(), "");
     tokio::spawn(restarted.clone().restart_supervisor(tokio_util::sync::CancellationToken::new()));
-    restarted.reconcile(true).await;
+    restarted.reconcile(Records::FromDisk).await;
     restarted.stats(&id("w")).await.ok();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     let view = restarted.view(&id("w")).unwrap();
@@ -494,7 +494,7 @@ async fn a_restart_of_blocklyd_doesnt_give_a_crash_loop_its_retries_again() {
 
     // blocklyd restarts, in the same boot, and finds the workload running again.
     let again = support::manager_on(f.dir.path(), f.fake.clone(), "");
-    again.reconcile(true).await;
+    again.reconcile(Records::FromDisk).await;
     tokio::spawn(again.clone().restart_supervisor(CancellationToken::new()));
     assert_eq!(again.view(&id("w")).unwrap().restart_count, 1, "remembered");
     let beat = heartbeat_report(&again, "test-node", "session", None, 1).await;
@@ -532,7 +532,7 @@ async fn a_restart_that_wouldnt_fit_is_refused_and_says_why() {
     assert_eq!(f.fake.count_calls("start blockly-test-a"), 1, "only the requested start");
     // The reason stays through reconciliation, until a start that fits, and the control plane is
     // told it with the workload.
-    f.manager.reconcile(false).await;
+    f.manager.reconcile(Records::InMemory).await;
     assert!(f.manager.view(&id("a")).unwrap().issues.iter().any(|i| i.code == "insufficient_capacity"));
     let beat = heartbeat_report(&f.manager, "test-node", "session", None, 1).await;
     let reported = |w: &str| beat.workloads.iter().find(|r| r.id == w).map(|r| r.issues.clone()).unwrap();

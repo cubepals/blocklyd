@@ -16,7 +16,7 @@ use blocklyd::api::tls::ServerCert;
 use blocklyd::api::{self, AppState};
 use blocklyd::config::{Config, FleetConfig, TlsConfig};
 use blocklyd::fleet::identity::{Credentials, Identity};
-use blocklyd::manager::Manager;
+use blocklyd::manager::{Manager, Records};
 use blocklyd::metrics::Metrics;
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::runtime::docker::DockerRuntime;
@@ -311,7 +311,7 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
 
     // Rebuild everything from disk and the runtime before answering anyone. If Docker is down
     // blocklyd still starts, knows its records, and says it is degraded until Docker is back.
-    let report = manager.reconcile(true).await;
+    let report = manager.reconcile(Records::FromDisk).await;
     match &report.error {
         None => info!(
             workloads = report.workloads,

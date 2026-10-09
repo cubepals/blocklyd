@@ -5,6 +5,15 @@
 
 use super::*;
 
+/// Where a reconciliation takes the records from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Records {
+    /// Read again from disk, and what a crash left settled: when blocklyd starts.
+    FromDisk,
+    /// As memory holds them: every pass after the first.
+    InMemory,
+}
+
 impl Manager {
     // ─── reconciliation ────────────────────────────────────────────────────────────────────
 
@@ -12,9 +21,9 @@ impl Manager {
     /// reports whatever doesn't add up. It fixes only its own bookkeeping: a record interrupted
     /// mid-create is completed from its container, a container whose record was lost gets its
     /// record back from its labels. It never starts, stops or deletes a workload.
-    pub async fn reconcile(self: &Arc<Self>, from_disk: bool) -> ReconcileView {
+    pub async fn reconcile(self: &Arc<Self>, from: Records) -> ReconcileView {
         let started = Instant::now();
-        let result = self.reconcile_inner(from_disk).await;
+        let result = self.reconcile_inner(from).await;
         let view = match result {
             Ok((workloads, adopted)) => {
                 self.reconciled.store(true, Ordering::SeqCst);
@@ -48,10 +57,10 @@ impl Manager {
         view
     }
 
-    async fn reconcile_inner(self: &Arc<Self>, from_disk: bool) -> Result<(u64, u64), NodeError> {
+    async fn reconcile_inner(self: &Arc<Self>, from: Records) -> Result<(u64, u64), NodeError> {
         let mut host_issues = Vec::new();
         let mut issues: HashMap<WorkloadId, Vec<Issue>> = HashMap::new();
-        if from_disk {
+        if from == Records::FromDisk {
             let (records, bad) = self.store.load_all()?;
             for b in bad {
                 host_issues.push(Issue::new("unreadable_record", format!("{}: {}", b.path.display(), b.problem)));

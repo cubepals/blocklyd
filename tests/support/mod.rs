@@ -11,7 +11,7 @@ use blocklyd::api::{self, AppState};
 use blocklyd::certs;
 use blocklyd::config::Config;
 use blocklyd::ids::WorkloadId;
-use blocklyd::manager::Manager;
+use blocklyd::manager::{Manager, Records};
 use blocklyd::metrics::Metrics;
 use blocklyd::protocol::{WorkloadSpec, WorkloadView};
 use blocklyd::runtime::ContainerRuntime;
@@ -93,7 +93,7 @@ pub async fn fixture(extra: &str) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let fake = Arc::new(FakeRuntime::new());
     let manager = manager_on(dir.path(), fake.clone(), extra);
-    let report = manager.reconcile(true).await;
+    let report = manager.reconcile(Records::FromDisk).await;
     assert!(report.error.is_none(), "{report:?}");
     Fixture { dir, fake, manager }
 }
@@ -184,7 +184,8 @@ pub fn pki(dir: &Path) -> Pki {
     std::fs::create_dir_all(&tls).unwrap();
     let ca = certs::authority("test CA").unwrap();
     std::fs::write(tls.join("ca.pem"), &ca.pem).unwrap();
-    let (cert, key) = certs::leaf(&ca, &["localhost".into()], &["127.0.0.1".parse().unwrap()], true).unwrap();
+    let (cert, key) =
+        certs::leaf(&ca, &["localhost".into()], &["127.0.0.1".parse().unwrap()], certs::Role::Server).unwrap();
     std::fs::write(tls.join("node.pem"), &cert).unwrap();
     write_key(&tls.join("node.key"), &key);
     Pki { dir: tls, ca }
@@ -204,13 +205,13 @@ pub struct Identity {
 }
 
 pub fn client(ca: &certs::Authority, name: &str) -> Identity {
-    let (cert, key) = certs::leaf(ca, &[name.into()], &[], false).unwrap();
+    let (cert, key) = certs::leaf(ca, &[name.into()], &[], certs::Role::Client).unwrap();
     Identity { cert, key }
 }
 
 /// A server (serverAuth) certificate presented as a client: must be refused.
 pub fn server_cert_as_client(ca: &certs::Authority) -> Identity {
-    let (cert, key) = certs::leaf(ca, &[CLIENT.into()], &[], true).unwrap();
+    let (cert, key) = certs::leaf(ca, &[CLIENT.into()], &[], certs::Role::Server).unwrap();
     Identity { cert, key }
 }
 
