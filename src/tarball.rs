@@ -342,7 +342,7 @@ fn chown_tree(dir: &Path, owner: (u32, u32)) -> io::Result<()> {
 
 /// Bytes a directory holds, for disk admission before an export. Blocking.
 pub fn tree_bytes(dir: &Path) -> u64 {
-    crate::store::disk_usage(dir).unwrap_or(0)
+    crate::tree::disk_usage(dir).unwrap_or(0)
 }
 
 #[cfg(test)]

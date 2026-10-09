@@ -43,7 +43,7 @@ fn world(root: &Path, megabytes: usize) {
 }
 
 fn used(path: &Path) -> u64 {
-    blocklyd::store::disk_usage(path).unwrap_or(0)
+    blocklyd::tree::disk_usage(path).unwrap_or(0)
 }
 
 fn free(path: &Path) -> u64 {

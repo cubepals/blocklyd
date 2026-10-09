@@ -255,7 +255,9 @@ pub fn version_of(bin: &Path) -> Result<String, String> {
     let mut child = spawn();
     for _ in 0..5 {
         match &child {
-            Err(e) if e.raw_os_error() == Some(libc::ETXTBSY) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) if rustix::io::Errno::from_io_error(e) == Some(rustix::io::Errno::TXTBSY) => {
+                std::thread::sleep(Duration::from_millis(50))
+            }
             _ => break,
         }
         child = spawn();
@@ -379,12 +381,7 @@ pub struct Upgrader {
 }
 
 impl Upgrader {
-    pub fn new(
-        state_dir: &Path,
-        control_plane: &str,
-        trial_ended: Arc<AtomicBool>,
-        cancel: CancellationToken,
-    ) -> Arc<Self> {
+    pub fn new(state_dir: &Path, control_plane: &str, trial_ended: Arc<AtomicBool>, cancel: CancellationToken) -> Self {
         let layout = Layout::new(state_dir, Path::new("/"));
         let version = crate::fleet::daemon_version();
         let trial = on_trial(&layout, &version);
@@ -396,7 +393,7 @@ impl Upgrader {
                 "upgraded: on trial until reconciled and a heartbeat is accepted"
             );
         }
-        Arc::new(Upgrader {
+        Upgrader {
             layout,
             control_plane: control_plane.to_owned(),
             version,
@@ -408,7 +405,7 @@ impl Upgrader {
             trial_for: Duration::from_secs(TRIAL_SECONDS),
             trial_ended,
             cancel,
-        })
+        }
     }
 
     /// What heartbeats report: the last upgrade given up on.
@@ -673,7 +670,7 @@ mod tests {
         swap(&layout, &ours).unwrap();
 
         let ended = Arc::new(AtomicBool::new(false));
-        let upgrader = Upgrader::new(&state, "https://control", ended.clone(), CancellationToken::new());
+        let upgrader = Arc::new(Upgrader::new(&state, "https://control", ended.clone(), CancellationToken::new()));
         upgrader.accepted(false);
         assert!(on_trial(&layout, &ours.to).is_some());
         assert!(!ended.load(Ordering::SeqCst));
@@ -689,7 +686,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let ended = Arc::new(AtomicBool::new(false));
         let mut upgrader = Upgrader::new(&state, "https://control", ended.clone(), cancel.clone());
-        Arc::get_mut(&mut upgrader).unwrap().trial_for = Duration::from_millis(10);
+        upgrader.trial_for = Duration::from_millis(10);
+        let upgrader = Arc::new(upgrader);
         upgrader.clone().watch_trial().await;
         assert!(cancel.is_cancelled());
         assert!(!ended.load(Ordering::SeqCst), "the backstop still bounds the stop");

@@ -85,7 +85,7 @@ impl Manager {
         let ids: Vec<WorkloadId> = self.state.lock().unwrap().records.keys().cloned().collect();
         let dirs: Vec<std::path::PathBuf> = ids.iter().map(|id| self.store.snapshots_dir(id)).collect();
         let snapshots = tokio::task::spawn_blocking(move || {
-            dirs.iter().filter(|d| d.exists()).filter_map(|d| crate::store::disk_usage(d).ok()).sum::<u64>()
+            dirs.iter().filter(|d| d.exists()).filter_map(|d| crate::tree::disk_usage(d).ok()).sum::<u64>()
         })
         .await;
         if let Ok(bytes) = snapshots {
@@ -93,7 +93,7 @@ impl Manager {
         }
         for id in ids {
             let dir = self.store.data_dir(&id);
-            let used = tokio::task::spawn_blocking(move || crate::store::disk_usage(&dir)).await;
+            let used = tokio::task::spawn_blocking(move || crate::tree::disk_usage(&dir)).await;
             if let Ok(Ok(bytes)) = used {
                 let mut state = self.state.lock().unwrap();
                 if state.records.contains_key(&id) {

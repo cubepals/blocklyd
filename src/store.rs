@@ -341,14 +341,6 @@ pub struct RestingPort {
     pub released_at_unix: i64,
 }
 
-/// Bytes a directory tree occupies on disk (allocated blocks, not apparent sizes), without
-/// following symlinks or leaving the filesystem. A workload's data can't lead it anywhere else:
-/// it is `tree::disk_usage`, which never opens a directory by path. Blocking: call from
-/// `spawn_blocking`.
-pub fn disk_usage(root: &Path) -> io::Result<u64> {
-    crate::tree::disk_usage(root)
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

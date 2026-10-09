@@ -139,7 +139,7 @@ impl Manager {
         let process = host::process();
         let trash = {
             let dir = self.store.trash_dir();
-            tokio::task::spawn_blocking(move || crate::store::disk_usage(&dir).ok()).await.ok().flatten()
+            tokio::task::spawn_blocking(move || crate::tree::disk_usage(&dir).ok()).await.ok().flatten()
         };
         let (allocated, capacity) = self.ports_usage();
         let host_issues = self.state.lock().unwrap().host_issues.clone();

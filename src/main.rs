@@ -403,7 +403,7 @@ fn start_fleet(
     cancel: &CancellationToken,
 ) -> anyhow::Result<FleetTasks> {
     let credentials = Credentials::new(identity, server_cert).context("the node's identity")?;
-    let upgrader = Upgrader::new(&manager.config.state_dir, &fleet.url, backstop.ended(), cancel.clone());
+    let upgrader = Arc::new(Upgrader::new(&manager.config.state_dir, &fleet.url, backstop.ended(), cancel.clone()));
     let trial = tokio::spawn(upgrader.clone().watch_trial());
     let heartbeat = tokio::spawn(blocklyd::fleet::heartbeat::run(
         manager.clone(),

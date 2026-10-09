@@ -373,7 +373,7 @@ impl Node {
         let manager = support::manager_on(self.dir.path(), Arc::new(FakeRuntime::new()), "");
         manager.reconcile(true).await;
         let stop = CancellationToken::new();
-        let upgrader = Upgrader::new(&self.config.state_dir, &cp.url, Arc::default(), stop.clone());
+        let upgrader = Arc::new(Upgrader::new(&self.config.state_dir, &cp.url, Arc::default(), stop.clone()));
         tokio::spawn(heartbeat::run(manager, credentials.clone(), upgrader, cp.url.clone(), 1, stop.clone()));
         Serving { api, credentials, stop }
     }
