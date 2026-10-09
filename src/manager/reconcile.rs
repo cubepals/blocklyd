@@ -66,7 +66,7 @@ impl Manager {
                 host_issues.push(Issue::new("unreadable_record", format!("{}: {}", b.path.display(), b.problem)));
             }
             // What a crash left is settled before anything uses the data.
-            host_issues.extend(self.settle_leftovers(&records, &mut issues));
+            host_issues.extend(self.settle_leftovers(&records, &mut issues).await);
             let resting = self.store.load_resting_ports();
             let now_unix = now().unix_timestamp();
             let mut state = self.state.lock().unwrap();
@@ -128,7 +128,7 @@ impl Manager {
                     // The container was made; the record just didn't hear back.
                     record.phase = Phase::Active;
                     record.container_id = Some(c.id.clone());
-                    self.save_record(&record)?;
+                    self.save_record(&record).await?;
                     adopted += 1;
                 }
                 (Phase::Creating, None) => issues.entry(record.id.clone()).or_default().push(Issue::new(
@@ -165,7 +165,7 @@ impl Manager {
                     ));
                 }
             }
-            self.remember(&record.id, info);
+            self.remember(&record.id, info).await;
         }
 
         // Containers with no record: rebuilt from their labels, so a lost state directory costs
@@ -199,13 +199,13 @@ impl Manager {
                 updated_at: now_str(),
             };
             self.store.ensure_data_dir(&id, self.config.data_owner_ids())?;
-            self.save_record(&record)?;
+            self.save_record(&record).await?;
             issues.entry(id.clone()).or_default().push(Issue::new(
                 "record_rebuilt",
                 "blocklyd's record was missing and was rebuilt from the container's labels",
             ));
             seen.insert(id.clone());
-            self.remember(&id, Some(c));
+            self.remember(&id, Some(c)).await;
             adopted += 1;
         }
 
@@ -262,16 +262,20 @@ impl Manager {
     /// temp files of record writes (`Store::clear_leftovers`). Each removal is logged. Only from
     /// disk, at startup: under the state directory's lock and before anything is served, so none of
     /// it can be in use. Returns the host's issues: what it left for a human.
-    fn settle_leftovers(&self, records: &[WorkloadRecord], issues: &mut HashMap<WorkloadId, Vec<Issue>>) -> Vec<Issue> {
+    async fn settle_leftovers(
+        &self,
+        records: &[WorkloadRecord],
+        issues: &mut HashMap<WorkloadId, Vec<Issue>>,
+    ) -> Vec<Issue> {
         for r in records {
-            match self.settle_restore(&r.id) {
+            match self.settle_restore(&r.id).await {
                 Ok(Some(issue)) => issues.entry(r.id.clone()).or_default().push(issue),
                 Ok(None) => {}
                 Err(e) => tracing::warn!(workload = %r.id, error = %e, "couldn't settle an interrupted restore"),
             }
         }
-        let ids: Vec<WorkloadId> = records.iter().map(|r| r.id.clone()).collect();
-        let leftovers = self.store.clear_leftovers(&ids);
+        let (store, ids) = (self.store.clone(), records.iter().map(|r| r.id.clone()).collect::<Vec<_>>());
+        let Ok(leftovers) = blocking(move || store.clear_leftovers(&ids)).await else { return Vec::new() };
         for path in &leftovers.removed {
             tracing::warn!(path = %path.display(), "removed what a crash left, which nothing would read");
         }

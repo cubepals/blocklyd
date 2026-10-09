@@ -88,7 +88,7 @@ impl Manager {
             self.set_issue(id, Issue::new("insufficient_capacity", format!("not restarted after a failure: {e}")));
             return Restart::Done;
         }
-        self.count_restart(id, attempt + 1);
+        self.count_restart(id, attempt + 1).await;
         match self.note(self.runtime.start(&record.container_name).await) {
             Ok(()) => {
                 tracing::warn!(workload = %id, attempt = attempt + 1, exit = info.exit_code, "restarted after a failure")
@@ -102,11 +102,11 @@ impl Manager {
     /// Counts a restart after a failure: in memory first, so this run counts it even if the disk
     /// can't take the record, then on disk, so a restart of blocklyd doesn't give a crash loop its
     /// retries again.
-    fn count_restart(&self, id: &WorkloadId, count: u32) {
+    async fn count_restart(&self, id: &WorkloadId, count: u32) {
         if let Some(record) = self.state.lock().unwrap().records.get_mut(id) {
             record.restart_count = count;
         }
-        if let Err(e) = self.write_record(id) {
+        if let Err(e) = self.write_record(id).await {
             tracing::warn!(workload = %id, error = %e, "couldn't record the restart");
         }
     }
@@ -169,7 +169,7 @@ impl Manager {
             Lease::Lapsed => return Restart::Waiting,
             Lease::Revoked => {
                 tracing::warn!(workload = %id, "not resuming: the control plane holds this node lost");
-                self.give_up_resume(&record);
+                self.give_up_resume(&record).await;
                 return Restart::Done;
             }
         }
@@ -187,7 +187,7 @@ impl Manager {
         }
         if let Err(e) = self.admit(id, record.spec.resources.memory_mb as u64) {
             tracing::warn!(workload = %id, error = %e, "not resuming: no room for it now");
-            self.give_up_resume(&record);
+            self.give_up_resume(&record).await;
             return Restart::Done;
         }
         self.state.lock().unwrap().resuming.remove(id);
@@ -201,11 +201,11 @@ impl Manager {
 
     /// A resume that won't happen: forgotten, so a later restart of the host doesn't bring back a
     /// workload that wasn't running before it.
-    fn give_up_resume(&self, record: &WorkloadRecord) {
+    async fn give_up_resume(&self, record: &WorkloadRecord) {
         let mut record = record.clone();
         self.state.lock().unwrap().resuming.remove(&record.id);
         record.running_boot = None;
-        if let Err(e) = self.save_record(&record) {
+        if let Err(e) = self.save_record(&record).await {
             tracing::warn!(workload = %record.id, error = %e, "couldn't record the abandoned resume");
         }
     }

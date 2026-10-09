@@ -37,7 +37,7 @@ impl Manager {
         self.state.lock().unwrap().records.insert(id.clone(), record.clone());
         // Nor does it keep the copy running: it is stopped all the same, and the record that
         // couldn't be written is reported once it is.
-        let mut unrecorded = self.save_record(&record).err();
+        let mut unrecorded = self.save_record(&record).await.err();
         let mut stopped = false;
         if record.phase == Phase::Active
             && let Some(info) = self.observe(&record).await?
@@ -50,7 +50,7 @@ impl Manager {
             if matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused) {
                 record.stop_requested_at = Some(now_str());
                 self.state.lock().unwrap().records.insert(id.clone(), record.clone());
-                if let Err(e) = self.save_record(&record) {
+                if let Err(e) = self.save_record(&record).await {
                     unrecorded.get_or_insert(e);
                 }
                 let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);

@@ -45,7 +45,7 @@ impl Manager {
             // Delete while running: the workload still gets its graceful stop first.
             if matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting) {
                 record.stop_requested_at = Some(now_str());
-                self.save_record(&record)?;
+                self.save_record(&record).await?;
                 let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
                 let stopping = self.mark_stopping(id);
                 let stopped = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
@@ -67,26 +67,30 @@ impl Manager {
             state.stats.remove(id);
             state.issues.remove(id);
         }
-        self.persist_resting_ports();
+        self.persist_resting_ports().await;
         match data {
             DataDisposition::Keep => {
                 record.phase = Phase::Retained;
                 record.container_id = None;
                 record.ports.clear();
                 record.updated_at = now_str();
-                self.save_record(&record)?;
+                self.save_record(&record).await?;
                 Ok(DeleteResponse { existed: true, removed_container, data: DataOutcome::Kept, trash_path: None })
             }
             DataDisposition::Delete => {
                 // In turn with the record's other writes: one waiting for its turn finds no record
                 // left to write, and doesn't bring back the file just trashed.
-                let turn = self.disk_writes.lock().unwrap();
-                let path = self.store.trash(id, now().unix_timestamp())?;
-                let mut state = self.state.lock().unwrap();
-                state.records.remove(id);
-                state.disk.remove(id);
-                drop(state);
-                drop(turn);
+                let (turn, state, store, id2) =
+                    (self.disk_writes.clone(), self.state.clone(), self.store.clone(), id.clone());
+                let path = blocking(move || {
+                    let _turn = turn.lock().unwrap();
+                    let path = store.trash(&id2, now().unix_timestamp())?;
+                    let mut state = state.lock().unwrap();
+                    state.records.remove(&id2);
+                    state.disk.remove(&id2);
+                    Ok::<_, crate::store::StoreError>(path)
+                })
+                .await??;
                 self.locks.lock().unwrap().remove(id);
                 Ok(DeleteResponse {
                     existed: true,

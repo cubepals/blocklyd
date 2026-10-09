@@ -30,7 +30,7 @@
 //! - `fleet.rs`: the node's standing with its control plane.
 //! - `node.rs`: what the node reports about itself as a whole.
 //! - `reconcile.rs`: makes the records agree with what Docker has.
-//! - `persist.rs`: writes a record from memory, in turn with every other write of the state.
+//! - `persist.rs`: writes records and the port quarantine in turn, off the async threads.
 //! - `error.rs`: what an operation fails with, and the epoch check every mutating verb makes.
 //! - `workload_state.rs`: the state a record and its container make together.
 //! - `label_record.rs`: the record as a container's label carries it.
@@ -97,6 +97,7 @@ pub use error::{EpochRule, NodeError, check_epoch};
 pub use label_record::LabelRecord;
 pub use logs::lines_of;
 pub use node::WorkloadSample;
+use persist::blocking;
 pub use reconcile::Records;
 pub use workload_state::{Sight, Stopping, derive_state};
 use workload_state::{clean_exit, derive_power_state};
@@ -189,9 +190,10 @@ pub struct Manager {
     pub runtime: Arc<dyn ContainerRuntime>,
     pub store: Store,
     pub metrics: Arc<Metrics>,
-    state: Mutex<State>,
+    /// Shared with the disk writes, which run on the blocking pool (`persist.rs`).
+    state: Arc<Mutex<State>>,
     /// Records and the port quarantine are written one at a time, newest last (`persist.rs`).
-    disk_writes: Mutex<()>,
+    disk_writes: Arc<Mutex<()>>,
     locks: Mutex<HashMap<WorkloadId, Arc<tokio::sync::Mutex<()>>>>,
     exec_keys: Mutex<IdempotencyCache>,
     pub started_at: OffsetDateTime,
@@ -299,7 +301,7 @@ impl Manager {
         let ports = PortAllocator::new(low..=high, Duration::from_secs(config.network.port_quarantine_seconds), probe);
         let facts = host::facts();
         Arc::new(Self {
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 records: BTreeMap::new(),
                 observed: HashMap::new(),
                 ports,
@@ -314,8 +316,8 @@ impl Manager {
                 uploading: HashSet::new(),
                 snapshot_bytes: None,
                 last_reconcile: None,
-            }),
-            disk_writes: Mutex::new(()),
+            })),
+            disk_writes: Arc::default(),
             locks: Mutex::new(HashMap::new()),
             exec_keys: Mutex::new(IdempotencyCache::default()),
             started_at: now(),
@@ -451,36 +453,6 @@ impl Manager {
         }
     }
 
-    /// Writes the port quarantine to disk, as it is when its turn comes. A failure is logged, not
-    /// fatal: at worst a restart forgets which ports were resting.
-    fn persist_resting_ports(&self) {
-        let _turn = self.disk_writes.lock().unwrap();
-        let now_unix = now().unix_timestamp();
-        let resting: Vec<crate::store::RestingPort> = self
-            .state
-            .lock()
-            .unwrap()
-            .ports
-            .resting()
-            .into_iter()
-            .map(|(protocol, port, ago)| crate::store::RestingPort {
-                protocol,
-                port,
-                released_at_unix: now_unix - ago.as_secs() as i64,
-            })
-            .collect();
-        if let Err(e) = self.store.save_resting_ports(&resting) {
-            tracing::warn!(error = %e, "couldn't persist the port quarantine");
-        }
-    }
-
-    fn save_record(&self, record: &WorkloadRecord) -> Result<(), NodeError> {
-        let _turn = self.disk_writes.lock().unwrap();
-        self.store.save(record)?;
-        self.state.lock().unwrap().records.insert(record.id.clone(), record.clone());
-        Ok(())
-    }
-
     fn record(&self, id: &WorkloadId) -> Result<WorkloadRecord, NodeError> {
         self.state.lock().unwrap().records.get(id).cloned().ok_or_else(|| NodeError::NotFound(id.clone()))
     }
@@ -492,11 +464,20 @@ impl Manager {
     /// Looks at the container now and remembers what it saw.
     async fn observe(&self, record: &WorkloadRecord) -> Result<Option<ContainerInfo>, NodeError> {
         let info = if record.phase == Phase::Retained { None } else { self.inspect(&record.container_name).await? };
-        self.remember(&record.id, info.clone());
+        self.remember(&record.id, info.clone()).await;
         Ok(info)
     }
 
-    fn remember(&self, id: &WorkloadId, info: Option<ContainerInfo>) {
+    async fn remember(&self, id: &WorkloadId, info: Option<ContainerInfo>) {
+        if self.note_observed(id, info)
+            && let Err(e) = self.write_record(id).await
+        {
+            tracing::warn!(workload = %id, error = %e, "couldn't record which boot the workload ran in");
+        }
+    }
+
+    /// What `remember` notes in memory; whether the record's boot changed, which is then written.
+    fn note_observed(&self, id: &WorkloadId, info: Option<ContainerInfo>) -> bool {
         let mut state = self.state.lock().unwrap();
         let era = self.runtime_era.load(Ordering::SeqCst);
         // A failure blocklyd watched happen: it was running at the last look, in this same era,
@@ -549,10 +530,7 @@ impl Manager {
             state.restart_due.insert(id.clone(), Instant::now() + restart_backoff(attempt));
             self.restart_wake.notify_one();
         }
-        drop(state);
-        if boot_changed && let Err(e) = self.write_record(id) {
-            tracing::warn!(workload = %id, error = %e, "couldn't record which boot the workload ran in");
-        }
+        boot_changed
     }
 
     /// Takes a runtime event: a hint to look again, never the truth itself.

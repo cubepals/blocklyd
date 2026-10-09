@@ -59,7 +59,10 @@ impl Manager {
             tokio::task::spawn_blocking(move || crate::tarball::tree_bytes(&data)).await.unwrap_or(0)
         };
         self.admit_disk(need, "a snapshot")?;
-        let into = self.store.prepare_snapshot(id, &request.id)?;
+        let into = {
+            let (store, id, snapshot) = (self.store.clone(), id.clone(), request.id.clone());
+            blocking(move || store.prepare_snapshot(&id, &snapshot)).await??
+        };
         let copied = {
             let (into, beside) = (into.clone(), self.store.snapshot_dir(id, &request.id));
             // Watched as it is written: snapshots of other workloads may be admitted beside it.
@@ -78,7 +81,7 @@ impl Manager {
         let copied = match copied {
             Ok(copied) => copied,
             Err(e) => {
-                let _ = self.store.remove_snapshot(id, &request.id);
+                let _ = self.remove_snapshot(id, &request.id).await;
                 return Err(archive::copy_failed("copying the data", e));
             }
         };
@@ -94,8 +97,12 @@ impl Manager {
             spec_digest: record.spec_digest.clone(),
             duration_ms: started.elapsed().as_millis() as u64,
         };
-        if let Err(e) = self.store.finish_snapshot(&view) {
-            let _ = self.store.remove_snapshot(id, &request.id);
+        let finished = {
+            let (store, view) = (self.store.clone(), view.clone());
+            blocking(move || store.finish_snapshot(&view)).await?
+        };
+        if let Err(e) = finished {
+            let _ = self.remove_snapshot(id, &request.id).await;
             return Err(e.into());
         }
         tracing::info!(
@@ -129,15 +136,18 @@ impl Manager {
                 message: "the snapshot is being uploaded; delete it once that ends".into(),
             });
         }
-        let store = self.store.clone();
-        let (id2, snapshot2) = (id.clone(), snapshot.clone());
-        let existed = tokio::task::spawn_blocking(move || store.remove_snapshot(&id2, &snapshot2))
-            .await
-            .map_err(|e| NodeError::Internal(format!("removing panicked: {e}")))??;
+        let existed = self.remove_snapshot(&id, &snapshot).await?;
         if existed {
             tracing::info!(workload = %id, %snapshot, "snapshot removed");
         }
         Ok(SnapshotDeleteResponse { existed })
+    }
+
+    /// Removes a snapshot's tree, finished or not, off the async threads. Returns whether there was
+    /// one.
+    async fn remove_snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Result<bool, NodeError> {
+        let (store, id, snapshot) = (self.store.clone(), id.clone(), snapshot.clone());
+        Ok(blocking(move || store.remove_snapshot(&id, &snapshot)).await??)
     }
 
     /// A snapshot as a gzip tarball, PUT to a presigned URL. It doesn't hold the workload's lock:

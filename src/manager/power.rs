@@ -49,7 +49,7 @@ impl Manager {
         record.restart_count = 0;
         record.stop_requested_at = None;
         record.updated_at = now_str();
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(id, e))?;
         self.state.lock().unwrap().last_failure.remove(id);
         self.clear_issue(id, "insufficient_capacity");
@@ -110,7 +110,7 @@ impl Manager {
         // Persisted before the signal, so the exit reads as a stop even if blocklyd dies now.
         record.stop_requested_at = Some(now_str());
         record.updated_at = now_str();
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         let result = if kill {
             self.runtime.kill(&record.container_name).await
         } else {

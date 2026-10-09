@@ -60,7 +60,7 @@ impl Manager {
                         .as_ref()
                         .is_some_and(|i| i.labels.get(LABEL_DIGEST) == Some(&digest) && secrets_match(i, &spec));
                 if same {
-                    self.remember(id, info);
+                    self.remember(id, info).await;
                     return Ok(EnsureResponse {
                         outcome: EnsureOutcome::Unchanged,
                         restarted: false,
@@ -239,7 +239,7 @@ impl Manager {
             undo(self);
             return Err(e);
         }
-        if let Err(e) = self.save_record(&record) {
+        if let Err(e) = self.save_record(&record).await {
             undo(self);
             return Err(e);
         }
@@ -248,7 +248,7 @@ impl Manager {
                 record.container_id = Some(container_id);
                 record.phase = Phase::Active;
                 record.updated_at = now_str();
-                self.save_record(&record)?;
+                self.save_record(&record).await?;
                 self.observe(&record).await?;
                 Ok(EnsureResponse { outcome: EnsureOutcome::Created, restarted: false, workload: self.view(id)? })
             }
@@ -285,7 +285,7 @@ impl Manager {
         self.note(self.runtime.ensure_image(&spec.image, pull).await)?;
         let old_ports = record.ports.clone();
         let ports = self.allocate_ports(&id, &spec, &old_ports)?;
-        self.persist_resting_ports();
+        self.persist_resting_ports().await;
         if info.is_some() {
             if was_running {
                 let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
@@ -312,10 +312,10 @@ impl Manager {
         // A new generation begins a new run: the old one's failures don't use up its retries.
         record.restart_count = 0;
         record.updated_at = now_str();
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         let container_id = self.make_container(&record, &spec).await?;
         record.container_id = Some(container_id);
-        self.save_record(&record)?;
+        self.save_record(&record).await?;
         if was_running {
             self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(&id, e))?;
         }

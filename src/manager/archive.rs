@@ -174,7 +174,7 @@ impl Manager {
         }
         let restoring = self.store.restoring_dir(id);
         // What an earlier restore left unfinished is settled first, as a start would settle it.
-        self.settle_restore(id)?;
+        self.settle_restore(id).await?;
         let owner = self.config.data_owner_ids();
         let made = match (&request.url, &request.snapshot) {
             (Some(url), _) => self.unpack_from(id, url, request.sha256.as_deref(), &restoring, owner).await,
@@ -184,16 +184,20 @@ impl Manager {
         let made = match made {
             Ok(made) => made,
             Err(e) => {
-                let _ = std::fs::remove_dir_all(&restoring);
+                let _ = blocking(move || std::fs::remove_dir_all(&restoring)).await;
                 return Err(e);
             }
         };
-        let previous = match self.store.swap_in_restored(id, now().unix_timestamp()) {
+        let swapped = {
+            let (store, id) = (self.store.clone(), id.clone());
+            blocking(move || store.swap_in_restored(&id, now().unix_timestamp())).await?
+        };
+        let previous = match swapped {
             Ok(previous) => previous,
             Err(e) => {
                 // Settled as a crash here would be at the next start: the old data or the new is
                 // in place, whole.
-                let _ = self.settle_restore(id);
+                let _ = self.settle_restore(id).await;
                 return Err(e.into());
             }
         };
@@ -209,8 +213,9 @@ impl Manager {
     /// Settles what a restore left on disk when it didn't finish (`Store::recover_restore`), and
     /// says so. Returns the issue to report when that put the restored data in place: whoever asked
     /// for the restore may not have heard that it succeeded.
-    pub(super) fn settle_restore(&self, id: &WorkloadId) -> Result<Option<Issue>, NodeError> {
-        match self.store.recover_restore(id, now().unix_timestamp())? {
+    pub(super) async fn settle_restore(&self, id: &WorkloadId) -> Result<Option<Issue>, NodeError> {
+        let (store, of) = (self.store.clone(), id.clone());
+        match blocking(move || store.recover_restore(&of, now().unix_timestamp())).await?? {
             Recovery::None => Ok(None),
             Recovery::Finished { previous } => {
                 tracing::warn!(workload = %id, ?previous, "finished an interrupted restore: the restored data is in place");
