@@ -70,7 +70,7 @@ jobs:
             docker cp "$id:/$f" "dist/$(basename "$f")"
           done
           docker rm "$id" > /dev/null
-          (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
       - name: Push the image
         if: steps.version.outputs.new == 'true'
         id: push
