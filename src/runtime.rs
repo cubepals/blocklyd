@@ -7,6 +7,7 @@
 //! - `fake.rs`: an in-memory runtime for tests, with the Docker behaviour blocklyd depends on.
 
 pub mod docker;
+#[cfg(any(test, feature = "fake"))]
 pub mod fake;
 
 use std::collections::BTreeMap;

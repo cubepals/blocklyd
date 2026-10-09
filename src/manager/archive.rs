@@ -106,7 +106,7 @@ impl Manager {
         };
         let limit = self.config.transfer.max_put_bytes();
         if let (Some(parts), true) = (parts, packed.size_bytes > limit) {
-            let put = put_parts(&spool, packed.size_bytes, parts).await?;
+            let put = put_parts(&spool, packed.size_bytes, parts, self.config.transfer.idle()).await?;
             return Ok((packed, Some(put)));
         }
         one_put(packed.size_bytes, limit)?;
@@ -272,7 +272,7 @@ impl Manager {
         let mut watch = self.floor_watch();
         // A body that stops coming never ends by itself, and this holds the workload's lock: it
         // fails once nothing arrives for a while, or once nobody is waiting for it any more.
-        let idle = crate::tarball::download_idle();
+        let idle = self.config.transfer.idle();
         let deadline = tokio::time::Instant::now() + crate::tarball::DOWNLOAD_LIMIT;
         let stalled = |_| {
             let why = if tokio::time::Instant::now() < deadline {
@@ -388,7 +388,12 @@ const PART_TRIES: u32 = 3;
 /// archive are refused before anything is sent, as one PUT too small is. A part the store failed
 /// to take (a dropped connection, a 5xx) is sent again; one it refused fails the archive, and the
 /// control plane drops the upload.
-async fn put_parts(spool: &std::path::Path, size: u64, parts: &PartsTarget) -> Result<Vec<PutPart>, NodeError> {
+async fn put_parts(
+    spool: &std::path::Path,
+    size: u64,
+    parts: &PartsTarget,
+    idle: Duration,
+) -> Result<Vec<PutPart>, NodeError> {
     let needed = crate::tarball::parts_needed(size, parts.part_size);
     if needed > parts.urls.len() as u64 {
         return Err(NodeError::ArchiveTooLarge { size_bytes: size, limit_bytes: parts.capacity() });
@@ -402,7 +407,7 @@ async fn put_parts(spool: &std::path::Path, size: u64, parts: &PartsTarget) -> R
         let mut tries = 0;
         let etag = loop {
             tries += 1;
-            match put_part(spool, url, &parts.headers, offset, length, tls.clone()).await {
+            match put_part(spool, url, &parts.headers, offset, length, tls.clone(), idle).await {
                 Ok(etag) => break etag,
                 Err((message, transient)) if transient && tries < PART_TRIES => {
                     tracing::warn!(part = number, of = needed, error = %message, "sending a part again");
@@ -427,6 +432,7 @@ async fn put_part(
     offset: u64,
     length: u64,
     tls: Option<Arc<rustls::ClientConfig>>,
+    idle: Duration,
 ) -> Result<String, (String, bool)> {
     let body = crate::http_client::file_range_body(spool, offset, length)
         .await
@@ -441,7 +447,6 @@ async fn put_part(
     let etag = response.headers().get(hyper::header::ETAG).and_then(|v| v.to_str().ok()).map(str::to_owned);
     // A few bytes, but a store that stops sending them would hold the export forever: a stall is
     // a part the store failed to take, and it is sent again like one.
-    let idle = crate::tarball::download_idle();
     let text = tokio::time::timeout(idle, crate::http_client::read_body(response, 4096))
         .await
         .map_err(|_| (format!("the store's answer stopped: nothing arrived for {idle:?}"), true))?

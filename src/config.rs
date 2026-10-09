@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Deserialize;
 
@@ -291,6 +292,11 @@ pub struct TransferConfig {
     /// offers them. The default is R2's limit for one PUT, the strictest of the stores Blockly
     /// uses; a store whose limit is lower sets it lower.
     pub max_put_mb: u64,
+    /// How long a transfer may go without receiving anything before it counts as stalled: a
+    /// store that hung mid-body, or a path that drops packets without a reset, never ends a body
+    /// by itself. Whatever arrives starts it over, so a slow but live download of any size never
+    /// trips it.
+    pub idle_seconds: u64,
 }
 
 const MIB: u64 = 1024 * 1024;
@@ -300,13 +306,17 @@ const MAX_PUT_MB: u64 = crate::protocol::MAX_SINGLE_PUT_BYTES / MIB;
 
 impl Default for TransferConfig {
     fn default() -> Self {
-        Self { max_put_mb: MAX_PUT_MB }
+        Self { max_put_mb: MAX_PUT_MB, idle_seconds: 120 }
     }
 }
 
 impl TransferConfig {
     pub fn max_put_bytes(&self) -> u64 {
         self.max_put_mb.saturating_mul(MIB)
+    }
+
+    pub fn idle(&self) -> Duration {
+        Duration::from_secs(self.idle_seconds)
     }
 }
 
@@ -387,6 +397,9 @@ impl Config {
             return bad(format!(
                 "transfer.max_put_mb is the most one PUT carries, 1 to {MAX_PUT_MB}: no store takes more"
             ));
+        }
+        if self.transfer.idle_seconds == 0 {
+            return bad("transfer.idle_seconds is at least 1".into());
         }
         match &self.fleet {
             None => {

@@ -21,7 +21,6 @@ use std::io::{self, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use flate2::Compression;
@@ -42,22 +41,6 @@ const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 /// The longest one download's body may take, however steadily it comes: the control plane gives
 /// up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
 pub const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);
-
-static DOWNLOAD_IDLE_MS: AtomicU64 = AtomicU64::new(120_000);
-
-/// How long a transfer may go without receiving anything before it counts as stalled: a store
-/// that hung mid-body, or a path that drops packets without a reset, never ends a body by itself.
-/// Whatever arrives starts it over, so a slow but live download of any size never trips it.
-pub fn download_idle() -> Duration {
-    Duration::from_millis(DOWNLOAD_IDLE_MS.load(Ordering::Relaxed))
-}
-
-/// Shortens `download_idle` for the whole process, so a test sees a stall end without waiting two
-/// minutes. Nothing else calls it.
-#[doc(hidden)]
-pub fn set_download_idle(idle: Duration) {
-    DOWNLOAD_IDLE_MS.store(idle.as_millis() as u64, Ordering::Relaxed);
-}
 
 /// The parts an archive of `size` bytes fills, `part_size` each but the last: one at least, so
 /// an empty archive is still an object.

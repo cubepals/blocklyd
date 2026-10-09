@@ -126,8 +126,7 @@ async fn announcing(length: u64) -> String {
 #[tokio::test]
 async fn a_download_that_stops_coming_fails_and_lets_go_of_the_workload() {
     // Two minutes without a byte is a stall on a host; a second is, here.
-    blocklyd::tarball::set_download_idle(std::time::Duration::from_secs(1));
-    let f = fixture("").await;
+    let f = fixture("[transfer]\nidle_seconds = 1\n").await;
     let made = f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     let data = std::path::PathBuf::from(&made.workload.locate.data_dir);
     std::fs::write(data.join("level.dat"), b"mine").unwrap();
@@ -542,8 +541,7 @@ async fn parts_too_few_for_the_archive_are_refused_before_anything_is_sent() {
 
 #[tokio::test]
 async fn a_part_the_store_failed_to_take_is_sent_again() {
-    blocklyd::tarball::set_download_idle(std::time::Duration::from_secs(1));
-    let f = fixture("[transfer]\nmax_put_mb = 1\n").await;
+    let f = fixture("[transfer]\nmax_put_mb = 1\nidle_seconds = 1\n").await;
     // A store that answers the first PUT of part 2 with a 503, then takes it; and whose first
     // answer to part 3 stops after its head, so the node never hears the end of it.
     let held: Objects = Arc::default();

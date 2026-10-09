@@ -67,6 +67,7 @@ disk_usage_seconds = 300
 [transfer]
 max_put_mb = 5115                              # default: R2's limit for one PUT, 5 GiB less 5 MiB;
                                                # a larger archive goes in parts when they're offered
+idle_seconds = 120                             # a transfer that receives nothing this long has stalled
 
 # ─── Fleet mode ──────────────────────────────────────────────────────────────────────────────
 # A node that joins a fleet has no node_id and no [api.tls]: both come from enrollment. Delete
