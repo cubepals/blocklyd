@@ -453,7 +453,7 @@ impl Manager {
         SpecPolicy {
             allowed_images: self.config.workloads.allowed_images.clone(),
             min_memory_mb: self.config.workloads.min_memory_mb,
-            max_memory_mb: self.allocatable_memory_mb().min(u32::MAX as u64) as u32,
+            max_memory_mb: u32::try_from(self.allocatable_memory_mb()).unwrap_or(u32::MAX),
             max_cpu_millis: self.cpus.max(1) * 1000,
         }
     }

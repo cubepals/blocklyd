@@ -43,7 +43,7 @@ pub async fn upgrade(config: &Path, restart: bool) -> anyhow::Result<String> {
     let sha256 = text.split_whitespace().next().filter(|s| s.len() == 64).context("an answer with no sha256")?;
 
     let layout = Layout::new(&config.state_dir, Path::new("/"));
-    let current = crate::fleet::daemon_version();
+    let current = crate::upgrade::daemon_version();
     let installed = if layout.bin.is_file() { &layout.bin } else { &layout.link };
     if fs::read(installed).is_ok_and(|b| hex::encode(Sha256::digest(&b)).eq_ignore_ascii_case(sha256)) {
         return Ok(format!("This is already the control plane's blocklyd ({current}): nothing changed.\n"));

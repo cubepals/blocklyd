@@ -81,7 +81,7 @@ impl Manager {
                                 tx.send(LogRecord::Event { event: "restarted".into(), reason: "new run".into() }).await;
                             options = LogOptions {
                                 tail: None,
-                                since_unix: info.started_at.map(|t| t.unix_timestamp()),
+                                since_unix: info.started_at.map(OffsetDateTime::unix_timestamp),
                                 follow: true,
                             };
                             break;

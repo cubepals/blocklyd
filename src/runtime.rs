@@ -192,7 +192,7 @@ pub enum RuntimeError {
 
 impl RuntimeError {
     pub(crate) fn is_unavailable(&self) -> bool {
-        matches!(self, RuntimeError::Unavailable(_))
+        matches!(self, Self::Unavailable(_))
     }
 }
 

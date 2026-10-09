@@ -24,14 +24,14 @@ use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio_util::sync::CancellationToken;
 
-pub const CLIENT: &str = "control-plane.test.blockly.internal";
+pub(crate) const CLIENT: &str = "control-plane.test.blockly.internal";
 
-pub fn id(s: &str) -> WorkloadId {
+pub(crate) fn id(s: &str) -> WorkloadId {
     WorkloadId::parse(s).unwrap()
 }
 
 /// A config over `dir`, with test-friendly capacity; `extra` is appended TOML.
-pub fn config(dir: &Path, extra: &str) -> Config {
+pub(crate) fn config(dir: &Path, extra: &str) -> Config {
     // Data goes to the test's own user, so these tests run without root. On a host it goes to the
     // workloads' user, never root: tests/docker.rs says so, and checks it, as root. Root may not own
     // a workload's data, so a test run as root gives it to the workloads' user, as a host does.
@@ -82,14 +82,14 @@ fn merge(into: &mut toml::Table, from: toml::Table) {
     }
 }
 
-pub struct Fixture {
+pub(crate) struct Fixture {
     pub dir: tempfile::TempDir,
     pub fake: Arc<FakeRuntime>,
     pub manager: Arc<Manager>,
 }
 
 /// A manager that has reconciled once, as blocklyd does before it serves anyone.
-pub async fn fixture(extra: &str) -> Fixture {
+pub(crate) async fn fixture(extra: &str) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let fake = Arc::new(FakeRuntime::new());
     let manager = manager_on(dir.path(), fake.clone(), extra);
@@ -99,11 +99,11 @@ pub async fn fixture(extra: &str) -> Fixture {
 }
 
 /// A manager over an existing directory and runtime: a "restarted daemon" is another one.
-pub fn manager_on(dir: &Path, runtime: Arc<dyn ContainerRuntime>, extra: &str) -> Arc<Manager> {
+pub(crate) fn manager_on(dir: &Path, runtime: Arc<dyn ContainerRuntime>, extra: &str) -> Arc<Manager> {
     manager_probed(dir, runtime, extra, Arc::new(|_, _| true))
 }
 
-pub fn manager_probed(
+pub(crate) fn manager_probed(
     dir: &Path,
     runtime: Arc<dyn ContainerRuntime>,
     extra: &str,
@@ -114,7 +114,7 @@ pub fn manager_probed(
     Manager::new(config, runtime, store, Arc::new(Metrics::new()), probe)
 }
 
-pub fn spec_json() -> serde_json::Value {
+pub(crate) fn spec_json() -> serde_json::Value {
     serde_json::json!({
         "image": "alpine:3.22",
         "env": { "EULA": "TRUE" },
@@ -130,11 +130,11 @@ pub fn spec_json() -> serde_json::Value {
     })
 }
 
-pub fn spec() -> WorkloadSpec {
+pub(crate) fn spec() -> WorkloadSpec {
     serde_json::from_value(spec_json()).unwrap()
 }
 
-pub fn spec_with(f: impl FnOnce(&mut serde_json::Value)) -> WorkloadSpec {
+pub(crate) fn spec_with(f: impl FnOnce(&mut serde_json::Value)) -> WorkloadSpec {
     let mut v = spec_json();
     f(&mut v);
     serde_json::from_value(v).unwrap()
@@ -145,7 +145,7 @@ pub fn spec_with(f: impl FnOnce(&mut serde_json::Value)) -> WorkloadSpec {
 /// Looks every 25 ms until `look` says what a test waits for has happened, for up to 30 s: time
 /// enough for a slow CI runner. A test that waits in vain fails with what it last saw rather than
 /// hanging. `look` answers whether it has, and what it saw.
-pub async fn eventually<T: std::fmt::Debug>(what: &str, mut look: impl AsyncFnMut() -> (bool, T)) -> T {
+pub(crate) async fn eventually<T: std::fmt::Debug>(what: &str, mut look: impl AsyncFnMut() -> (bool, T)) -> T {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let (happened, seen) = look().await;
@@ -158,7 +158,7 @@ pub async fn eventually<T: std::fmt::Debug>(what: &str, mut look: impl AsyncFnMu
 }
 
 /// A workload's view once `ok` holds, looked at as blocklyd looks (`stats` observes the runtime).
-pub async fn until(
+pub(crate) async fn until(
     manager: &Arc<Manager>,
     workload: &str,
     what: &str,
@@ -174,12 +174,12 @@ pub async fn until(
 
 // ─── TLS ────────────────────────────────────────────────────────────────────────────────────
 
-pub struct Pki {
+pub(crate) struct Pki {
     pub dir: PathBuf,
     pub ca: certs::Authority,
 }
 
-pub fn pki(dir: &Path) -> Pki {
+pub(crate) fn pki(dir: &Path) -> Pki {
     let tls = dir.join("tls");
     std::fs::create_dir_all(&tls).unwrap();
     let ca = certs::authority("test CA").unwrap();
@@ -199,29 +199,29 @@ fn write_key(path: &Path, key: &str) {
 }
 
 /// A client identity: certificate chain and key, as PEM.
-pub struct Identity {
+pub(crate) struct Identity {
     pub cert: String,
     pub key: String,
 }
 
-pub fn client(ca: &certs::Authority, name: &str) -> Identity {
+pub(crate) fn client(ca: &certs::Authority, name: &str) -> Identity {
     let (cert, key) = certs::leaf(ca, &[name.into()], &[], certs::Role::Client).unwrap();
     Identity { cert, key }
 }
 
 /// A server (serverAuth) certificate presented as a client: must be refused.
-pub fn server_cert_as_client(ca: &certs::Authority) -> Identity {
+pub(crate) fn server_cert_as_client(ca: &certs::Authority) -> Identity {
     let (cert, key) = certs::leaf(ca, &[CLIENT.into()], &[], certs::Role::Server).unwrap();
     Identity { cert, key }
 }
 
-pub struct Server {
+pub(crate) struct Server {
     pub addr: SocketAddr,
     pub cancel: CancellationToken,
     pub task: tokio::task::JoinHandle<()>,
 }
 
-pub async fn serve(manager: Arc<Manager>) -> Server {
+pub(crate) async fn serve(manager: Arc<Manager>) -> Server {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let config = manager.config.clone();
     let tls_material = config.api.tls.clone().expect("tests run single-node");
@@ -242,23 +242,23 @@ pub async fn serve(manager: Arc<Manager>) -> Server {
     Server { addr, cancel, task }
 }
 
-pub struct Response {
+pub(crate) struct Response {
     pub status: u16,
     pub headers: hyper::HeaderMap,
     pub body: Vec<u8>,
 }
 
 impl Response {
-    pub fn json(&self) -> serde_json::Value {
+    pub(crate) fn json(&self) -> serde_json::Value {
         serde_json::from_slice(&self.body).unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&self.body)))
     }
-    pub fn code(&self) -> String {
+    pub(crate) fn code(&self) -> String {
         self.json()["error"]["code"].as_str().unwrap_or_default().to_owned()
     }
 }
 
 /// One HTTPS request as `identity` (or anonymously). Err is a refused handshake.
-pub async fn request(
+pub(crate) async fn request(
     addr: SocketAddr,
     ca_pem: &str,
     identity: Option<&Identity>,

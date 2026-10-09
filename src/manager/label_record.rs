@@ -5,7 +5,7 @@ use crate::protocol::SpecRecord;
 use crate::store::{AllocatedPort, RECORD_VERSION, WorkloadRecord};
 
 /// The record as a label carries it.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LabelRecord {
     pub version: u32,

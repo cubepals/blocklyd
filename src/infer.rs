@@ -25,7 +25,7 @@ use toml::{Table, Value};
 pub(crate) const API_PORT: u16 = 7443;
 
 /// One value filled in, as the configuration would write it, and where it came from.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inferred {
     pub key: &'static str,
     pub value: String,

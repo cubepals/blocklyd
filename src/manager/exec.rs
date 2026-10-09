@@ -56,7 +56,7 @@ impl Manager {
         let started = Instant::now();
         let result = async {
             let container = self.exec_target(id, epoch).await?;
-            let timeout = Duration::from_secs(request.timeout_seconds as u64);
+            let timeout = Duration::from_secs(u64::from(request.timeout_seconds));
             // By the container's id, never its name: a workload replaced meanwhile has a new
             // container under the same name, and the command must not run there.
             let out = match self.note(self.runtime.exec(&container, &request.command, timeout, MAX_EXEC_OUTPUT).await) {

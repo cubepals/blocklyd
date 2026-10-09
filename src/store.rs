@@ -70,7 +70,7 @@ pub struct AllocatedPort {
     pub host_port: u16,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkloadRecord {
     pub version: u32,
@@ -129,7 +129,7 @@ fn io_err<'a>(what: &'static str, path: &'a Path) -> impl FnOnce(io::Error) -> S
 
 impl From<WriteError> for StoreError {
     fn from(e: WriteError) -> Self {
-        StoreError::Io { what: e.what, path: e.path, source: e.source }
+        Self::Io { what: e.what, path: e.path, source: e.source }
     }
 }
 

@@ -44,7 +44,7 @@ pub enum WorkloadState {
 }
 
 impl WorkloadState {
-    pub(crate) const ALL: [WorkloadState; 11] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Creating,
         Self::Created,
         Self::Running,
@@ -173,7 +173,7 @@ pub struct Locate {
     pub data_dir: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct WorkloadView {

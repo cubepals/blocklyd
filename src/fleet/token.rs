@@ -53,7 +53,7 @@ impl JoinToken {
         let json = URL_SAFE_NO_PAD
             .decode(body.trim_end_matches('='))
             .map_err(|e| TokenError::Malformed(format!("not base64url ({e})")))?;
-        let token: JoinToken = serde_json::from_slice(&json).map_err(|e| TokenError::Malformed(e.to_string()))?;
+        let token: Self = serde_json::from_slice(&json).map_err(|e| TokenError::Malformed(e.to_string()))?;
         let hash_ok = token.ca_sha256.len() == 64 && token.ca_sha256.bytes().all(|b| b.is_ascii_hexdigit());
         let unset = token.deployment_id.is_empty() || token.secret.is_empty() || token.node.as_deref() == Some("");
         if !crate::config::fleet_url_ok(&token.url) || !hash_ok || unset {

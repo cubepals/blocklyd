@@ -36,7 +36,7 @@ use crate::ids::NodeId;
 use crate::protocol::wire::{RenewRequest, RenewResponse};
 use crate::tls::{TlsSetupError, load_certs, load_key};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct IdentityFile {
     pub node_id: NodeId,
@@ -85,9 +85,7 @@ fn make_dir(dir: &Path) -> Result<(), IdentityError> {
 /// as PEM in more than one way.
 pub(crate) fn same_certificates(pem: &str, certs: &[CertificateDer<'_>]) -> bool {
     let written: Result<Vec<CertificateDer<'_>>, _> = CertificateDer::pem_slice_iter(pem.as_bytes()).collect();
-    written.is_ok_and(|written| {
-        !written.is_empty() && written.iter().map(|c| c.as_ref()).eq(certs.iter().map(|c| c.as_ref()))
-    })
+    written.is_ok_and(|written| !written.is_empty() && written == certs)
 }
 
 impl Identity {
@@ -96,7 +94,7 @@ impl Identity {
     }
 
     /// The identity on disk, if this node has enrolled.
-    pub fn load(state_dir: &Path) -> Result<Option<Identity>, IdentityError> {
+    pub fn load(state_dir: &Path) -> Result<Option<Self>, IdentityError> {
         let dir = Self::dir_for(state_dir);
         let meta = dir.join("node.json");
         if !meta.exists() {
@@ -105,7 +103,7 @@ impl Identity {
         let text = fs::read_to_string(&meta).map_err(io(&meta))?;
         let file: IdentityFile =
             serde_json::from_str(&text).map_err(|e| IdentityError::Invalid(format!("{}: {e}", meta.display())))?;
-        let identity = Identity { file, dir };
+        let identity = Self { file, dir };
         // Everything must be there and loadable, or the node has no usable identity.
         identity.server_tls()?;
         identity.client_tls()?;
@@ -148,14 +146,14 @@ impl Identity {
         server_pem: &str,
         client_pem: &str,
         ca_pem: &str,
-    ) -> Result<Identity, IdentityError> {
+    ) -> Result<Self, IdentityError> {
         let dir = Self::dir_for(state_dir);
         make_dir(&dir)?;
         write_atomic(&dir.join("node.key"), key_pem.as_bytes(), 0o600)?;
         write_atomic(&dir.join("node.pem"), server_pem.as_bytes(), 0o644)?;
         write_atomic(&dir.join("client.pem"), client_pem.as_bytes(), 0o644)?;
         write_atomic(&dir.join("ca.pem"), ca_pem.as_bytes(), 0o644)?;
-        let identity = Identity { file, dir };
+        let identity = Self { file, dir };
         identity.server_tls()?;
         identity.client_tls()?;
         let json = serde_json::to_vec_pretty(&identity.file).expect("serializes");
@@ -184,10 +182,10 @@ impl Identity {
 
     /// Stores a renewal as the next generation and switches to it. The old generation's files go
     /// once the switch is on disk.
-    pub(crate) fn renewed(&self, key_pem: &str, server_pem: &str, client_pem: &str) -> Result<Identity, IdentityError> {
+    pub(crate) fn renewed(&self, key_pem: &str, server_pem: &str, client_pem: &str) -> Result<Self, IdentityError> {
         let mut file = self.file.clone();
         file.generation = self.file.generation + 1;
-        let next = Identity { file, dir: self.dir.clone() };
+        let next = Self { file, dir: self.dir.clone() };
         write_atomic(&next.key_path(), key_pem.as_bytes(), 0o600)?;
         write_atomic(&next.server_cert_path(), server_pem.as_bytes(), 0o644)?;
         write_atomic(&next.client_cert_path(), client_pem.as_bytes(), 0o644)?;

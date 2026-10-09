@@ -39,6 +39,7 @@ fn clock_verdict(synchronised: Option<bool>) -> Check {
 /// The kernel's own answer (adjtimex, read only) where the process may ask; systemd's otherwise.
 /// The unit's ProtectClock refuses adjtimex, so under systemd the answer is timedatectl's.
 fn synchronised() -> Option<bool> {
+    #[expect(unsafe_code, reason = "adjtimex, which rustix doesn't wrap: the crate's one unsafe block")]
     // SAFETY: adjtimex with modes 0 only reads, into a zeroed struct this function owns.
     let (state, status) = unsafe {
         let mut timex: libc::timex = std::mem::zeroed();

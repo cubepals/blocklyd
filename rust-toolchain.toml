@@ -1,0 +1,6 @@
+# The one Rust version blocklyd builds with: rustup reads it here, CI installs it from this file,
+# and the Dockerfile's base image tag follows it. Raise it here and there together.
+[toolchain]
+channel = "1.94.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

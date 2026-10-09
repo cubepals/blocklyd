@@ -83,7 +83,7 @@ impl Manager {
         }
         // Admitted like any start: memory the host gave out since the failure isn't taken back.
         // Refused, the workload stays crashed, and says why.
-        if let Err(e) = self.admit(id, record.spec.resources.memory_mb as u64) {
+        if let Err(e) = self.admit(id, u64::from(record.spec.resources.memory_mb)) {
             tracing::warn!(workload = %id, error = %e, "not restarting after a failure: no room for it now");
             self.set_issue(
                 id,
@@ -188,7 +188,7 @@ impl Manager {
             self.state.lock().unwrap().resuming.remove(id);
             return Restart::Done;
         }
-        if let Err(e) = self.admit(id, record.spec.resources.memory_mb as u64) {
+        if let Err(e) = self.admit(id, u64::from(record.spec.resources.memory_mb)) {
             tracing::warn!(workload = %id, error = %e, "not resuming: no room for it now");
             self.give_up_resume(&record).await;
             return Restart::Done;

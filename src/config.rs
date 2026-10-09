@@ -419,7 +419,7 @@ impl Config {
         let parse = |source| ConfigError::Parse { path: path.into(), source };
         let mut table: toml::Table = toml::from_str(text).map_err(parse)?;
         let inferred = crate::infer::fill(&mut table, root).map_err(|e| ConfigError::Invalid(e.to_string()))?;
-        let mut config: Config = table.try_into().map_err(parse)?;
+        let mut config: Self = table.try_into().map_err(parse)?;
         config.inferred = inferred;
         config.validate()?;
         Ok(config)
@@ -495,7 +495,7 @@ impl Config {
         }
         // Servers are published on these and reached through them: 0.0.0.0 would publish them on
         // every interface, past the edge, and route to nowhere.
-        if self.network.edge_ips.iter().chain(&self.network.control_ips).any(|ip| ip.is_unspecified()) {
+        if self.network.edge_ips.iter().chain(&self.network.control_ips).any(IpAddr::is_unspecified) {
             return bad("network.edge_ips and network.control_ips are this host's own addresses, not 0.0.0.0".into());
         }
         // Anyone who reaches the ops listener reads it: it asks for no certificate, and its metrics

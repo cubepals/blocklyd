@@ -2,7 +2,7 @@
 name = "blocklyd"
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.94"
 license = "FSL-1.1-ALv2"
 publish = false
 repository = "https://github.com/cubepals/blocklyd"
@@ -80,6 +80,23 @@ rcgen = { version = "0.14", default-features = false, features = ["pem", "ring",
 # The wire types' JSON Schema, which only the protocol's schema test reads (src/protocol/schema.rs):
 # the control plane's TypeScript types are generated from it.
 schemars = "=1.2.2"
+
+# The lint policy, here so a local `cargo clippy` holds what CI's does (`-D warnings` makes these
+# warnings errors there). Chosen lints, not clippy::pedantic wholesale.
+[lints.rust]
+# The one unsafe block (adjtimex, src/doctor/host.rs) says why with an `expect`.
+unsafe_code = "deny"
+# Its only users are main.rs and tests/: what they use is `pub`, the rest `pub(crate)` (lib.rs).
+unreachable_pub = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+use_self = "warn"
+cast_lossless = "warn"
+derive_partial_eq_without_eq = "warn"
+redundant_closure_for_method_calls = "warn"
+unused_async = "warn"
+mod_module_files = "warn"
 
 [profile.release]
 # A small, self-contained daemon: size and startup matter more than the last few percent.

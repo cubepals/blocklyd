@@ -46,7 +46,7 @@ impl Manager {
             if matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting) {
                 record.stop_requested_at = Some(now_str());
                 self.save_record(&record).await?;
-                let grace = Duration::from_secs(record.spec.stop.timeout_seconds as u64);
+                let grace = Duration::from_secs(u64::from(record.spec.stop.timeout_seconds));
                 let stopping = self.mark_stopping(id);
                 let stopped = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
                 drop(stopping);

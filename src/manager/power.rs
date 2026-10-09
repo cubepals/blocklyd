@@ -46,7 +46,7 @@ impl Manager {
         if matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting) {
             return Ok(PowerResponse { changed: false, forced: false, workload: self.view(id)? });
         }
-        self.admit(id, record.spec.resources.memory_mb as u64)?;
+        self.admit(id, u64::from(record.spec.resources.memory_mb))?;
         self.state.lock().unwrap().restart_due.remove(id);
         // A requested start begins a new run, with all its retries.
         record.restart_count = 0;
@@ -120,7 +120,7 @@ impl Manager {
             let seconds = grace.unwrap_or(record.spec.stop.timeout_seconds);
             let _stopping = self.mark_stopping(id);
             self.runtime
-                .stop(&record.container_name, record.spec.stop.signal.as_str(), Duration::from_secs(seconds as u64))
+                .stop(&record.container_name, record.spec.stop.signal.as_str(), Duration::from_secs(u64::from(seconds)))
                 .await
         };
         self.note(result)?;

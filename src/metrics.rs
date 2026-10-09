@@ -277,41 +277,47 @@ impl Metrics {
         self.uptime.set(manager.uptime().as_secs_f64());
         self.docker_up.set(i64::from(manager.docker_up()));
         for (state, count) in manager.workloads_by_state() {
-            self.workloads.get_or_create(&StateLabel { state: state.as_str().into() }).set(count as i64);
+            self.workloads.get_or_create(&StateLabel { state: state.as_str().into() }).set(gauge(count));
         }
         let (allocated, capacity) = manager.ports_usage();
-        self.ports_allocated.set(allocated as i64);
-        self.ports_capacity.set(capacity as i64);
-        self.issues.set(manager.issue_count() as i64);
+        self.ports_allocated.set(i64::from(allocated));
+        self.ports_capacity.set(i64::from(capacity));
+        self.issues.set(gauge(manager.issue_count()));
         self.workload_memory.clear();
         self.workload_cpu.clear();
         self.workload_disk.clear();
         for sample in manager.workload_samples() {
             let label = WorkloadLabel { workload: sample.id };
             if let Some(m) = sample.memory_bytes {
-                self.workload_memory.get_or_create(&label).set(m as i64);
+                self.workload_memory.get_or_create(&label).set(gauge(m));
             }
             if let Some(c) = sample.cores {
                 self.workload_cpu.get_or_create(&label).set(c);
             }
             if let Some(d) = sample.disk_bytes {
-                self.workload_disk.get_or_create(&label).set(d as i64);
+                self.workload_disk.get_or_create(&label).set(gauge(d));
             }
         }
         let process = crate::host::process();
         if let Some(rss) = process.rss_bytes {
-            self.daemon_rss.set(rss as i64);
+            self.daemon_rss.set(gauge(rss));
         }
         if let Some(cpu) = process.cpu_seconds {
             self.daemon_cpu.set(cpu);
         }
         self.fleet_contact_age.set(manager.fleet_contact_age().unwrap_or(-1.0));
         self.fleet_lease.set(manager.lease_remaining().map_or(-1.0, |d| d.as_secs_f64()));
-        self.snapshot_bytes.set(manager.snapshot_bytes().unwrap_or(0) as i64);
+        self.snapshot_bytes.set(gauge(manager.snapshot_bytes().unwrap_or(0)));
         let mut out = String::new();
         encode(&mut out, &self.registry).expect("writing to a String");
         out
     }
+}
+
+/// A count or a size as a gauge's value. A value past `i64::MAX`, which none here reaches, reads
+/// `i64::MAX` rather than wrapping negative.
+fn gauge(n: impl TryInto<i64>) -> i64 {
+    n.try_into().unwrap_or(i64::MAX)
 }
 
 /// A method as the `http_requests` label: the usual ones keep their names, and any other is
