@@ -47,6 +47,14 @@ CI's `Structure` step runs Cubepals' `scripts/check-structure.ts` against
 `structure-baseline.json`. It is a ratchet: the baseline only shrinks, and nobody adds an entry
 without saying why in it.
 
+## CI
+
+A change isn't done when its PR is green. It is done when the runs it starts on `main` are green too, the release included.
+
+- **Workflows are code.** A change to `.github/workflows/` passes `actionlint` before it is pushed, and CI runs it again. A workflow GitHub can't parse never runs and shows only a red run named by its path.
+- **After a merge, look at the Actions page,** not only the PR's checks: `gh run list -R cubepals/blocklyd -L 30`. Scheduled runs fail without a PR to show it.
+- **A failure outside the code is still a failure.** A registry's rate limit or an outage gets a fix (a mirror, a retry), not a rerun until it passes.
+
 ## Commits
 
 Signed, as their author. No attribution lines in commits or pull requests.
