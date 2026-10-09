@@ -85,7 +85,7 @@ jobs:
           bun-version: 1.3.11
       - name: Structure
         run: |
-          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/36b8dc927c893bcd5c868928677790722c0dd77f/scripts/check-structure.ts \
+          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/50227dff3c53e253d2645541b72120dc7f2f92b3/scripts/check-structure.ts \
             -o "$RUNNER_TEMP/check-structure.ts"
           bun "$RUNNER_TEMP/check-structure.ts"
           bun "$RUNNER_TEMP/check-structure.ts" --rust
