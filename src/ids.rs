@@ -8,8 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// The longest id: a DNS label's limit.
 const MAX_LEN: usize = 63;
 
-/// Whether `value` is an id: the character set is the whole defence against path traversal and
-/// injection, so nothing downstream needs to escape one.
+/// Whether `value` is an id: 1-63 of a-z, 0-9 and '-', starting and ending with a letter or digit.
 fn valid(value: &str) -> bool {
     let bytes = value.as_bytes();
     let edge_ok = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
@@ -68,16 +67,17 @@ macro_rules! id_type {
 
 id_type!(
     /// What the control plane calls a workload: Blockly's server id (a UUID) in practice, but any
-    /// lowercase DNS label will do. A valid id is always one safe path component, one safe
-    /// container-name suffix and one safe label value.
+    /// lowercase DNS label will do. The character set is the whole defence against path traversal
+    /// and injection: a valid id is always one safe path component, one safe container-name suffix
+    /// and one safe label value, so nothing downstream needs to escape it.
     WorkloadId,
     InvalidWorkloadId,
     "workload"
 );
 
 id_type!(
-    /// A local snapshot's id: the control plane's archive id (a UUID). It names a directory, so it
-    /// is held to a workload id's rules.
+    /// A local snapshot's id: the control plane's archive id (a UUID). It names a directory, so it is
+    /// held to a workload id's rules.
     SnapshotId,
     InvalidSnapshotId,
     "snapshot"
