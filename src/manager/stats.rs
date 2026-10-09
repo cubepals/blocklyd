@@ -81,7 +81,7 @@ impl Manager {
 
     /// Measures each workload's data on disk, and the snapshots beside it. Called on an interval;
     /// blocking work off-thread.
-    pub async fn measure_disk(self: &Arc<Self>) {
+    pub(crate) async fn measure_disk(self: &Arc<Self>) {
         let ids: Vec<WorkloadId> = self.state.lock().unwrap().records.keys().cloned().collect();
         let dirs: Vec<std::path::PathBuf> = ids.iter().map(|id| self.store.snapshots_dir(id)).collect();
         let snapshots = tokio::task::spawn_blocking(move || {

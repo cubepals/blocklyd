@@ -9,7 +9,7 @@ use crate::config::{Config, private_or_loopback};
 use crate::ports::{Probe, bind_probe};
 use crate::protocol::Proto;
 
-pub fn ports(config: &Config, held: &HashSet<(Proto, u16)>) -> Check {
+pub(crate) fn ports(config: &Config, held: &HashSet<(Proto, u16)>) -> Check {
     let mut addresses: Vec<IpAddr> = config.network.edge_ips.clone();
     addresses.extend(config.network.control_ips.iter().copied());
     addresses.sort();
@@ -49,7 +49,7 @@ fn verdict(range: [u16; 2], addresses: &[IpAddr], held: &HashSet<(Proto, u16)>, 
 
 /// The API asks for a client certificate, the ops listener for nothing: neither belongs on a
 /// public address. A public `ops.listen` is already refused by the config check.
-pub fn listeners(config: &Config) -> Vec<Check> {
+pub(crate) fn listeners(config: &Config) -> Vec<Check> {
     let dialed = config.fleet.as_ref().and_then(|f| f.api_address).unwrap_or(config.api.listen);
     vec![
         listener("listen.api", "api.listen", config.api.listen, dialed),

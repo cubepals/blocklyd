@@ -10,12 +10,12 @@ use crate::durable;
 impl Store {
     /// Quarantined ports survive restarts, so a restarted daemon can't hand out a port a route
     /// may still point at. Rewritten whole, atomically, on each release.
-    pub fn save_resting_ports(&self, ports: &[RestingPort]) -> Result<(), StoreError> {
+    pub(crate) fn save_resting_ports(&self, ports: &[RestingPort]) -> Result<(), StoreError> {
         let bytes = serde_json::to_vec_pretty(ports).expect("serializes");
         Ok(durable::write_atomic(&self.root.join("ports.json"), &bytes, 0o600)?)
     }
 
-    pub fn load_resting_ports(&self) -> Vec<RestingPort> {
+    pub(crate) fn load_resting_ports(&self) -> Vec<RestingPort> {
         fs::read(self.root.join("ports.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 }

@@ -83,7 +83,7 @@ fn make_dir(dir: &Path) -> Result<(), IdentityError> {
 
 /// Whether `pem` holds exactly these certificates. Compared as DER: one certificate can be written
 /// as PEM in more than one way.
-pub fn same_certificates(pem: &str, certs: &[CertificateDer<'_>]) -> bool {
+pub(crate) fn same_certificates(pem: &str, certs: &[CertificateDer<'_>]) -> bool {
     let written: Result<Vec<CertificateDer<'_>>, _> = CertificateDer::pem_slice_iter(pem.as_bytes()).collect();
     written.is_ok_and(|written| {
         !written.is_empty() && written.iter().map(|c| c.as_ref()).eq(certs.iter().map(|c| c.as_ref()))
@@ -116,7 +116,7 @@ impl Identity {
     /// any attempt sends a request for it. The control plane answers a spent token again for the
     /// key that spent it, so a node whose answer was lost (a timeout, a reset connection, a
     /// restart) asks again with this key and gets its identity, where a new key would be refused.
-    pub fn enrollment_key(state_dir: &Path) -> Result<rcgen::KeyPair, IdentityError> {
+    pub(crate) fn enrollment_key(state_dir: &Path) -> Result<rcgen::KeyPair, IdentityError> {
         let path = Self::enrollment_key_path(state_dir);
         match fs::read_to_string(&path) {
             Ok(pem) => {
@@ -135,7 +135,7 @@ impl Identity {
 
     /// Where the enrollment key waits: removed once it is `node.key`, and by a node that has an
     /// identity already, which never asks with it.
-    pub fn enrollment_key_path(state_dir: &Path) -> PathBuf {
+    pub(crate) fn enrollment_key_path(state_dir: &Path) -> PathBuf {
         Self::dir_for(state_dir).join("enroll-key.pem")
     }
 
@@ -184,7 +184,7 @@ impl Identity {
 
     /// Stores a renewal as the next generation and switches to it. The old generation's files go
     /// once the switch is on disk.
-    pub fn renewed(&self, key_pem: &str, server_pem: &str, client_pem: &str) -> Result<Identity, IdentityError> {
+    pub(crate) fn renewed(&self, key_pem: &str, server_pem: &str, client_pem: &str) -> Result<Identity, IdentityError> {
         let mut file = self.file.clone();
         file.generation = self.file.generation + 1;
         let next = Identity { file, dir: self.dir.clone() };
@@ -266,11 +266,11 @@ impl Credentials {
         }))
     }
 
-    pub fn client(&self) -> Arc<rustls::ClientConfig> {
+    pub(crate) fn client(&self) -> Arc<rustls::ClientConfig> {
         self.client.read().unwrap().clone()
     }
 
-    pub fn node_id(&self) -> NodeId {
+    pub(crate) fn node_id(&self) -> NodeId {
         self.identity.lock().unwrap().node_id().clone()
     }
 
@@ -279,7 +279,7 @@ impl Credentials {
     }
 
     /// Starts a renewal in the background, unless one runs or one failed recently.
-    pub fn renew_soon(self: &Arc<Self>, control_plane: &str, manager: Arc<crate::manager::Manager>) {
+    pub(crate) fn renew_soon(self: &Arc<Self>, control_plane: &str, manager: Arc<crate::manager::Manager>) {
         {
             let mut last = self.last_attempt.lock().unwrap();
             if last.is_some_and(|at| at.elapsed() < RETRY_RENEWAL) {

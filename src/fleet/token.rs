@@ -19,28 +19,28 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-pub const PREFIX: &str = "bk1.";
+pub(crate) const PREFIX: &str = "bk1.";
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct JoinToken {
+pub(crate) struct JoinToken {
     /// The node endpoint, `https://host:port`.
     #[serde(rename = "u")]
-    pub url: String,
+    pub(crate) url: String,
     /// sha256 of the fleet CA's certificate, as the endpoint serves it at `/fleet/v1/ca.pem`.
     #[serde(rename = "h")]
-    pub ca_sha256: String,
+    pub(crate) ca_sha256: String,
     #[serde(rename = "d")]
-    pub deployment_id: String,
+    pub(crate) deployment_id: String,
     /// What the control plane looks up: the whole of a bare token.
     #[serde(rename = "s")]
-    pub secret: String,
+    pub(crate) secret: String,
     /// The node this token re-enrolls, when it re-enrolls one.
     #[serde(rename = "n", default)]
-    pub node: Option<String>,
+    pub(crate) node: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
-pub enum TokenError {
+pub(crate) enum TokenError {
     #[error("the token doesn't start with {PREFIX}: it is a bare token, which names no control plane")]
     NotJoinToken,
     #[error("the token is cut short or mistyped: {0}")]
@@ -48,7 +48,7 @@ pub enum TokenError {
 }
 
 impl JoinToken {
-    pub fn decode(text: &str) -> Result<Self, TokenError> {
+    pub(crate) fn decode(text: &str) -> Result<Self, TokenError> {
         let body = text.trim().strip_prefix(PREFIX).ok_or(TokenError::NotJoinToken)?;
         let json = URL_SAFE_NO_PAD
             .decode(body.trim_end_matches('='))
@@ -65,13 +65,13 @@ impl JoinToken {
     }
 
     /// Whether `pem` is the CA this token names, byte for byte as the endpoint serves it.
-    pub fn names_ca(&self, pem: &[u8]) -> bool {
+    pub(crate) fn names_ca(&self, pem: &[u8]) -> bool {
         hex::encode(Sha256::digest(pem)).eq_ignore_ascii_case(&self.ca_sha256)
     }
 }
 
 /// What a token file holds, as enrollment reads it: a join token, or a bare one.
-pub fn read(text: &str) -> Result<Option<JoinToken>, TokenError> {
+pub(crate) fn read(text: &str) -> Result<Option<JoinToken>, TokenError> {
     match JoinToken::decode(text) {
         Ok(token) => Ok(Some(token)),
         Err(TokenError::NotJoinToken) => Ok(None),

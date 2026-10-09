@@ -7,7 +7,7 @@ use crate::runtime::RuntimeError;
 use crate::store::{StoreError, WorkloadRecord};
 
 /// Whatever made a transfer break, kept as its error's source.
-pub type TransferCause = Box<dyn std::error::Error + Send + Sync>;
+pub(crate) type TransferCause = Box<dyn std::error::Error + Send + Sync>;
 
 /// Each failure says on the wire what its message says; one with a cause keeps it as its source.
 #[derive(Debug, thiserror::Error)]
@@ -83,7 +83,7 @@ pub enum ConflictCode {
 }
 
 impl ConflictCode {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::ContainerMissing => "container_missing",
             Self::NameTaken => "name_taken",
@@ -100,7 +100,7 @@ impl ConflictCode {
 
 /// How a verb treats the placement epoch it is sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EpochRule {
+pub(crate) enum EpochRule {
     /// Runs the copy (start, exec): only for exactly its epoch, and never once superseded.
     Exact,
     /// Tears the copy down (stop, kill, delete): its epoch or any newer one, since a newer
@@ -112,7 +112,7 @@ pub enum EpochRule {
 
 /// The fencing check every mutating verb makes before touching the runtime. Workloads made
 /// without an epoch keep the single-node protocol: none is asked for and none is checked.
-pub fn check_epoch(record: &WorkloadRecord, asked: Option<u64>, rule: EpochRule) -> Result<(), NodeError> {
+pub(crate) fn check_epoch(record: &WorkloadRecord, asked: Option<u64>, rule: EpochRule) -> Result<(), NodeError> {
     match (asked, record.epoch) {
         (None, None) => {}
         (None, Some(current)) => return Err(NodeError::EpochRequired { current }),

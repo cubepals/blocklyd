@@ -25,10 +25,10 @@ use crate::tls::{TlsSetupError, load_certs, load_key, provider};
 
 /// Who is on the other end of a connection, attached to each request it sends.
 #[derive(Clone, Debug, Default)]
-pub struct ClientIdentity {
-    pub names: Vec<String>,
+pub(crate) struct ClientIdentity {
+    pub(crate) names: Vec<String>,
     /// The allowed name it matched, if any.
-    pub allowed: Option<String>,
+    pub(crate) allowed: Option<String>,
 }
 
 /// The API's own certificate, replaceable while serving: a renewed one is used for new
@@ -37,12 +37,12 @@ pub struct ClientIdentity {
 pub struct ServerCert(std::sync::RwLock<Arc<CertifiedKey>>);
 
 impl ServerCert {
-    pub fn load(cert: &Path, key: &Path) -> Result<Self, TlsSetupError> {
+    pub(crate) fn load(cert: &Path, key: &Path) -> Result<Self, TlsSetupError> {
         Ok(Self(std::sync::RwLock::new(Arc::new(certified_key(cert, key)?))))
     }
 
     /// Switches to the certificate and key in these files, once they are known to match.
-    pub fn replace(&self, cert: &Path, key: &Path) -> Result<(), TlsSetupError> {
+    pub(crate) fn replace(&self, cert: &Path, key: &Path) -> Result<(), TlsSetupError> {
         let next = Arc::new(certified_key(cert, key)?);
         *self.0.write().unwrap() = next;
         Ok(())
@@ -90,7 +90,7 @@ pub fn reloadable_server_config(
 
 /// The identity a verified client certificate proves. `allowed` is matched against the DNS
 /// names webpki considers valid for the certificate.
-pub fn identify(certs: Option<&[CertificateDer<'static>]>, allowed: &[String]) -> ClientIdentity {
+pub(crate) fn identify(certs: Option<&[CertificateDer<'static>]>, allowed: &[String]) -> ClientIdentity {
     let Some(leaf) = certs.and_then(|c| c.first()) else { return ClientIdentity::default() };
     let Ok(cert) = webpki::EndEntityCert::try_from(leaf) else { return ClientIdentity::default() };
     let names: Vec<String> = cert.valid_dns_names().map(str::to_owned).collect();

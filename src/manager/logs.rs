@@ -101,7 +101,7 @@ impl Manager {
 }
 
 /// Splits a runtime log chunk into NDJSON records: `<rfc3339> <line>` per line.
-pub fn lines_of(stream: LogStream, bytes: &[u8]) -> Vec<LogRecord> {
+pub(crate) fn lines_of(stream: LogStream, bytes: &[u8]) -> Vec<LogRecord> {
     let text = String::from_utf8_lossy(bytes);
     let stream = match stream {
         LogStream::Stdout => "stdout",

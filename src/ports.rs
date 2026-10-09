@@ -38,7 +38,7 @@ pub fn bind_probe(addresses: Vec<IpAddr>) -> Probe {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum PortError {
+pub(crate) enum PortError {
     #[error("no free {proto} port left in {low}-{high}")]
     Exhausted { proto: &'static str, low: u16, high: u16 },
     #[error("{proto} port {port} is already held by workload {holder}")]
@@ -47,7 +47,7 @@ pub enum PortError {
     OutOfRange(u16),
 }
 
-pub struct PortAllocator {
+pub(crate) struct PortAllocator {
     range: RangeInclusive<u16>,
     held: HashMap<(Proto, u16), WorkloadId>,
     resting: HashMap<(Proto, u16), Instant>,
@@ -56,13 +56,13 @@ pub struct PortAllocator {
 }
 
 impl PortAllocator {
-    pub fn new(range: RangeInclusive<u16>, quarantine: Duration, probe: Probe) -> Self {
+    pub(crate) fn new(range: RangeInclusive<u16>, quarantine: Duration, probe: Probe) -> Self {
         Self { range, held: HashMap::new(), resting: HashMap::new(), quarantine, probe }
     }
 
     /// Records a port a workload already holds (reconciliation). Two workloads claiming one port
     /// is a conflict the caller reports; the first claim keeps it.
-    pub fn claim(&mut self, id: &WorkloadId, proto: Proto, port: u16) -> Result<(), PortError> {
+    pub(crate) fn claim(&mut self, id: &WorkloadId, proto: Proto, port: u16) -> Result<(), PortError> {
         if !self.range.contains(&port) {
             // Still tracked, so nothing else is given it, but reported.
             self.held.entry((proto, port)).or_insert_with(|| id.clone());
@@ -81,7 +81,7 @@ impl PortAllocator {
     }
 
     /// The lowest port that is in range, not held, not resting, and bindable now.
-    pub fn allocate(&mut self, id: &WorkloadId, proto: Proto) -> Result<u16, PortError> {
+    pub(crate) fn allocate(&mut self, id: &WorkloadId, proto: Proto) -> Result<u16, PortError> {
         let now = Instant::now();
         self.resting.retain(|_, since| now.duration_since(*since) < self.quarantine);
         for port in self.range.clone() {
@@ -99,7 +99,7 @@ impl PortAllocator {
     }
 
     /// Gives back one port (a port a replaced spec no longer names).
-    pub fn release(&mut self, id: &WorkloadId, proto: Proto, port: u16) {
+    pub(crate) fn release(&mut self, id: &WorkloadId, proto: Proto, port: u16) {
         if self.held.get(&(proto, port)) == Some(id) {
             self.held.remove(&(proto, port));
             self.resting.insert((proto, port), Instant::now());
@@ -108,14 +108,14 @@ impl PortAllocator {
 
     /// Takes back a port allocated moments ago that nothing used (the rest of the allocation
     /// failed). No workload published it and no route can know it, so it doesn't rest.
-    pub fn unreserve(&mut self, id: &WorkloadId, proto: Proto, port: u16) {
+    pub(crate) fn unreserve(&mut self, id: &WorkloadId, proto: Proto, port: u16) {
         if self.held.get(&(proto, port)) == Some(id) {
             self.held.remove(&(proto, port));
         }
     }
 
     /// Gives back every port a workload holds.
-    pub fn release_all(&mut self, id: &WorkloadId) {
+    pub(crate) fn release_all(&mut self, id: &WorkloadId) {
         let now = Instant::now();
         let mine: Vec<_> = self.held.iter().filter(|(_, holder)| *holder == id).map(|(k, _)| *k).collect();
         for key in mine {
@@ -124,25 +124,26 @@ impl PortAllocator {
         }
     }
 
-    pub fn allocated(&self) -> u32 {
+    pub(crate) fn allocated(&self) -> u32 {
         self.held.keys().filter(|(_, port)| self.range.contains(port)).count() as u32
     }
 
     /// Ports per protocol this host can hand out.
-    pub fn capacity(&self) -> u32 {
+    pub(crate) fn capacity(&self) -> u32 {
         (*self.range.end() - *self.range.start()) as u32 + 1
     }
 
-    pub fn holder(&self, proto: Proto, port: u16) -> Option<&WorkloadId> {
+    #[cfg(test)]
+    fn holder(&self, proto: Proto, port: u16) -> Option<&WorkloadId> {
         self.held.get(&(proto, port))
     }
 
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.held.clear();
     }
 
     /// Resting ports and how long ago each was released, for persisting across restarts.
-    pub fn resting(&self) -> Vec<(Proto, u16, Duration)> {
+    pub(crate) fn resting(&self) -> Vec<(Proto, u16, Duration)> {
         let now = Instant::now();
         self.resting
             .iter()
@@ -152,7 +153,7 @@ impl PortAllocator {
     }
 
     /// Puts back ports that were resting before a restart, so quarantine outlives the process.
-    pub fn restore_resting(&mut self, entries: impl IntoIterator<Item = (Proto, u16, Duration)>) {
+    pub(crate) fn restore_resting(&mut self, entries: impl IntoIterator<Item = (Proto, u16, Duration)>) {
         let now = Instant::now();
         for (proto, port, ago) in entries {
             if ago < self.quarantine

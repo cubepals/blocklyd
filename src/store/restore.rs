@@ -22,7 +22,7 @@ impl Store {
     /// The swap is one `renameat2(RENAME_EXCHANGE)`: a crash leaves the old data in place or the
     /// new, never neither. A filesystem that can't exchange gets two renames instead, and if a
     /// crash falls between them, `recover_restore` finishes the second.
-    pub fn swap_in_restored(&self, id: &WorkloadId, now_unix: i64) -> Result<Option<PathBuf>, StoreError> {
+    pub(crate) fn swap_in_restored(&self, id: &WorkloadId, now_unix: i64) -> Result<Option<PathBuf>, StoreError> {
         self.swap_with(id, now_unix, exchange)
     }
 
@@ -58,7 +58,7 @@ impl Store {
 
     /// Settles what a restore left on disk when it didn't get to finish: called when blocklyd
     /// starts, and before each restore, so never while one is under way.
-    pub fn recover_restore(&self, id: &WorkloadId, now_unix: i64) -> Result<Recovery, StoreError> {
+    pub(crate) fn recover_restore(&self, id: &WorkloadId, now_unix: i64) -> Result<Recovery, StoreError> {
         let (data, restoring) = (self.data_dir(id), self.restoring_dir(id));
         let leftover = fs::symlink_metadata(&restoring).is_ok();
         if is_marked(&data) {
@@ -110,7 +110,7 @@ pub const RESTORE_COMPLETE: &str = ".blocklyd-restore-complete";
 
 /// What `Store::recover_restore` found and did.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Recovery {
+pub(crate) enum Recovery {
     /// No restore was left unfinished.
     None,
     /// The restored data is in place now; the data it replaced went to the trash, at `previous`

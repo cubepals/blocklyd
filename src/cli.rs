@@ -9,6 +9,6 @@
 //!   `crate::upgrade`.
 
 pub mod join;
-pub mod reenroll;
-pub mod service;
+pub(crate) mod reenroll;
+pub(crate) mod service;
 pub mod upgrade;

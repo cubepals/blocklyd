@@ -5,15 +5,6 @@
 
 use super::*;
 
-/// Where a reconciliation takes the records from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Records {
-    /// Read again from disk, and what a crash left settled: when blocklyd starts.
-    FromDisk,
-    /// As memory holds them: every pass after the first.
-    InMemory,
-}
-
 impl Manager {
     // ─── reconciliation ────────────────────────────────────────────────────────────────────
 

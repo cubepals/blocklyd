@@ -63,12 +63,3 @@ impl Manager {
         }
     }
 }
-
-/// Runs blocking file work on tokio's blocking pool, off the async threads. A panic in it goes on
-/// in the caller, as it would have inline.
-pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, NodeError> {
-    tokio::task::spawn_blocking(work).await.map_err(|e| match e.try_into_panic() {
-        Ok(panic) => std::panic::resume_unwind(panic),
-        Err(e) => NodeError::Internal(format!("the runtime dropped blocking work: {e}")),
-    })
-}

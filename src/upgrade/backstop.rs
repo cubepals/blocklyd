@@ -21,7 +21,7 @@ use tracing::{error, warn};
 use super::{Layout, TRIAL_SECONDS, on_trial};
 
 /// How long after the process started a trial must have ended: startup, then the trial itself.
-pub const DEADLINE: Duration = Duration::from_secs(2 * TRIAL_SECONDS);
+pub(crate) const DEADLINE: Duration = Duration::from_secs(2 * TRIAL_SECONDS);
 
 /// The backstop of one start: armed only when it is on trial.
 #[derive(Debug, Default)]

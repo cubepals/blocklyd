@@ -4,43 +4,6 @@
 
 use super::*;
 
-/// The node as the control plane holds it, as its last answer to a heartbeat said. On the wire it
-/// is a string (`HeartbeatResponse::lifecycle`, `FleetView::lifecycle`); one this build doesn't
-/// know is kept as it came and reported back the same.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Lifecycle {
-    Active,
-    Draining,
-    /// Its workloads may be running elsewhere: it restarts nothing on its own (`Lease::Revoked`).
-    Lost,
-    Retired,
-    Other(String),
-}
-
-impl From<&str> for Lifecycle {
-    fn from(said: &str) -> Self {
-        match said {
-            "active" => Self::Active,
-            "draining" => Self::Draining,
-            "lost" => Self::Lost,
-            "retired" => Self::Retired,
-            other => Self::Other(other.to_owned()),
-        }
-    }
-}
-
-impl Lifecycle {
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Active => "active",
-            Self::Draining => "draining",
-            Self::Lost => "lost",
-            Self::Retired => "retired",
-            Self::Other(other) => other,
-        }
-    }
-}
-
 impl Manager {
     // ─── fleet ─────────────────────────────────────────────────────────────────────────────
 
@@ -95,7 +58,7 @@ impl Manager {
 
     /// What the execution lease allows now. A node restarts nothing on its own without one: a
     /// node cut off from the control plane may have been replaced.
-    pub fn lease(&self) -> Lease {
+    pub(crate) fn lease(&self) -> Lease {
         if self.config.fleet.is_none() {
             return Lease::NotFleet;
         }
@@ -110,22 +73,22 @@ impl Manager {
     }
 
     /// What is left of the lease, in fleet mode once one was granted.
-    pub fn lease_remaining(&self) -> Option<Duration> {
+    pub(crate) fn lease_remaining(&self) -> Option<Duration> {
         self.config.fleet.as_ref()?;
         let until = self.fleet.lock().unwrap().lease_until?;
         Some(until.saturating_sub(boottime()))
     }
 
-    pub fn certificate_renewed(&self) {
+    pub(crate) fn certificate_renewed(&self) {
         self.fleet.lock().unwrap().renewed_at = Some(now());
     }
 
     /// Seconds since the control plane last answered a heartbeat, in fleet mode.
-    pub fn fleet_contact_age(&self) -> Option<f64> {
+    pub(crate) fn fleet_contact_age(&self) -> Option<f64> {
         self.fleet.lock().unwrap().last_contact.map(|at| at.elapsed().as_secs_f64())
     }
 
-    pub fn fleet_view(&self) -> Option<crate::protocol::FleetView> {
+    pub(crate) fn fleet_view(&self) -> Option<crate::protocol::FleetView> {
         let fleet = self.fleet.lock().unwrap().clone();
         let node_id = fleet.node_id?;
         Some(crate::protocol::FleetView {

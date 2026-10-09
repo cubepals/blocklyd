@@ -55,7 +55,7 @@ use crate::http_client as client;
 use crate::protocol::wire::{UpgradeFailure, UpgradeOffer};
 
 /// How long a new blocklyd has to reconcile and get a heartbeat accepted before it is put back.
-pub const TRIAL_SECONDS: u64 = 120;
+pub(crate) const TRIAL_SECONDS: u64 = 120;
 /// No blocklyd is this big; a download that is stops.
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
@@ -67,9 +67,9 @@ const LINK: &str = "/usr/local/bin/blocklyd";
 /// Where the binaries and the upgrade's own state are.
 #[derive(Clone, Debug)]
 pub struct Layout {
-    pub bin: PathBuf,
+    pub(crate) bin: PathBuf,
     /// The path the unit runs, which links to `bin`.
-    pub link: PathBuf,
+    pub(crate) link: PathBuf,
     dir: PathBuf,
 }
 
@@ -83,11 +83,11 @@ impl Layout {
         }
     }
 
-    pub fn next(&self) -> PathBuf {
+    pub(crate) fn next(&self) -> PathBuf {
         self.bin.with_file_name("blocklyd.next")
     }
 
-    pub fn prev(&self) -> PathBuf {
+    pub(crate) fn prev(&self) -> PathBuf {
         self.bin.with_file_name("blocklyd.prev")
     }
 
@@ -110,7 +110,7 @@ pub struct Trial {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum UpgradeError {
+pub(crate) enum UpgradeError {
     /// Worth trying again: the control plane didn't answer, or not all of it.
     #[error("{0}")]
     Transient(String),
@@ -128,7 +128,7 @@ fn failed(what: &str, path: &Path) -> impl FnOnce(std::io::Error) -> UpgradeErro
 /// when one was offered), put in place with the current one kept and the trial written down.
 /// `running` is the binary this process runs from, which must be the one it replaces. Returns
 /// the version installed.
-pub async fn install(
+pub(crate) async fn install(
     layout: &Layout,
     control_plane: &str,
     tls: Option<Arc<rustls::ClientConfig>>,
@@ -247,7 +247,7 @@ async fn download(
 }
 
 /// What `<bin> --version` says it is: `blocklyd 0.3.0` is 0.3.0.
-pub fn version_of(bin: &Path) -> Result<String, String> {
+pub(crate) fn version_of(bin: &Path) -> Result<String, String> {
     use std::process::{Command, Stdio};
     let spawn =
         || Command::new(bin).arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();
@@ -299,7 +299,7 @@ fn swap(layout: &Layout, trial: &Trial) -> Result<(), UpgradeError> {
 
 /// The trial this binary, `version`, is on. A trial for another version is left from an upgrade
 /// that never ran, or was put back, and is dropped.
-pub fn on_trial(layout: &Layout, version: &str) -> Option<Trial> {
+pub(crate) fn on_trial(layout: &Layout, version: &str) -> Option<Trial> {
     let text = fs::read(layout.trial()).ok()?;
     match serde_json::from_slice::<Trial>(&text) {
         Ok(trial) if trial.to == version => Some(trial),
@@ -311,13 +311,13 @@ pub fn on_trial(layout: &Layout, version: &str) -> Option<Trial> {
 }
 
 /// The trial passed: the new binary stays, and `blocklyd.prev` with it, for going back by hand.
-pub fn confirm(layout: &Layout) {
+pub(crate) fn confirm(layout: &Layout) {
     let _ = fs::remove_file(layout.trial());
 }
 
 /// Puts `blocklyd.prev` back for a trial that failed, and writes down why, for the heartbeats.
 /// Returns whether there was one to put back.
-pub fn roll_back(layout: &Layout, trial: &Trial, reason: &str) -> anyhow::Result<bool> {
+pub(crate) fn roll_back(layout: &Layout, trial: &Trial, reason: &str) -> anyhow::Result<bool> {
     let prev = layout.prev();
     let restored = prev.is_file();
     if restored {
@@ -336,7 +336,7 @@ fn record_failure(layout: &Layout, version: &str, reason: &str) -> anyhow::Resul
 }
 
 /// The last upgrade given up on, which every heartbeat reports until the next one is tried.
-pub fn failure(layout: &Layout) -> Option<UpgradeFailure> {
+pub(crate) fn failure(layout: &Layout) -> Option<UpgradeFailure> {
     serde_json::from_slice(&fs::read(layout.failed()).ok()?).ok()
 }
 
@@ -409,12 +409,12 @@ impl Upgrader {
     }
 
     /// What heartbeats report: the last upgrade given up on.
-    pub fn failure(&self) -> Option<UpgradeFailure> {
+    pub(crate) fn failure(&self) -> Option<UpgradeFailure> {
         failure(&self.layout)
     }
 
     /// The control plane accepted a heartbeat. One that said the node had reconciled ends a trial.
-    pub fn accepted(&self, reconciled: bool) {
+    pub(crate) fn accepted(&self, reconciled: bool) {
         if !reconciled {
             return;
         }
@@ -457,7 +457,7 @@ impl Upgrader {
 
     /// A heartbeat's answer offered `offer`: it is installed in the background, and blocklyd
     /// stops once it is, unless an attempt runs or failed a moment ago.
-    pub fn offered(self: &Arc<Self>, offer: UpgradeOffer, tls: Arc<rustls::ClientConfig>) {
+    pub(crate) fn offered(self: &Arc<Self>, offer: UpgradeOffer, tls: Arc<rustls::ClientConfig>) {
         if offer.version == self.version || self.trial.lock().unwrap().is_some() || self.cancel.is_cancelled() {
             return;
         }

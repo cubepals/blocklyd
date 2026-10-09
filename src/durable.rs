@@ -19,14 +19,14 @@ use std::path::{Path, PathBuf};
 #[error("{what} {path}: {source}")]
 pub struct WriteError {
     /// "writing", "syncing" or "replacing".
-    pub what: &'static str,
-    pub path: PathBuf,
-    pub source: io::Error,
+    pub(crate) what: &'static str,
+    pub(crate) path: PathBuf,
+    pub(crate) source: io::Error,
 }
 
 /// How the name of `write_atomic`'s temp file for a file called `name` starts: `.<name>.`, with six
 /// random letters and digits after it. A crash between making it and the rename leaves it behind.
-pub fn temp_prefix(name: &str) -> String {
+pub(crate) fn temp_prefix(name: &str) -> String {
     format!(".{name}.")
 }
 
@@ -60,17 +60,17 @@ pub fn write_atomic(path: &Path, contents: &[u8], mode: u32) -> Result<(), Write
 /// Opened before the writing starts: Linux (5.8 and later) reports to `syncfs` a write-back error
 /// that happened after the descriptor was opened, so one opened after the copy would miss an error
 /// during it.
-pub struct FilesystemSync(File);
+pub(crate) struct FilesystemSync(File);
 
 impl FilesystemSync {
     /// Starts on the filesystem `dir` is on: a directory that exists, where the tree will go.
-    pub fn begin(dir: &Path) -> io::Result<Self> {
+    pub(crate) fn begin(dir: &Path) -> io::Result<Self> {
         File::open(dir).map(Self)
     }
 
     /// Everything written to the filesystem since `begin` is on disk once this returns `Ok`;
     /// otherwise the error that kept it from it (EIO, or ENOSPC on a full disk).
-    pub fn finish(self) -> io::Result<()> {
+    pub(crate) fn finish(self) -> io::Result<()> {
         rustix::fs::syncfs(&self.0).map_err(io::Error::from)
     }
 }

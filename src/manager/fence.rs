@@ -75,7 +75,7 @@ impl Manager {
     /// successful resync, so what it goes by is current. Each fence runs in its own task, since it
     /// takes the workload's lock and a resync takes none; a workload busy with something else (a
     /// stop, a delete, a fence already under way) is looked at again at the next resync.
-    pub fn reapply_fences(self: &Arc<Self>) {
+    pub(crate) fn reapply_fences(self: &Arc<Self>) {
         let superseded: Vec<(WorkloadId, u64)> = {
             let state = self.state.lock().unwrap();
             let runs = |id: &WorkloadId| {

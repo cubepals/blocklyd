@@ -31,42 +31,42 @@ use sha2::{Digest, Sha256};
 use crate::tree::{Kind, NoRoom};
 
 /// Unpacked bytes an archive may expand to. A world is a few GB; this stops a gzip bomb.
-pub const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+pub(crate) const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
 /// Entries an archive may hold. Worlds hold thousands; this bounds the work a bad one causes.
-pub const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
+pub(crate) const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
 /// What a restore lets tar read of a member besides the data it unpacks: its long name, long link
 /// and PAX records, or the data of an entry it skips. Go's archive/tar and libarchive stop there
 /// too; no ordinary writer comes near it.
 const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 /// The longest one download's body may take, however steadily it comes: the control plane gives
 /// up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
-pub const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);
+pub(crate) const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);
 
 /// The parts an archive of `size` bytes fills, `part_size` each but the last: one at least, so
 /// an empty archive is still an object.
-pub fn parts_needed(size: u64, part_size: u64) -> u64 {
+pub(crate) fn parts_needed(size: u64, part_size: u64) -> u64 {
     size.div_ceil(part_size.max(1)).max(1)
 }
 
 /// Counts and hashes what passes through.
-pub struct Hashing<W> {
+pub(crate) struct Hashing<W> {
     inner: W,
     hasher: Sha256,
     bytes: u64,
 }
 
 impl<W> Hashing<W> {
-    pub fn new(inner: W) -> Self {
+    pub(crate) fn new(inner: W) -> Self {
         Self { inner, hasher: Sha256::new(), bytes: 0 }
     }
-    pub fn update(&mut self, data: &[u8]) {
+    pub(crate) fn update(&mut self, data: &[u8]) {
         self.hasher.update(data);
         self.bytes += data.len() as u64;
     }
-    pub fn bytes(&self) -> u64 {
+    pub(crate) fn bytes(&self) -> u64 {
         self.bytes
     }
-    pub fn finish(self) -> (W, String, u64) {
+    pub(crate) fn finish(self) -> (W, String, u64) {
         (self.inner, hex::encode(self.hasher.finalize()), self.bytes)
     }
 }
@@ -85,7 +85,7 @@ impl<W: Write> Write for Hashing<W> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Packed {
     pub size_bytes: u64,
-    pub sha256: String,
+    pub(crate) sha256: String,
     /// Directories, files and links in the archive.
     pub entries: u64,
 }
@@ -147,9 +147,9 @@ fn exactly(file: &mut File, size: u64) -> impl Read {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unpacked {
-    pub entries: u64,
+    pub(crate) entries: u64,
     /// Links, devices and the like: never unpacked.
-    pub skipped: u64,
+    pub(crate) skipped: u64,
     pub bytes: u64,
 }
 
@@ -324,7 +324,7 @@ fn chown_tree(dir: &Path, owner: (u32, u32)) -> io::Result<()> {
 }
 
 /// Bytes a directory holds, for disk admission before an export. Blocking.
-pub fn tree_bytes(dir: &Path) -> u64 {
+pub(crate) fn tree_bytes(dir: &Path) -> u64 {
     crate::tree::disk_usage(dir).unwrap_or(0)
 }
 

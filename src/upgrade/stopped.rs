@@ -15,7 +15,7 @@ use serde::Deserialize;
 /// failed, where the main process never ran and `code` and `status` (`EXIT_CODE`, `EXIT_STATUS`)
 /// are unset, and keeps what systemd counts as clean: a stop's SIGTERM, `SuccessExitStatus=`.
 /// Without it, `code` and `status` decide, and saying nothing is a clean exit.
-pub fn failure(result: Option<&str>, code: Option<&str>, status: Option<&str>) -> Option<String> {
+pub(crate) fn failure(result: Option<&str>, code: Option<&str>, status: Option<&str>) -> Option<String> {
     let (exit_code, exit_status) = (code.unwrap_or("exited"), status.unwrap_or("0"));
     if result.map_or(exit_code == "exited" && exit_status == "0", |result| result == "success") {
         return None;

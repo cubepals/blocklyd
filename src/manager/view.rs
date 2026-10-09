@@ -103,7 +103,7 @@ impl Manager {
 
     /// Every workload, or those whose state changed at or after `since` (Blockly's
     /// `observeChanged`: level-triggered, answered from one local listing).
-    pub fn list(&self, since: Option<OffsetDateTime>) -> Vec<WorkloadView> {
+    pub(crate) fn list(&self, since: Option<OffsetDateTime>) -> Vec<WorkloadView> {
         let state = self.state.lock().unwrap();
         state
             .records
@@ -122,7 +122,7 @@ impl Manager {
             .collect()
     }
 
-    pub fn workloads_by_state(&self) -> BTreeMap<WorkloadState, u64> {
+    pub(crate) fn workloads_by_state(&self) -> BTreeMap<WorkloadState, u64> {
         let state = self.state.lock().unwrap();
         let mut counts: BTreeMap<WorkloadState, u64> = WorkloadState::ALL.iter().map(|s| (*s, 0)).collect();
         for r in state.records.values() {

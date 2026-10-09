@@ -93,18 +93,23 @@ mod stats;
 mod view;
 mod workload_state;
 
-pub use error::{ConflictCode, EpochRule, NodeError, check_epoch};
-pub use fleet::Lifecycle;
+pub use error::{ConflictCode, NodeError};
+pub(crate) use error::{EpochRule, check_epoch};
 pub use label_record::LabelRecord;
-pub use logs::lines_of;
-pub use node::WorkloadSample;
-use persist::blocking;
-pub use reconcile::Records;
-pub use workload_state::{Sight, Stopping, derive_state};
+pub(crate) use workload_state::{Sight, Stopping, derive_state};
 use workload_state::{clean_exit, derive_power_state};
 
 fn now_str() -> String {
     format_time(now())
+}
+
+/// Where a reconciliation takes the records from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Records {
+    /// Read again from disk, and what a crash left settled: when blocklyd starts.
+    FromDisk,
+    /// As memory holds them: every pass after the first.
+    InMemory,
 }
 
 /// HTTP conditional semantics on `PUT /v1/workloads/{id}`.
@@ -188,7 +193,7 @@ struct State {
 
 pub struct Manager {
     pub config: Arc<Config>,
-    pub runtime: Arc<dyn ContainerRuntime>,
+    pub(crate) runtime: Arc<dyn ContainerRuntime>,
     pub store: Store,
     pub metrics: Arc<Metrics>,
     /// Shared with the disk writes, which run on the blocking pool (`persist.rs`).
@@ -197,7 +202,7 @@ pub struct Manager {
     disk_writes: Arc<Mutex<()>>,
     locks: Mutex<HashMap<WorkloadId, Arc<tokio::sync::Mutex<()>>>>,
     exec_keys: Mutex<IdempotencyCache>,
-    pub started_at: OffsetDateTime,
+    pub(crate) started_at: OffsetDateTime,
     started: Instant,
     docker_up: AtomicBool,
     reconciled: AtomicBool,
@@ -235,9 +240,46 @@ struct FleetState {
     renewed_at: Option<OffsetDateTime>,
 }
 
+/// The node as the control plane holds it, as its last answer to a heartbeat said. On the wire it
+/// is a string (`HeartbeatResponse::lifecycle`, `FleetView::lifecycle`); one this build doesn't
+/// know is kept as it came and reported back the same.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Lifecycle {
+    Active,
+    Draining,
+    /// Its workloads may be running elsewhere: it restarts nothing on its own (`Lease::Revoked`).
+    Lost,
+    Retired,
+    Other(String),
+}
+
+impl From<&str> for Lifecycle {
+    fn from(said: &str) -> Self {
+        match said {
+            "active" => Self::Active,
+            "draining" => Self::Draining,
+            "lost" => Self::Lost,
+            "retired" => Self::Retired,
+            other => Self::Other(other.to_owned()),
+        }
+    }
+}
+
+impl Lifecycle {
+    pub(crate) fn as_str(&self) -> &str {
+        match self {
+            Self::Active => "active",
+            Self::Draining => "draining",
+            Self::Lost => "lost",
+            Self::Retired => "retired",
+            Self::Other(other) => other,
+        }
+    }
+}
+
 /// What the execution lease allows now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lease {
+pub(crate) enum Lease {
     /// Not in fleet mode: the single-node daemon restarts as its policy says.
     NotFleet,
     Held,
@@ -341,7 +383,7 @@ impl Manager {
         })
     }
 
-    pub fn uptime(&self) -> Duration {
+    pub(crate) fn uptime(&self) -> Duration {
         self.started.elapsed()
     }
 
@@ -357,7 +399,7 @@ impl Manager {
     /// full pass has looked since it last didn't. Otherwise every state reads `unknown`: after an
     /// outage the last observation is history (a daemon stop kills workloads), and reporting it
     /// as the state would tell the control plane something false.
-    pub fn trustworthy(&self) -> bool {
+    pub(crate) fn trustworthy(&self) -> bool {
         self.docker_up() && self.reconciled()
     }
 
@@ -403,11 +445,11 @@ impl Manager {
         format!("blockly-{}-{}", self.config.deployment_id, id)
     }
 
-    pub fn allocatable_memory_mb(&self) -> u64 {
+    pub(crate) fn allocatable_memory_mb(&self) -> u64 {
         self.config.capacity.allocatable_mb(self.memory_total_mb)
     }
 
-    pub fn spec_policy(&self) -> SpecPolicy {
+    pub(crate) fn spec_policy(&self) -> SpecPolicy {
         SpecPolicy {
             allowed_images: self.config.workloads.allowed_images.clone(),
             min_memory_mb: self.config.workloads.min_memory_mb,
@@ -416,7 +458,7 @@ impl Manager {
         }
     }
 
-    pub fn owner_labels(&self) -> Vec<String> {
+    pub(crate) fn owner_labels(&self) -> Vec<String> {
         vec![
             format!("{LABEL_MANAGED}=true"),
             format!("{LABEL_DEPLOYMENT}={}", self.config.deployment_id),
@@ -571,4 +613,13 @@ fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
     } else {
         e.into()
     }
+}
+
+/// Runs blocking file work on tokio's blocking pool, off the async threads. A panic in it goes on
+/// in the caller, as it would have inline.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Result<T, NodeError> {
+    tokio::task::spawn_blocking(work).await.map_err(|e| match e.try_into_panic() {
+        Ok(panic) => std::panic::resume_unwind(panic),
+        Err(e) => NodeError::Internal(format!("the runtime dropped blocking work: {e}")),
+    })
 }

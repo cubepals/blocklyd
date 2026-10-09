@@ -55,7 +55,7 @@ pub struct AppState {
 }
 
 /// The workload id in the path, validated before any handler sees it.
-pub struct WorkloadPath(pub WorkloadId);
+pub(crate) struct WorkloadPath(pub(crate) WorkloadId);
 
 impl<S: Send + Sync> FromRequestParts<S> for WorkloadPath {
     type Rejection = Response;
@@ -70,7 +70,7 @@ impl<S: Send + Sync> FromRequestParts<S> for WorkloadPath {
 }
 
 /// A workload and one of its snapshots, from the path.
-pub struct SnapshotPath(pub WorkloadId, pub SnapshotId);
+pub(crate) struct SnapshotPath(pub(crate) WorkloadId, pub SnapshotId);
 
 impl<S: Send + Sync> FromRequestParts<S> for SnapshotPath {
     type Rejection = Response;
@@ -87,7 +87,7 @@ impl<S: Send + Sync> FromRequestParts<S> for SnapshotPath {
 }
 
 /// JSON bodies, with the protocol's own error shape when they don't parse.
-pub struct ApiJson<T>(pub T);
+pub(crate) struct ApiJson<T>(pub(crate) T);
 
 impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequest<S> for ApiJson<T> {
     type Rejection = Response;
@@ -101,7 +101,7 @@ impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequest<S> for ApiJson<
 }
 
 /// Query strings, likewise.
-pub struct ApiQuery<T>(pub T);
+pub(crate) struct ApiQuery<T>(pub(crate) T);
 
 impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequestParts<S> for ApiQuery<T> {
     type Rejection = Response;
@@ -551,10 +551,10 @@ pub async fn serve_tls(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PeerAddr(pub SocketAddr);
+pub(crate) struct PeerAddr(pub(crate) SocketAddr);
 
 /// Plain HTTP on the ops listener: liveness, readiness and metrics. No workload control.
-pub fn ops_router(manager: Arc<Manager>) -> Router {
+pub(crate) fn ops_router(manager: Arc<Manager>) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok\n" }))
         .route(

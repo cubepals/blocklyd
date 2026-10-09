@@ -11,7 +11,7 @@ use crate::config::{Config, ConfigError, Mode};
 use crate::fleet::identity::Identity;
 
 /// The verdict, and the configuration when it loads.
-pub fn check(path: &Path) -> (Check, Option<Config>) {
+pub(crate) fn check(path: &Path) -> (Check, Option<Config>) {
     let config = match Config::load(path) {
         Ok(config) => config,
         Err(e) => {

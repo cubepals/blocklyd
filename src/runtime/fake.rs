@@ -21,17 +21,17 @@ use super::{
 
 #[derive(Clone, Debug)]
 pub struct FakeContainer {
-    pub id: String,
+    pub(crate) id: String,
     pub spec: ContainerSpec,
     pub status: ContainerStatus,
-    pub exit_code: i64,
-    pub oom_killed: bool,
-    pub started_at: Option<OffsetDateTime>,
-    pub finished_at: Option<OffsetDateTime>,
-    pub restart_count: u32,
-    pub logs: Vec<(LogStream, String)>,
+    pub(crate) exit_code: i64,
+    pub(crate) oom_killed: bool,
+    pub(crate) started_at: Option<OffsetDateTime>,
+    pub(crate) finished_at: Option<OffsetDateTime>,
+    pub(crate) restart_count: u32,
+    pub(crate) logs: Vec<(LogStream, String)>,
     /// Ignores the stop signal, so a stop ends in a kill (exit 137).
-    pub stubborn: bool,
+    pub(crate) stubborn: bool,
 }
 
 pub struct FakeRuntime {
@@ -40,11 +40,11 @@ pub struct FakeRuntime {
     next_id: AtomicU64,
     events: broadcast::Sender<RuntimeEvent>,
     pub calls: Mutex<Vec<String>>,
-    pub images: Mutex<Vec<String>>,
+    pub(crate) images: Mutex<Vec<String>>,
     /// What `info` answers while the daemon is up.
-    pub runtime_info: Mutex<RuntimeInfo>,
+    pub(crate) runtime_info: Mutex<RuntimeInfo>,
     /// What `network_isolated` answers: None for a network that doesn't exist.
-    pub network_isolated: Mutex<Option<bool>>,
+    pub(crate) network_isolated: Mutex<Option<bool>>,
     /// Execs wait here, once called, before they look for their container: a test that holds it
     /// for writing acts between blocklyd's checks and the exec itself.
     pub exec_gate: tokio::sync::RwLock<()>,
@@ -99,12 +99,6 @@ impl FakeRuntime {
 
     pub fn container(&self, name: &str) -> Option<FakeContainer> {
         self.containers.lock().unwrap().get(name).cloned()
-    }
-
-    pub fn names(&self) -> Vec<String> {
-        let mut names: Vec<_> = self.containers.lock().unwrap().keys().cloned().collect();
-        names.sort();
-        names
     }
 
     fn emit(&self, container: &FakeContainer, action: &str) {

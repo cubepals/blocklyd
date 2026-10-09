@@ -26,28 +26,28 @@ use crate::protocol::{Health, Proto};
 /// manager always fills it from host policy.
 #[derive(Clone)]
 pub struct ContainerSpec {
-    pub name: String,
-    pub image: String,
-    pub entrypoint: Option<Vec<String>>,
+    pub(crate) name: String,
+    pub(crate) image: String,
+    pub(crate) entrypoint: Option<Vec<String>>,
     /// Environment, secrets included. Never logged (see `Debug` below).
     pub env: Vec<(String, String)>,
     pub labels: BTreeMap<String, String>,
-    pub user: String,
-    pub memory_bytes: i64,
-    pub nano_cpus: Option<i64>,
-    pub cpu_shares: i64,
-    pub pids_limit: i64,
-    pub read_only_rootfs: bool,
-    pub tmp_size_mb: u32,
-    pub data_dir: PathBuf,
-    pub mount_path: String,
-    pub ports: Vec<PortBinding>,
-    pub stop_signal: String,
-    pub stop_timeout_secs: u32,
-    pub network: String,
-    pub log_max_size_mb: u32,
-    pub log_max_files: u32,
-    pub oom_score_adj: i32,
+    pub(crate) user: String,
+    pub(crate) memory_bytes: i64,
+    pub(crate) nano_cpus: Option<i64>,
+    pub(crate) cpu_shares: i64,
+    pub(crate) pids_limit: i64,
+    pub(crate) read_only_rootfs: bool,
+    pub(crate) tmp_size_mb: u32,
+    pub(crate) data_dir: PathBuf,
+    pub(crate) mount_path: String,
+    pub(crate) ports: Vec<PortBinding>,
+    pub(crate) stop_signal: String,
+    pub(crate) stop_timeout_secs: u32,
+    pub(crate) network: String,
+    pub(crate) log_max_size_mb: u32,
+    pub(crate) log_max_files: u32,
+    pub(crate) oom_score_adj: i32,
 }
 
 /// Names only for the environment: values may be secrets.
@@ -65,11 +65,11 @@ impl std::fmt::Debug for ContainerSpec {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PortBinding {
-    pub container_port: u16,
-    pub protocol: Proto,
-    pub host_ips: Vec<IpAddr>,
-    pub host_port: u16,
+pub(crate) struct PortBinding {
+    pub(crate) container_port: u16,
+    pub(crate) protocol: Proto,
+    pub(crate) host_ips: Vec<IpAddr>,
+    pub(crate) host_port: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,28 +87,28 @@ pub enum ContainerStatus {
 /// A container as the runtime reports it right now.
 #[derive(Clone, Debug)]
 pub struct ContainerInfo {
-    pub id: String,
-    pub name: String,
-    pub labels: BTreeMap<String, String>,
-    pub env: BTreeMap<String, String>,
-    pub status: ContainerStatus,
-    pub exit_code: i64,
-    pub oom_killed: bool,
-    pub started_at: Option<OffsetDateTime>,
-    pub finished_at: Option<OffsetDateTime>,
-    pub restart_count: u32,
-    pub health: Option<Health>,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) labels: BTreeMap<String, String>,
+    pub(crate) env: BTreeMap<String, String>,
+    pub(crate) status: ContainerStatus,
+    pub(crate) exit_code: i64,
+    pub(crate) oom_killed: bool,
+    pub(crate) started_at: Option<OffsetDateTime>,
+    pub(crate) finished_at: Option<OffsetDateTime>,
+    pub(crate) restart_count: u32,
+    pub(crate) health: Option<Health>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ExecOutput {
-    pub exit_code: Option<i64>,
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
-    pub stdout_truncated: bool,
-    pub stderr_truncated: bool,
-    pub timed_out: bool,
-    pub killed: bool,
+    pub(crate) exit_code: Option<i64>,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
+    pub(crate) timed_out: bool,
+    pub(crate) killed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,58 +119,58 @@ pub enum LogStream {
 
 #[derive(Clone, Debug)]
 pub struct LogChunk {
-    pub stream: LogStream,
+    pub(crate) stream: LogStream,
     /// One or more lines, each prefixed with an RFC 3339 timestamp and a space.
-    pub bytes: Bytes,
+    pub(crate) bytes: Bytes,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct LogOptions {
-    pub tail: Option<u32>,
-    pub since_unix: Option<i64>,
-    pub follow: bool,
+    pub(crate) tail: Option<u32>,
+    pub(crate) since_unix: Option<i64>,
+    pub(crate) follow: bool,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct RawStats {
-    pub cpu_total_ns: Option<u64>,
-    pub cpu_throttled_periods: Option<u64>,
-    pub memory_usage: Option<u64>,
-    pub memory_inactive_file: Option<u64>,
-    pub memory_limit: Option<u64>,
-    pub pids: Option<u64>,
-    pub pids_limit: Option<u64>,
-    pub rx_bytes: Option<u64>,
-    pub tx_bytes: Option<u64>,
+    pub(crate) cpu_total_ns: Option<u64>,
+    pub(crate) cpu_throttled_periods: Option<u64>,
+    pub(crate) memory_usage: Option<u64>,
+    pub(crate) memory_inactive_file: Option<u64>,
+    pub(crate) memory_limit: Option<u64>,
+    pub(crate) pids: Option<u64>,
+    pub(crate) pids_limit: Option<u64>,
+    pub(crate) rx_bytes: Option<u64>,
+    pub(crate) tx_bytes: Option<u64>,
 }
 
 /// Something happened to a container. A hint to look again, never the truth itself.
 #[derive(Clone, Debug)]
 pub struct RuntimeEvent {
-    pub container_id: String,
-    pub action: String,
-    pub exit_code: Option<i64>,
-    pub at: OffsetDateTime,
+    pub(crate) container_id: String,
+    pub(crate) action: String,
+    pub(crate) exit_code: Option<i64>,
+    pub(crate) at: OffsetDateTime,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct RuntimeInfo {
-    pub version: Option<String>,
-    pub api_version: Option<String>,
-    pub cgroup_version: Option<String>,
-    pub cgroup_driver: Option<String>,
-    pub storage_driver: Option<String>,
-    pub security_options: Vec<String>,
-    pub live_restore: Option<bool>,
+    pub(crate) version: Option<String>,
+    pub(crate) api_version: Option<String>,
+    pub(crate) cgroup_version: Option<String>,
+    pub(crate) cgroup_driver: Option<String>,
+    pub(crate) storage_driver: Option<String>,
+    pub(crate) security_options: Vec<String>,
+    pub(crate) live_restore: Option<bool>,
     /// The daemon's default log driver, for containers that don't name one (blocklyd's always do).
-    pub log_driver: Option<String>,
+    pub(crate) log_driver: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct NetworkReport {
     /// False when the network lets workloads talk to each other; reported, not fixed, since the
     /// network may predate blocklyd.
-    pub isolated: bool,
+    pub(crate) isolated: bool,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -191,7 +191,7 @@ pub enum RuntimeError {
 }
 
 impl RuntimeError {
-    pub fn is_unavailable(&self) -> bool {
+    pub(crate) fn is_unavailable(&self) -> bool {
         matches!(self, RuntimeError::Unavailable(_))
     }
 }
@@ -237,13 +237,13 @@ pub trait ContainerRuntime: Send + Sync + 'static {
 }
 
 /// RFC 3339 → time, with Docker's "never" (year 1) as None.
-pub fn parse_time(value: Option<&str>) -> Option<OffsetDateTime> {
+pub(crate) fn parse_time(value: Option<&str>) -> Option<OffsetDateTime> {
     let value = value?;
     let parsed = OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()?;
     (parsed.year() > 1970).then_some(parsed)
 }
 
-pub fn format_time(value: OffsetDateTime) -> String {
+pub(crate) fn format_time(value: OffsetDateTime) -> String {
     value.format(&time::format_description::well_known::Rfc3339).unwrap_or_else(|_| value.unix_timestamp().to_string())
 }
 

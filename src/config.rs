@@ -34,13 +34,13 @@ pub struct Config {
     #[serde(default)]
     pub network: NetworkConfig,
     #[serde(default)]
-    pub workloads: WorkloadPolicy,
+    pub(crate) workloads: WorkloadPolicy,
     #[serde(default)]
     pub capacity: CapacityConfig,
     #[serde(default)]
-    pub intervals: Intervals,
+    pub(crate) intervals: Intervals,
     #[serde(default)]
-    pub transfer: TransferConfig,
+    pub(crate) transfer: TransferConfig,
     /// Fleet mode: this node enrolls with a control plane, takes its identity and TLS material
     /// from it, and reports to it. Without it, blocklyd is the single-node daemon it was.
     #[serde(default)]
@@ -81,12 +81,12 @@ fn default_shutdown_grace() -> u64 {
 #[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     /// This node's certificate chain (PEM), with extended key usage serverAuth.
-    pub cert: PathBuf,
+    pub(crate) cert: PathBuf,
     /// Its private key (PEM, mode 0600).
-    pub key: PathBuf,
+    pub(crate) key: PathBuf,
     /// The CA that issues control-plane client certificates. Only its certificate lives on a
     /// host; its private key never does.
-    pub client_ca: PathBuf,
+    pub(crate) client_ca: PathBuf,
     /// DNS names (subject alternative names) of the clients allowed to call this API, e.g.
     /// `control-plane.staging.blockly.internal`. A valid certificate for another name is refused.
     pub allowed_clients: Vec<String>,
@@ -151,8 +151,8 @@ impl Default for OpsConfig {
 pub struct DockerConfig {
     pub socket: PathBuf,
     /// The bridge network workloads join. Made with inter-container traffic off.
-    pub network: String,
-    pub pull_timeout_seconds: u64,
+    pub(crate) network: String,
+    pub(crate) pull_timeout_seconds: u64,
 }
 
 impl Default for DockerConfig {
@@ -178,7 +178,7 @@ pub struct NetworkConfig {
     pub control_ips: Vec<IpAddr>,
     /// A released port isn't handed out again for this long, so a route to the old workload
     /// that is still cached somewhere can't reach a new one.
-    pub port_quarantine_seconds: u64,
+    pub(crate) port_quarantine_seconds: u64,
 }
 
 impl Default for NetworkConfig {
@@ -194,26 +194,26 @@ impl Default for NetworkConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct WorkloadPolicy {
+pub(crate) struct WorkloadPolicy {
     /// Image reference prefixes this host runs. Everything else is refused.
-    pub allowed_images: Vec<String>,
+    pub(crate) allowed_images: Vec<String>,
     /// uid:gid every workload runs as. Numeric, never root.
-    pub user: Ids,
+    pub(crate) user: Ids,
     /// Owner of each workload's data directory on the host. The same as `user` unless the
     /// daemon remaps user namespaces, where it is the remapped host id.
-    pub data_owner: Option<Ids>,
-    pub read_only_rootfs: bool,
+    pub(crate) data_owner: Option<Ids>,
+    pub(crate) read_only_rootfs: bool,
     /// Size of the writable /tmp a read-only workload gets (tmpfs, counted in its memory).
-    pub tmp_size_mb: u32,
-    pub default_pids_limit: u32,
-    pub log_max_size_mb: u32,
-    pub log_max_files: u32,
+    pub(crate) tmp_size_mb: u32,
+    pub(crate) default_pids_limit: u32,
+    pub(crate) log_max_size_mb: u32,
+    pub(crate) log_max_files: u32,
     /// The kernel kills the highest score first when the host runs out; workloads go before
     /// blocklyd and Docker.
-    pub oom_score_adj: i32,
+    pub(crate) oom_score_adj: i32,
     /// How long deleted data stays in the host's trash before it is purged.
-    pub trash_retention_hours: u64,
-    pub min_memory_mb: u32,
+    pub(crate) trash_retention_hours: u64,
+    pub(crate) min_memory_mb: u32,
 }
 
 impl Default for WorkloadPolicy {
@@ -242,12 +242,12 @@ pub struct CapacityConfig {
     pub reserved_memory_mb: u64,
     /// A ceiling on what workloads may be given, below total minus reserved: for a host that
     /// runs other things too, or a test that wants a small host.
-    pub allocatable_memory_mb: Option<u64>,
+    pub(crate) allocatable_memory_mb: Option<u64>,
     /// Creating a workload is refused below this much free disk.
     pub min_free_disk_mb: u64,
     /// Running memory may reach allocatable × this. 1.0: no overcommit (the default, since a
     /// JVM with a pre-touched heap really uses what it is given).
-    pub memory_overcommit: f64,
+    pub(crate) memory_overcommit: f64,
     /// CPU kept for the host (kernel, Docker, blocklyd, network interrupts), in millicores.
     pub reserved_cpu_millis: u64,
 }
@@ -275,11 +275,11 @@ impl CapacityConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Intervals {
+pub(crate) struct Intervals {
     /// A full reconciliation against the runtime, besides the event stream.
-    pub resync_seconds: u64,
-    pub stats_seconds: u64,
-    pub disk_usage_seconds: u64,
+    pub(crate) resync_seconds: u64,
+    pub(crate) stats_seconds: u64,
+    pub(crate) disk_usage_seconds: u64,
 }
 
 impl Default for Intervals {
@@ -291,16 +291,16 @@ impl Default for Intervals {
 /// How archives reach the object store.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct TransferConfig {
+pub(crate) struct TransferConfig {
     /// The largest archive sent in one PUT, in MiB; a larger one goes in parts when the request
     /// offers them. The default is R2's limit for one PUT, the strictest of the stores Blockly
     /// uses; a store whose limit is lower sets it lower.
-    pub max_put_mb: u64,
+    pub(crate) max_put_mb: u64,
     /// How long a transfer may go without receiving anything before it counts as stalled: a
     /// store that hung mid-body, or a path that drops packets without a reset, never ends a body
     /// by itself. Whatever arrives starts it over, so a slow but live download of any size never
     /// trips it.
-    pub idle_seconds: u64,
+    pub(crate) idle_seconds: u64,
 }
 
 const MIB: u64 = 1024 * 1024;
@@ -315,11 +315,11 @@ impl Default for TransferConfig {
 }
 
 impl TransferConfig {
-    pub fn max_put_bytes(&self) -> u64 {
+    pub(crate) fn max_put_bytes(&self) -> u64 {
         self.max_put_mb.saturating_mul(MIB)
     }
 
-    pub fn idle(&self) -> Duration {
+    pub(crate) fn idle(&self) -> Duration {
         Duration::from_secs(self.idle_seconds)
     }
 }
@@ -343,9 +343,9 @@ pub enum ConfigError {
 
 /// A numeric `uid:gid`, as the config writes one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Ids {
-    pub uid: u32,
-    pub gid: u32,
+pub(crate) struct Ids {
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
 }
 
 impl FromStr for Ids {
@@ -383,7 +383,7 @@ fn name_ok(value: &str) -> bool {
 
 /// Where a listener without authentication may be bound: loopback, or an address the internet
 /// can't route to. An IPv4 address written as IPv6 (`::ffff:a.b.c.d`) is judged as itself.
-pub fn private_or_loopback(ip: IpAddr) -> bool {
+pub(crate) fn private_or_loopback(ip: IpAddr) -> bool {
     match ip.to_canonical() {
         IpAddr::V4(ip) => {
             let [a, b, ..] = ip.octets();
@@ -397,7 +397,7 @@ pub fn private_or_loopback(ip: IpAddr) -> bool {
 /// Whether the node can call the control plane at `url`: `https://host[:port]`, or a path under
 /// it, read as the fleet client reads it (`hyper::Uri`). Paths are added to it as text, so a query
 /// or a fragment would swallow them; a port out of range would be dialled as 443.
-pub fn fleet_url_ok(url: &str) -> bool {
+pub(crate) fn fleet_url_ok(url: &str) -> bool {
     url.starts_with("https://")
         && !url.contains('#')
         && url.parse::<hyper::Uri>().is_ok_and(|uri| {

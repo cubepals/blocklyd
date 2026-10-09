@@ -14,7 +14,7 @@ use crate::protocol::SnapshotView;
 /// Local snapshots, beside the data they copy: on the same filesystem, so a copy can share its
 /// blocks, and out of the workload's reach, since only `data/` is mounted.
 impl Store {
-    pub fn snapshots_dir(&self, id: &WorkloadId) -> PathBuf {
+    pub(crate) fn snapshots_dir(&self, id: &WorkloadId) -> PathBuf {
         self.workload_dir(id).join("snapshots")
     }
 
@@ -24,13 +24,13 @@ impl Store {
     }
 
     /// A finished snapshot's description, if it exists.
-    pub fn snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Option<SnapshotView> {
+    pub(crate) fn snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Option<SnapshotView> {
         let bytes = fs::read(self.snapshot_dir(id, snapshot).join("snapshot.json")).ok()?;
         serde_json::from_slice::<SnapshotView>(&bytes).ok().filter(|v| v.id == *snapshot && v.workload == *id)
     }
 
     /// The workload's finished snapshots, oldest first.
-    pub fn snapshots(&self, id: &WorkloadId) -> Vec<SnapshotView> {
+    pub(crate) fn snapshots(&self, id: &WorkloadId) -> Vec<SnapshotView> {
         let Ok(entries) = fs::read_dir(self.snapshots_dir(id)) else { return Vec::new() };
         let mut found: Vec<SnapshotView> = entries
             .filter_map(Result::ok)
@@ -57,14 +57,14 @@ impl Store {
     }
 
     /// Writes a snapshot's description, last, once its copy is on disk: from here on it exists.
-    pub fn finish_snapshot(&self, view: &SnapshotView) -> Result<(), StoreError> {
+    pub(crate) fn finish_snapshot(&self, view: &SnapshotView) -> Result<(), StoreError> {
         let path = self.snapshot_dir(&view.workload, &view.id).join("snapshot.json");
         let bytes = serde_json::to_vec_pretty(view).expect("serializes");
         Ok(durable::write_atomic(&path, &bytes, 0o600)?)
     }
 
     /// Removes a snapshot, finished or not. Returns whether there was one. Blocking.
-    pub fn remove_snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Result<bool, StoreError> {
+    pub(crate) fn remove_snapshot(&self, id: &WorkloadId, snapshot: &SnapshotId) -> Result<bool, StoreError> {
         let dir = self.snapshot_dir(id, snapshot);
         match fs::remove_dir_all(&dir) {
             Ok(()) => Ok(true),

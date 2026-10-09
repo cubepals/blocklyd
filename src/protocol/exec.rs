@@ -23,14 +23,14 @@ fn thirty() -> u32 {
     30
 }
 
-pub const MAX_EXEC_ARGS: usize = 256;
+pub(crate) const MAX_EXEC_ARGS: usize = 256;
 /// Linux refuses a single argument over 128 KiB (MAX_ARG_STRLEN).
-pub const MAX_EXEC_ARG: usize = 128 * 1024;
-pub const MAX_EXEC_TOTAL: usize = 1024 * 1024;
-pub const MAX_EXEC_TIMEOUT: u32 = 600;
+pub(crate) const MAX_EXEC_ARG: usize = 128 * 1024;
+pub(crate) const MAX_EXEC_TOTAL: usize = 1024 * 1024;
+pub(crate) const MAX_EXEC_TIMEOUT: u32 = 600;
 
 impl ExecRequest {
-    pub fn validate(&self) -> Result<(), Vec<FieldError>> {
+    pub(crate) fn validate(&self) -> Result<(), Vec<FieldError>> {
         let mut errors = Vec::new();
         if self.command.is_empty() || self.command.len() > MAX_EXEC_ARGS {
             errors.push(FieldError { field: "command".into(), problem: format!("1 to {MAX_EXEC_ARGS} arguments") });
@@ -60,7 +60,7 @@ impl ExecRequest {
     }
 
     /// What makes two requests "the same" under one idempotency key.
-    pub fn fingerprint(&self, id: &WorkloadId) -> String {
+    pub(crate) fn fingerprint(&self, id: &WorkloadId) -> String {
         let mut hash = Sha256::new();
         hash.update(id.as_str());
         for arg in &self.command {
@@ -79,14 +79,14 @@ pub struct ExecResponse {
     /// None when it timed out and was killed before reporting one.
     pub exit_code: Option<i64>,
     pub stdout: String,
-    pub stderr: String,
-    pub stdout_truncated: bool,
-    pub stderr_truncated: bool,
+    pub(crate) stderr: String,
+    pub(crate) stdout_truncated: bool,
+    pub(crate) stderr_truncated: bool,
     pub timed_out: bool,
     /// blocklyd killed the process (by its host pid) after the timeout. Docker alone can't:
     /// its API has no way to stop an exec (moby/moby#35703).
     pub killed: bool,
-    pub duration_ms: u64,
+    pub(crate) duration_ms: u64,
 }
 
 #[cfg(test)]

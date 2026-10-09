@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use crate::manager::NodeError;
 use crate::protocol::{ErrorBody, ErrorDetail};
 
-pub fn error_response(
+pub(crate) fn error_response(
     status: StatusCode,
     code: &str,
     message: impl Into<String>,

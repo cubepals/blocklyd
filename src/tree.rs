@@ -30,19 +30,19 @@ pub use crate::protocol::Method;
 
 /// Directories deeper than this are refused rather than walked: no world nests like that, and
 /// the walk holds a descriptor per level.
-pub const MAX_DEPTH: usize = 128;
+pub(crate) const MAX_DEPTH: usize = 128;
 /// Entries a walk visits before it gives up: worlds hold thousands.
-pub const MAX_ENTRIES: u64 = 2_000_000;
+pub(crate) const MAX_ENTRIES: u64 = 2_000_000;
 
 /// What the walk saw of an entry, from the descriptor it opened (or, for a link, the link itself).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Meta {
-    pub mode: u32,
-    pub uid: u32,
-    pub gid: u32,
-    pub size: u64,
-    pub mtime: i64,
-    pub mtime_nsec: i64,
+pub(crate) struct Meta {
+    pub(crate) mode: u32,
+    pub(crate) uid: u32,
+    pub(crate) gid: u32,
+    pub(crate) size: u64,
+    pub(crate) mtime: i64,
+    pub(crate) mtime_nsec: i64,
 }
 
 impl From<&rustix::fs::Stat> for Meta {
@@ -59,7 +59,7 @@ impl From<&rustix::fs::Stat> for Meta {
     }
 }
 
-pub enum Kind<'a> {
+pub(crate) enum Kind<'a> {
     Dir,
     /// Opened read-only, at offset 0.
     File(&'a mut File),
@@ -67,33 +67,37 @@ pub enum Kind<'a> {
     Link(&'a Path),
 }
 
-pub struct Entry<'a> {
+pub(crate) struct Entry<'a> {
     /// Relative to the root; empty for the root itself, which comes first.
-    pub path: &'a Path,
-    pub meta: Meta,
-    pub kind: Kind<'a>,
+    pub(crate) path: &'a Path,
+    pub(crate) meta: Meta,
+    pub(crate) kind: Kind<'a>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Walked {
-    pub dirs: u64,
+    pub(crate) dirs: u64,
     pub files: u64,
-    pub links: u64,
+    pub(crate) links: u64,
     /// FIFOs, sockets, devices, and entries that changed while the walk looked at them.
-    pub skipped: u64,
+    pub(crate) skipped: u64,
     /// The regular files' sizes when they were opened.
     pub bytes: u64,
 }
 
 impl Walked {
-    pub fn entries(&self) -> u64 {
+    pub(crate) fn entries(&self) -> u64 {
         self.dirs + self.files + self.links
     }
 }
 
 /// Visits `root` and everything under it, parents before children, names in byte order. Names in
 /// `exclude` are left out at the top level only. Blocking.
-pub fn walk(root: &Path, exclude: &[String], visit: &mut dyn FnMut(Entry<'_>) -> io::Result<()>) -> io::Result<Walked> {
+pub(crate) fn walk(
+    root: &Path,
+    exclude: &[String],
+    visit: &mut dyn FnMut(Entry<'_>) -> io::Result<()>,
+) -> io::Result<Walked> {
     walk_at_most(root, exclude, MAX_ENTRIES, visit)
 }
 
@@ -301,16 +305,16 @@ fn no_reflink(e: Errno) -> bool {
 /// it from the disk's own failures (`NoRoom::of`), as `tarball::UnpackError::NoRoom` is told apart.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub struct NoRoom(pub String);
+pub(crate) struct NoRoom(pub(crate) String);
 
 impl NoRoom {
     /// Tells `room` the bytes written so far; its refusal stops the write.
-    pub fn ask(room: &mut dyn FnMut(u64) -> Result<(), String>, written: u64) -> io::Result<()> {
+    pub(crate) fn ask(room: &mut dyn FnMut(u64) -> Result<(), String>, written: u64) -> io::Result<()> {
         room(written).map_err(|message| io::Error::other(NoRoom(message)))
     }
 
     /// What `room` said, if `e` is its refusal.
-    pub fn of(e: &io::Error) -> Option<&str> {
+    pub(crate) fn of(e: &io::Error) -> Option<&str> {
         e.get_ref()?.downcast_ref::<NoRoom>().map(|refused| refused.0.as_str())
     }
 }

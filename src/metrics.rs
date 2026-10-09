@@ -211,7 +211,7 @@ impl Metrics {
         }
     }
 
-    pub fn operation<T>(&self, op: &str, result: &Result<T, NodeError>, took: Duration) {
+    pub(crate) fn operation<T>(&self, op: &str, result: &Result<T, NodeError>, took: Duration) {
         let outcome = match result {
             Ok(_) => "ok",
             Err(
@@ -235,29 +235,29 @@ impl Metrics {
 
     /// A request the API answered. A client may send any token as its method, and every new label
     /// value is a series kept for good, so only the usual methods are named (`method_label`).
-    pub fn http(&self, method: &Method, route: &str, status: u16) {
+    pub(crate) fn http(&self, method: &Method, route: &str, status: u16) {
         let method = method_label(method).into();
         self.http_requests.get_or_create(&HttpLabels { method, route: route.into(), status: status.to_string() }).inc();
     }
 
-    pub fn auth_failure(&self, reason: &str) {
+    pub(crate) fn auth_failure(&self, reason: &str) {
         self.auth_failures.get_or_create(&Reason { reason: reason.into() }).inc();
     }
 
-    pub fn reconcile(&self, ok: bool, took: Duration) {
+    pub(crate) fn reconcile(&self, ok: bool, took: Duration) {
         self.reconciles.get_or_create(&Outcome { outcome: if ok { "ok" } else { "error" }.into() }).inc();
         self.reconcile_seconds.observe(took.as_secs_f64());
     }
 
-    pub fn heartbeat(&self, ok: bool) {
+    pub(crate) fn heartbeat(&self, ok: bool) {
         self.heartbeats.get_or_create(&Outcome { outcome: if ok { "ok" } else { "error" }.into() }).inc();
     }
 
-    pub fn renewal(&self, ok: bool) {
+    pub(crate) fn renewal(&self, ok: bool) {
         self.renewals.get_or_create(&Outcome { outcome: if ok { "ok" } else { "error" }.into() }).inc();
     }
 
-    pub fn runtime_event(&self, action: &str) {
+    pub(crate) fn runtime_event(&self, action: &str) {
         // Health events carry their result after a colon; exec events their command.
         let action = action.split(':').next().unwrap_or(action).trim();
         self.runtime_events.get_or_create(&ActionLabel { action: action.into() }).inc();

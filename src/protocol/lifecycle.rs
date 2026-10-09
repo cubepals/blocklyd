@@ -42,10 +42,10 @@ pub struct PowerResponse {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct StopRequest {
+pub(crate) struct StopRequest {
     /// Overrides the spec's grace for this stop.
     #[serde(default)]
-    pub timeout_seconds: Option<u32>,
+    pub(crate) timeout_seconds: Option<u32>,
 }
 
 /// `POST /v1/workloads/{id}/fence`: the control plane says which epoch is current. A copy
@@ -54,8 +54,8 @@ pub struct StopRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FenceRequest {
-    pub current_epoch: u64,
+pub(crate) struct FenceRequest {
+    pub(crate) current_epoch: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

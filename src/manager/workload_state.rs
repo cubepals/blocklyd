@@ -8,7 +8,7 @@ use crate::store::{Phase, WorkloadRecord};
 /// Whether a stop blocklyd was asked for is under way: a container still running then reads as
 /// stopping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stopping {
+pub(crate) enum Stopping {
     Underway,
     NotAsked,
 }
@@ -16,12 +16,12 @@ pub enum Stopping {
 /// Whether what blocklyd last saw of the runtime is current (`Manager::trustworthy`), or history
 /// after an outage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Sight {
+pub(crate) enum Sight {
     Current,
     Stale,
 }
 
-pub fn derive_state(
+pub(crate) fn derive_state(
     record: &WorkloadRecord,
     info: Option<&ContainerInfo>,
     stopping: Stopping,

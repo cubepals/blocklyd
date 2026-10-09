@@ -41,15 +41,15 @@ pub use spec::*;
 pub use transfer::*;
 pub use workload::*;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub(crate) const PROTOCOL_VERSION: u32 = 1;
 /// Every protocol version this blocklyd speaks, PROTOCOL_VERSION among them.
-pub const SUPPORTED_VERSIONS: &[u32] = &[1];
+pub(crate) const SUPPORTED_VERSIONS: &[u32] = &[1];
 /// Sent on every response so a client can tell which protocol answered.
-pub const PROTOCOL_HEADER: &str = "blocklyd-protocol";
+pub(crate) const PROTOCOL_HEADER: &str = "blocklyd-protocol";
 /// Must echo the workload id for `DELETE …?data=delete`: data never goes on a single typo.
-pub const CONFIRM_DELETE_HEADER: &str = "x-blockly-confirm-delete-data";
+pub(crate) const CONFIRM_DELETE_HEADER: &str = "x-blockly-confirm-delete-data";
 /// Features a client may rely on, beyond protocol v1's base. Only ever added to (`features_only_grow`).
-pub const FEATURES: &[&str] = &[
+pub(crate) const FEATURES: &[&str] = &[
     "exec-idempotency-key",
     "logs-follow-across-restarts",
     "conditional-put",
@@ -79,32 +79,32 @@ pub fn features() -> Vec<String> {
 /// The placement epoch a mutating request acts for: a fencing token the control plane issues,
 /// bumped each time a workload is placed anew (moved, recovered, or brought back). A node refuses
 /// a request older than the copy it holds, so a delayed or stale caller can't act on it.
-pub const EPOCH_HEADER: &str = "blocklyd-epoch";
+pub(crate) const EPOCH_HEADER: &str = "blocklyd-epoch";
 
 /// Label keys blocklyd writes itself; a spec may not set anything under this prefix, so a
 /// request can never forge ownership of a container.
-pub const RESERVED_LABEL_PREFIX: &str = "blocklyd.";
+pub(crate) const RESERVED_LABEL_PREFIX: &str = "blocklyd.";
 
 /// One thing wrong with a request, by the JSON path of the field.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct FieldError {
-    pub field: String,
-    pub problem: String,
+    pub(crate) field: String,
+    pub(crate) problem: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
-pub struct ErrorBody {
-    pub error: ErrorDetail,
+pub(crate) struct ErrorBody {
+    pub(crate) error: ErrorDetail,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
-pub struct ErrorDetail {
-    pub code: String,
-    pub message: String,
+pub(crate) struct ErrorDetail {
+    pub(crate) code: String,
+    pub(crate) message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub details: Option<serde_json::Value>,
+    pub(crate) details: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

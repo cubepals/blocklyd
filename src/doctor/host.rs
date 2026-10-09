@@ -4,7 +4,7 @@
 use super::check::Check;
 
 /// `machine_id` is /etc/machine-id's contents, None when it can't be read.
-pub fn machine_id(machine_id: Option<&str>) -> Check {
+pub(crate) fn machine_id(machine_id: Option<&str>) -> Check {
     match machine_id.map(str::trim) {
         Some(id) if !id.is_empty() && id != "uninitialized" => Check::pass("machine_id", "/etc/machine-id is set"),
         _ => Check::warn(
@@ -16,7 +16,7 @@ pub fn machine_id(machine_id: Option<&str>) -> Check {
     }
 }
 
-pub fn clock() -> Check {
+pub(crate) fn clock() -> Check {
     clock_verdict(synchronised())
 }
 

@@ -2,6 +2,6 @@
 
 use time::OffsetDateTime;
 
-pub fn now() -> OffsetDateTime {
+pub(crate) fn now() -> OffsetDateTime {
     OffsetDateTime::now_utc()
 }

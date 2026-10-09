@@ -27,13 +27,13 @@ impl Manager {
         (state.ports.allocated(), state.ports.capacity())
     }
 
-    pub fn issue_count(&self) -> usize {
+    pub(crate) fn issue_count(&self) -> usize {
         let state = self.state.lock().unwrap();
         state.issues.values().map(Vec::len).sum::<usize>() + state.host_issues.len()
     }
 
     /// Per-workload numbers for the metrics endpoint.
-    pub fn workload_samples(&self) -> Vec<WorkloadSample> {
+    pub(crate) fn workload_samples(&self) -> Vec<WorkloadSample> {
         let state = self.state.lock().unwrap();
         state
             .records
@@ -106,13 +106,13 @@ impl Manager {
     }
 
     /// What local snapshots hold on disk, as last measured.
-    pub fn snapshot_bytes(&self) -> Option<u64> {
+    pub(crate) fn snapshot_bytes(&self) -> Option<u64> {
         self.state.lock().unwrap().snapshot_bytes
     }
 
     /// Where the control plane and the edge reach this node, as its configuration says now: the
     /// control plane follows a change, so the node's identity doesn't hang on an address.
-    pub fn addresses(&self) -> Option<crate::protocol::wire::NodeAddresses> {
+    pub(crate) fn addresses(&self) -> Option<crate::protocol::wire::NodeAddresses> {
         let fleet = self.config.fleet.as_ref()?;
         Some(crate::protocol::wire::NodeAddresses {
             api: fleet.api_address.unwrap_or(self.config.api.listen).to_string(),
@@ -122,11 +122,11 @@ impl Manager {
     }
 
     /// What is wrong with the host as a whole, as the last full pass found it.
-    pub fn host_issues(&self) -> Vec<Issue> {
+    pub(crate) fn host_issues(&self) -> Vec<Issue> {
         self.state.lock().unwrap().host_issues.clone()
     }
 
-    pub fn last_reconcile(&self) -> Option<ReconcileView> {
+    pub(crate) fn last_reconcile(&self) -> Option<ReconcileView> {
         self.state.lock().unwrap().last_reconcile.clone()
     }
 
@@ -194,11 +194,11 @@ impl Manager {
 }
 
 /// One workload's latest usage, for the metrics endpoint.
-pub struct WorkloadSample {
-    pub id: String,
-    pub memory_bytes: Option<u64>,
-    pub cores: Option<f64>,
-    pub disk_bytes: Option<u64>,
+pub(crate) struct WorkloadSample {
+    pub(crate) id: String,
+    pub(crate) memory_bytes: Option<u64>,
+    pub(crate) cores: Option<f64>,
+    pub(crate) disk_bytes: Option<u64>,
 }
 
 #[cfg(test)]

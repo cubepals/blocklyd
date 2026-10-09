@@ -38,7 +38,7 @@ macro_rules! id_type {
                 if valid(value) { Ok(Self(value.to_owned())) } else { Err($invalid) }
             }
 
-            pub fn as_str(&self) -> &str {
+            pub(crate) fn as_str(&self) -> &str {
                 &self.0
             }
         }
