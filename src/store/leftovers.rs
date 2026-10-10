@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What a crash leaves in the state directory, cleared when blocklyd starts.
 //!
 //! An export's or a download's spool file, the copy of a snapshot that never got its

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The protocol over real TLS: who gets in, what malformed requests get back, and a lifecycle
 //! driven only through HTTP.
 

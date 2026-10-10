@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! World archives: a gzip tarball of a workload's data directory. It is the format Blockly's
 //! backups, downloads and uploads already use: paths relative to the data root, with
 //! `server.properties` at the top. So an archive blocklyd writes is one Blockly can already read,

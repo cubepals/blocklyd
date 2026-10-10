@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! blocklyd's core: workloads on this host, their records, ports and observations, and every
 //! operation the protocol offers.
 //!

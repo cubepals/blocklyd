@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `blocklyd dev-certs`: a throwaway CA and certificates for trying blocklyd locally and
 //! for tests. Production would issue these from Blockly's own CA (the control plane holds the
 //! client key; each host holds only its server key and the CA certificate) with short lifetimes

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `blocklyd upgrade`: the control plane's blocklyd at once, as root on the host, rather than when
 //! a heartbeat's answer offers it. How an upgrade is installed, tried and put back is
 //! `crate::upgrade`.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Brings a workload back without being asked: after a crash, and after the host went down
 //! under it. Only if it fits (`room.rs`), and in fleet mode only under the execution lease
 //! (`fleet.rs`). Requested starts are in `power.rs`; noticing a crash is `remember` in

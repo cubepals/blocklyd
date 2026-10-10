@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What blocklyd works out about its host when the configuration leaves it out, so that a node's
 //! configuration holds only what the host can't say about itself. `Config::load` fills these in
 //! before reading the file; a key the file sets is never touched, and every value filled in is

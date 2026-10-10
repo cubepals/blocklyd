@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A workload as the protocol shows it: its state, ports, storage and issues, built from what the
 //! core last recorded. It never asks the runtime; looking at a container is `observe`, in
 //! `manager.rs`, and how a record and a container make a state is `derive_state`, in

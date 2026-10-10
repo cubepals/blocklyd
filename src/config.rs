@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The host's configuration: who this node is, where it keeps state, who may call it, and the
 //! policy it holds every workload to. Policy lives here rather than in requests on purpose: a
 //! compromised caller can ask for anything the protocol allows, but not for less isolation than

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `blocklyd doctor` and `check-config` as the unit and scripts run them: their exit status, and
 //! the JSON `join` reads. Docker is pointed at a socket that doesn't exist.
 

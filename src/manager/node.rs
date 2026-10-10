@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What the node reports about itself as a whole: health, capacity, status. A heartbeat's body is
 //! put together from these in `crate::fleet::heartbeat`.
 //! Each workload's own view is `view.rs`; the lease is `fleet.rs`; admission is `room.rs`.

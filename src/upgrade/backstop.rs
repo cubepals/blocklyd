@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The trial's backstop: a blocklyd that starts on trial and hasn't ended the trial DEADLINE
 //! after it started ends itself, with status 1, and the unit's `ExecStopPost` (`blocklyd.prev
 //! upgrade --exited`) puts the binary before it back, as after any start that failed.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `blocklyd join <token>`: makes this host a node of the fleet a `bk1.` token names
 //! (fleet/token.rs), with nothing else to hand. `join.sh`, which the node endpoint serves, runs it
 //! once Docker and the binary are in place (docs/fleet-operations.md, "Adding a node").

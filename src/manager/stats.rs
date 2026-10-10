@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Samples what workloads use: CPU, memory, disk. The node-wide totals made from these samples
 //! are in `node.rs`; the memory a workload was promised is counted in `room.rs`.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Against a real Docker daemon, with small alpine workloads. Ignored by default so `cargo test`
 //! never needs Docker:
 //!

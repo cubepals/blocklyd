@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Whether the configuration file is valid, with the certificates it names: what `check-config`
 //! has always checked, and the one check (besides owning the state directory) that stops blocklyd
 //! from starting.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! blocklyd upgrading itself to the blocklyd its control plane serves (`GET /fleet/v1/blocklyd`,
 //! docs/fleet-operations.md §9): when a heartbeat's answer offers it, which the control plane does
 //! for one node of a region at a time, or at once with `blocklyd upgrade` (`cli/upgrade.rs`).

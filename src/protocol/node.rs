@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What the node reports about itself: its health, and its status (host, capacity, Docker,
 //! fleet contact, last reconciliation). Nothing here is about one workload; that is
 //! `workload.rs`.

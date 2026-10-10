@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Identifiers that cross the protocol boundary and end up in paths, container names and labels.
 
 use std::fmt;

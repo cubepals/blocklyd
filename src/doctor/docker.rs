@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Whether Docker is reachable and set up the way blocklyd expects: cgroup v2, live-restore on,
 //! workloads' network isolated, logs bounded, and `/etc/docker/daemon.json` matching Blockly's
 //! (`deploy/daemon.json`). All warnings: blocklyd starts without Docker, outlives its restarts and

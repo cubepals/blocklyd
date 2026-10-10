@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What a node sends the control plane, and what comes back: enrollment once, then a heartbeat
 //! every few seconds. JSON, camelCase, like the node's own API.
 //!

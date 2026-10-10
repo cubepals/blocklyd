@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Joining the fleet. A new host arrives with two things from its provisioning: a one-time
 //! enrollment token and the fleet CA's certificate. It makes its own key, sends a certificate
 //! request with the token, and gets back a durable node id and two certificates for that key.

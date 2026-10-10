@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The node's standing with its control plane: when it last answered, and the execution lease
 //! it granted. Sending the heartbeats is `crate::fleet`; what a heartbeat reports is put together
 //! in `crate::fleet::heartbeat`.

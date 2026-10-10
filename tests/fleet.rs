@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The node's side of the control plane's endpoint (docs/protocol.md, "The control plane's
 //! endpoint"): joining with a pasted token, enrollment, and renewal when a heartbeat answer asks
 //! for it. Against a control

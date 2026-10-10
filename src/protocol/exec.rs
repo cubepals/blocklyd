@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Running one command inside a workload: the request, its bounds, the fingerprint an
 //! idempotency key is checked against, and the answer. Reading the workload's log is not here:
 //! `LogRecord` is in `workload.rs`.

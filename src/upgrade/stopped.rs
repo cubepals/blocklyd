@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What `blocklyd.prev upgrade --exited`, the unit's `ExecStopPost`, goes by after the service
 //! stopped: how systemd says the stop went, and the state directory the trial is in. That command
 //! runs the binary from before the upgrade, so it reads the configuration for `state_dir` alone

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What an operation on a workload fails with (`NodeError`), which the API turns into its error
 //! answers, and the fencing check every mutating verb makes first (`check_epoch`).
 

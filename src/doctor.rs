@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `blocklyd doctor`: looks at this host the way blocklyd will use it, and says what is wrong and
 //! what to do about it. `check-config` only reads the file; doctor also asks Docker, the state
 //! directory, the ports, the machine id and the clock.

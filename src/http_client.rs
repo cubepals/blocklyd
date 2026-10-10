@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A small HTTP/1.1 client for the node's own calls out: to the control plane over mutual TLS,
 //! and to presigned object-store URLs. One connection per call: a heartbeat every few seconds
 //! and an archive now and then don't need a pool.

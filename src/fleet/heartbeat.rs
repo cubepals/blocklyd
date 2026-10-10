@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The heartbeat: every few seconds the node tells the control plane everything it holds. The
 //! answer fences the copies a newer placement superseded, and grants the execution lease. It runs
 //! until shutdown, whatever the control plane does: a control plane that is down changes nothing

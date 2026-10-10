@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Makes a workload match the spec it was sent (`PUT`): creates it, or replaces it with a new
 //! generation. Starting and stopping on request are in `power.rs`; whether the host has room is
 //! asked of `room.rs`.

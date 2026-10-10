@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Whether the host has what blocklyd assumes of it besides Docker: a machine id of its own, and a
 //! synchronised clock (leases, certificates and heartbeats all read it).
 

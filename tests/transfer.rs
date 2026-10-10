@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Export and restore through the manager, against the in-memory runtime and a tiny object store
 //! served in-process (PUT stores, GET serves), the way presigned URLs behave.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `durable::write_atomic` under a tight umask. The umask is the whole process's, so this test has a
 //! binary to itself: beside other tests it would narrow the modes of what they make meanwhile.
 

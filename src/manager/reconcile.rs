@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Makes the records agree with what Docker actually has, at startup and on a schedule. It fixes
 //! only blocklyd's own bookkeeping, and at startup clears what a crash left of its own files, and
 //! reports the rest; resuming what the host went down under is `restarts.rs`, and the schedule

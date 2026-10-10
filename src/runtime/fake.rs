@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! An in-memory runtime for tests: blocklyd's logic (idempotency, ports, reconciliation,
 //! auth) is exercised without Docker. It imitates the Docker behaviour blocklyd depends on,
 //! including the awkward parts: port clashes surface at start, not create; a stop of a stopped

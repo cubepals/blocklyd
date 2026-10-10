@@ -42,6 +42,16 @@ your change to The Cubepals Authors under the [Apache License, Version
 2.0](https://www.apache.org/licenses/LICENSE-2.0), and you confirm that it is yours to license.
 You keep the copyright in it.
 
+Each Rust file opens with two SPDX lines, its copyright and its license, above its `//!` comment;
+everything else is covered by [REUSE.toml](REUSE.toml). CI runs `reuse lint`, so a new `.rs` file
+needs them:
+
+```rust
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+```
+
 ## Conduct and security
 
 Everyone here follows the

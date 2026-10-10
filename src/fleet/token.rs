@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The enrollment token as an operator pastes it: `bk1.` and base64url JSON naming where the node
 //! endpoint is, the fleet CA by its sha256, the deployment, and the one-time secret.
 //!
