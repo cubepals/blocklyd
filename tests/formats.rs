@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What blocklyd leaves on disk and on its containers, pinned as an older build wrote it. A node
 //! that upgrades reads these with the new build, and one put back reads what the new build wrote
 //! with the old one. Each fixture in `fixtures/` must read as the values it was written from, and

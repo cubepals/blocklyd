@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A workload's local snapshots on disk: `snapshots/<snapshot>/`, a copy of its data and, written
 //! last, `snapshot.json`. Making the copy is `tree::copy_tree`, and deciding when is the manager's.
 

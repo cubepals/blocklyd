@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Errors as the protocol states them: an HTTP status and a stable machine-readable code. Codes
 //! are the contract; messages are for people and may change.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Mutual TLS: the only way into the workload API.
 //!
 //! Why mTLS rather than bearer tokens: blocklyd holds a root-equivalent socket, so its API is

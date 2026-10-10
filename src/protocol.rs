@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Protocol v1: what the control plane sends and what blocklyd answers.
 //!
 //! The vocabulary is workloads, not containers. A workload is a spec (image, environment,

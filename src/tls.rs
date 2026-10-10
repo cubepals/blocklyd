@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Certificates and keys, read from their PEM files, and the crypto provider every TLS setting is
 //! built on: the API's server side (`api::tls`), the node's calls out (`http_client`), enrollment,
 //! `blocklyd join` and doctor.

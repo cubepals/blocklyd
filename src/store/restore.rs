@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A restore's new data, put together in `data.restoring/` beside the data, takes the data's place
 //! in one swap, and what it replaced goes to the trash. A crash anywhere leaves the old data or the
 //! new, and `Store::recover_restore` settles what it left when blocklyd next starts.

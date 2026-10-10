@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Local snapshots of a workload's data: taken, listed, deleted, uploaded. Packing and sending
 //! an upload is `pack_and_put` in `archive.rs`; restoring from a snapshot is `restore` there.
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Re-enrolling a node under its own id: what `blocklyd join` does with a token that names the
 //! node this host already is, as `bun scripts/fleet.ts token --node <id>` and `rotate-ca` mint
 //! (docs/fleet-operations.md §8). It

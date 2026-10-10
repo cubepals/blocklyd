@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Shared fixtures: a manager over the fake runtime, certificates, an mTLS HTTP client, and bounded
 //! waits.
 #![allow(dead_code)]

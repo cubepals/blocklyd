@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What blocklyd does as a one-off command rather than as the daemon: `serve` and `check-config`
 //! stay in main.rs, beside the setup they share.
 //!

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Docker Engine API over the local unix socket (bollard). blocklyd is the only client that
 //! needs the socket, which is root-equivalent: whoever holds it can start a privileged container
 //! with the host's filesystem mounted. blocklyd never exposes it; it exposes the narrow

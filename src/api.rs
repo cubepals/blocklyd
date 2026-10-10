@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The protocol over HTTP/1.1 + JSON, under `/v1`, behind mutual TLS; and a plain ops listener
 //! for `/healthz`, `/readyz` and `/metrics`.
 //!

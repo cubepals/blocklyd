@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The labels blocklyd puts on every container it makes, under `protocol::RESERVED_LABEL_PREFIX`:
 //! whose the container is, and the record it carries.
 

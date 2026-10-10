@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! blocklyd's background work. Events from the runtime are hints that make observation quick;
 //! the periodic resync is what makes it correct, since an event stream can drop (a daemon
 //! restart ends it) and nothing may depend on having seen every event. It's the same rule as

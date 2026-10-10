@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Writes a workload's record and the port quarantine to disk, on the blocking pool: each write
 //! syncs twice (`durable::write_atomic`), which an async thread must not wait for. `save_record`
 //! writes a record a verb changed and then holds it in memory; `write_record` writes one whose

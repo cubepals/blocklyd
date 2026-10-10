@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! A host that restarts under running workloads: they come back by themselves, as their restart
 //! policy brings back a failure, and nothing else does. In fleet mode only once the control plane
 //! has answered, applied its fences, and granted a lease.

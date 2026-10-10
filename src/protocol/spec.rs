@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What a workload is: the spec the control plane sends (`WorkloadSpec`), and the same spec as
 //! blocklyd keeps it (`SpecRecord`, secret values dropped), with the defaults a request may leave out.
 //! Whether this host will run a spec is not decided here but in `spec/validate.rs`. What blocklyd

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The state a workload is in, from its record and what the runtime last showed of its container:
 //! what every view, heartbeat and restart decision goes by.
 

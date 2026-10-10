@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Runs a command inside a running workload, once per idempotency key. The workload's own
 //! output over time is `logs.rs`.
 

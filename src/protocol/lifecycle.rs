@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The verbs that decide whether a workload exists and runs: ensure, start and stop, fence and
 //! delete, each with its request and its answer. The workload view these answers carry is in
 //! `workload.rs`. Moving a workload's data is in `transfer.rs`.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Carries a world's data between this node and an object store: export out, restore in, over
 //! presigned URLs. Local snapshots are `snapshots.rs`, which uploads through `pack_and_put`
 //! here; whether the disk has room is asked of `room.rs`.

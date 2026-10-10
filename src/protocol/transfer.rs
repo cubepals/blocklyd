@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Moving a workload's data: export to a presigned URL (in parts when it is large), restore from
 //! one or from a snapshot, local snapshots, and a snapshot's upload. It does not make or unpack
 //! archives: that is `crate::tarball`. Stopping, fencing and deleting are in `lifecycle.rs`.

@@ -88,9 +88,12 @@ jobs:
         run: |
           bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12
           ./actionlint -color
+      # Every file says whose it is and under what license, by its own SPDX lines or REUSE.toml.
+      - name: Licenses
+        run: pipx run reuse==6.2.0 lint
       - name: Structure
         run: |
-          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/50227dff3c53e253d2645541b72120dc7f2f92b3/scripts/check-structure.ts \
+          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/b380886862aad14671df1d7ca278fa90b78c0eb7/scripts/check-structure.ts \
             -o "$RUNNER_TEMP/check-structure.ts"
           bun "$RUNNER_TEMP/check-structure.ts"
           bun "$RUNNER_TEMP/check-structure.ts" --rust

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Placement epochs: the fencing token that keeps an old copy of a workload from running once
 //! the control plane has placed it anew. Against the in-memory runtime.
 

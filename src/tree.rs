@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Walking a directory a workload can write to, without being led anywhere else.
 //!
 //! A server's data directory belongs to whatever runs in its container: plugins and mods can

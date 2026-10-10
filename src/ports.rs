@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Host ports for workloads.
 //!
 //! blocklyd is the only allocator on its host, which is the point: Blockly's local

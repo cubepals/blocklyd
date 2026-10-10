@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Whether a spec is one this host will run: the shape of every field, checked against the
 //! host's own bounds (`SpecPolicy`), with every problem reported at once. It sits under `spec`
 //! because it reads secret values, which only the spec's module may see. What a spec holds, and

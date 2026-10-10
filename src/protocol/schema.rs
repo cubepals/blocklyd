@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The wire types as OpenAPI 3.1 documents, in openapi/. Each release carries them, and the control
 //! plane (cubepals/cubepals) pins a release's and generates its TypeScript types from them: the
 //! protocol is written down once, here, and neither side keeps a copy of the other's by hand.

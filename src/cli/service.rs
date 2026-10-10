@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What `blocklyd join` asks of the host once its files are in place: systemd, to stop and start
 //! the unit, and the blocklyd it started, whether the control plane has accepted a heartbeat from
 //! it yet. That is read from the ops listener's metrics, which answer without a certificate.

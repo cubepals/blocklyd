@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What blocklyd reports about one workload: its view (state, health, ports, storage, issues),
 //! the list of every view, its resource stats, and the lines of its log stream.
 //! It holds no verb's request: those are in `lifecycle.rs`, `transfer.rs` and `exec.rs`. What the

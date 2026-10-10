@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! One verdict about the host: it passes, warns or fails, and short of a pass it says what to do.
 
 use serde::Serialize;

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Writing so that a crash leaves the old or the new, never part of either.
 //!
 //! - `write_atomic`: the one way a file is replaced whole, for the records (`store.rs`), the

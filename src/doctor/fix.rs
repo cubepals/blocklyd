@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! `doctor --fix`: the fixes that are safe to make without asking, on a host with no blocklyd
 //! servers yet. It writes Docker's daemon.json from `deploy/daemon.json` (merged over the one there,
 //! which it keeps as a `.bak`) and makes the state directory. Each change says how to undo it.

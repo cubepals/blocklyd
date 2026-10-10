@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! The seam between blocklyd and whatever runs containers. The manager speaks only these types;
 //! Docker is one implementation (docker.rs), an in-memory fake another (fake.rs). A containerd or
 //! microVM backend would be a third, and the protocol would not change.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Whether there is room on this host for what a verb is about to do: memory for a workload to
 //! run, disk above the floor the host keeps. It only answers; the verbs that ask (`ensure.rs`,
 //! `power.rs`, `restarts.rs`, `archive.rs`, `snapshots.rs`) decide what a refusal means. What

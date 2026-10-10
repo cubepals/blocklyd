@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! blocklyd: Blockly's node daemon. See README.md.
 
 use std::net::IpAddr;

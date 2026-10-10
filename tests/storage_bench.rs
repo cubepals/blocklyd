@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! What a world's data costs to snapshot, archive and restore on this host's disk: the work a
 //! backup, a move and a restore do, without Docker or the network. Ignored by default:
 //!

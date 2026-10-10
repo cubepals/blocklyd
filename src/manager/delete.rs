@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Removes a workload's container, keeping its data as a retained record unless told to trash
 //! it. Stopping without removing is `power.rs`; deleting a snapshot is `snapshots.rs`.
 

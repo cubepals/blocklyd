@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 The Cubepals Authors
+//
+// SPDX-License-Identifier: FSL-1.1-ALv2
+
 //! Changes whether a workload runs when the control plane asks: start, stop, kill. Restarts
 //! blocklyd makes on its own are in `restarts.rs`; the stop a fence makes is in `fence.rs`.
 
