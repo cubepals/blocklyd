@@ -9,7 +9,7 @@ use super::*;
 
 /// Exec output kept per stream; the rest is dropped and flagged.
 const MAX_EXEC_OUTPUT: usize = 1024 * 1024;
-const IDEMPOTENCY_TTL: Duration = Duration::from_secs(600);
+const IDEMPOTENCY_TTL: Duration = Duration::from_mins(10);
 const IDEMPOTENCY_MAX: usize = 1024;
 
 impl Manager {

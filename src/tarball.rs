@@ -42,9 +42,9 @@ pub(crate) const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
 /// and PAX records, or the data of an entry it skips. Go's archive/tar and libarchive stop there
 /// too; no ordinary writer comes near it.
 const MAX_METADATA_BYTES: u64 = 1024 * 1024;
-/// The longest one download's body may take, however steadily it comes: the control plane gives
-/// up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
-pub(crate) const DOWNLOAD_LIMIT: Duration = Duration::from_secs(3 * 3600);
+/// The longest one transfer's body may take, either way, however steadily it comes: the control
+/// plane gives up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
+pub(crate) const TRANSFER_LIMIT: Duration = Duration::from_hours(3);
 
 /// The parts an archive of `size` bytes fills, `part_size` each but the last: one at least, so
 /// an empty archive is still an object.

@@ -175,6 +175,8 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    const QUARANTINE: Duration = Duration::from_mins(10);
+
     fn id(s: &str) -> WorkloadId {
         WorkloadId::parse(s).unwrap()
     }
@@ -195,7 +197,7 @@ mod tests {
 
     #[test]
     fn released_ports_rest_before_reuse() {
-        let mut ports = PortAllocator::new(42000..=42001, Duration::from_secs(600), always());
+        let mut ports = PortAllocator::new(42000..=42001, QUARANTINE, always());
         assert_eq!(ports.allocate(&id("a"), Proto::Tcp), Ok(42000));
         ports.release_all(&id("a"));
         assert_eq!(ports.allocate(&id("b"), Proto::Tcp), Ok(42001), "42000 is resting");
@@ -204,7 +206,7 @@ mod tests {
 
     #[test]
     fn an_unreserved_port_is_free_again_at_once() {
-        let mut ports = PortAllocator::new(42000..=42001, Duration::from_secs(600), always());
+        let mut ports = PortAllocator::new(42000..=42001, QUARANTINE, always());
         assert_eq!(ports.allocate(&id("a"), Proto::Tcp), Ok(42000));
         ports.unreserve(&id("b"), Proto::Tcp, 42000);
         assert_eq!(ports.holder(Proto::Tcp, 42000), Some(&id("a")), "only its holder takes it back");
@@ -256,16 +258,16 @@ mod tests {
 
     #[test]
     fn quarantine_survives_a_snapshot_and_restore() {
-        let mut before = PortAllocator::new(42000..=42001, Duration::from_secs(600), always());
+        let mut before = PortAllocator::new(42000..=42001, QUARANTINE, always());
         before.allocate(&id("a"), Proto::Tcp).unwrap();
         before.release_all(&id("a"));
         let snapshot = before.resting();
         assert_eq!(snapshot.len(), 1);
-        let mut after = PortAllocator::new(42000..=42001, Duration::from_secs(600), always());
+        let mut after = PortAllocator::new(42000..=42001, QUARANTINE, always());
         after.restore_resting(snapshot);
         assert_eq!(after.allocate(&id("b"), Proto::Tcp), Ok(42001), "42000 still rests after the restart");
-        let mut expired = PortAllocator::new(42000..=42001, Duration::from_secs(600), always());
-        expired.restore_resting([(Proto::Tcp, 42000, Duration::from_secs(601))]);
+        let mut expired = PortAllocator::new(42000..=42001, QUARANTINE, always());
+        expired.restore_resting([(Proto::Tcp, 42000, QUARANTINE + Duration::from_secs(1))]);
         assert_eq!(expired.allocate(&id("c"), Proto::Tcp), Ok(42000), "an old release doesn't rest forever");
     }
 

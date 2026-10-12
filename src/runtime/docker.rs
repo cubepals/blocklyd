@@ -35,8 +35,8 @@ use super::{
 };
 use crate::protocol::Health;
 
-/// Longer than the longest stop (600 s): Docker answers a stop only once the container exited.
-const CLIENT_TIMEOUT_SECS: u64 = 660;
+/// Longer than the longest stop: Docker answers a stop only once the container exited.
+const CLIENT_TIMEOUT_SECS: u64 = crate::protocol::MAX_STOP_TIMEOUT as u64 + 60;
 /// Quick calls get a much shorter leash of their own.
 const QUICK: Duration = Duration::from_secs(20);
 const ICC_OPTION: &str = "com.docker.network.bridge.enable_icc";

@@ -7,7 +7,7 @@
 //! because it reads secret values, which only the spec's module may see. What a spec holds, and
 //! its defaults, are in `spec.rs`.
 
-use super::WorkloadSpec;
+use super::{MAX_STOP_TIMEOUT, WorkloadSpec};
 use crate::protocol::{FieldError, RESERVED_LABEL_PREFIX};
 
 /// The host's own bounds. The protocol validates shape; the host decides what it allows.
@@ -215,8 +215,8 @@ impl WorkloadSpec {
     }
 
     fn check_stop_and_restart(&self, problems: &mut Problems) {
-        if !(1..=600).contains(&self.stop.timeout_seconds) {
-            problems.add("stop.timeoutSeconds", "must be between 1 and 600");
+        if !(1..=MAX_STOP_TIMEOUT).contains(&self.stop.timeout_seconds) {
+            problems.add("stop.timeoutSeconds", format!("must be between 1 and {MAX_STOP_TIMEOUT}"));
         }
         if self.restart.max_retries > 10 {
             problems.add("restart.maxRetries", "must be at most 10");
