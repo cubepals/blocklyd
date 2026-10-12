@@ -7,7 +7,7 @@
 //! because it reads secret values, which only the spec's module may see. What a spec holds, and
 //! its defaults, are in `spec.rs`.
 
-use super::WorkloadSpec;
+use super::{MAX_STOP_TIMEOUT, WorkloadSpec};
 use crate::protocol::{FieldError, RESERVED_LABEL_PREFIX};
 
 /// The host's own bounds. The protocol validates shape; the host decides what it allows.
@@ -29,8 +29,6 @@ const MAX_LABELS: usize = 32;
 /// The weights Docker passes on as the container's cpu.shares: the kernel's bounds for it
 /// (`MIN_SHARES` and `MAX_SHARES`, kernel/sched/sched.h), which nothing exports.
 pub(crate) const CPU_WEIGHTS: std::ops::RangeInclusive<u32> = 2..=262_144;
-/// The longest a stop waits for the workload to exit before it is killed.
-pub(crate) const MAX_STOP_TIMEOUT: u32 = 600;
 
 fn env_key_ok(key: &str) -> bool {
     let b = key.as_bytes();

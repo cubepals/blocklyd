@@ -66,7 +66,7 @@ pub async fn periodic(manager: Arc<Manager>, cancel: CancellationToken) {
     let mut resync = tokio::time::interval(Duration::from_secs(intervals.resync_seconds.max(5)));
     let mut stats = tokio::time::interval(Duration::from_secs(intervals.stats_seconds.max(5)));
     let mut disk = tokio::time::interval(Duration::from_secs(intervals.disk_usage_seconds.max(30)));
-    let mut trash = tokio::time::interval(Duration::from_secs(3600));
+    let mut trash = tokio::time::interval(Duration::from_hours(1));
     for timer in [&mut resync, &mut stats, &mut disk, &mut trash] {
         timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     }
@@ -92,7 +92,7 @@ pub async fn periodic(manager: Arc<Manager>, cancel: CancellationToken) {
             _ = stats.tick() => manager.sample_all().await,
             _ = disk.tick() => manager.measure_disk().await,
             _ = trash.tick() => {
-                let retention = (manager.config.workloads.trash_retention_hours * 3600) as i64;
+                let retention = manager.config.workloads.trash_retention();
                 let store = manager.store.clone();
                 let now = crate::clock::now().unix_timestamp();
                 if let Ok(purged) = tokio::task::spawn_blocking(move || store.purge_trash(now, retention)).await {

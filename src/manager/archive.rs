@@ -119,7 +119,7 @@ impl Manager {
         let mut headers: Vec<(&str, String)> = extra_headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
         headers.push(("content-length", length.to_string()));
         let response =
-            crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
+            crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, crate::tarball::TRANSFER_LIMIT)
                 .await
                 .map_err(|e| NodeError::TransferBroke { what: "uploading the archive", source: e.into() })?;
         if !response.status().is_success() {
@@ -257,7 +257,7 @@ impl Manager {
             &[],
             crate::http_client::empty(),
             tls,
-            Duration::from_secs(3600),
+            Duration::from_hours(1),
         )
         .await
         .map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
@@ -281,12 +281,12 @@ impl Manager {
         // A body that stops coming never ends by itself, and this holds the workload's lock: it
         // fails once nothing arrives for a while, or once nobody is waiting for it any more.
         let idle = self.config.transfer.idle();
-        let deadline = tokio::time::Instant::now() + crate::tarball::DOWNLOAD_LIMIT;
+        let deadline = tokio::time::Instant::now() + crate::tarball::TRANSFER_LIMIT;
         let stalled = |_| {
             let why = if tokio::time::Instant::now() < deadline {
                 format!("nothing arrived for {idle:?}")
             } else {
-                format!("not finished within {:?}", crate::tarball::DOWNLOAD_LIMIT)
+                format!("not finished within {:?}", crate::tarball::TRANSFER_LIMIT)
             };
             NodeError::Transfer(format!("downloading the archive: {why}"))
         };
@@ -447,7 +447,7 @@ async fn put_part(
     let mut headers: Vec<(&str, String)> = extra_headers.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
     headers.push(("content-length", length.to_string()));
     let response =
-        crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, Duration::from_secs(3 * 3600))
+        crate::http_client::send(hyper::Method::PUT, url, &headers, body, tls, crate::tarball::TRANSFER_LIMIT)
             .await
             .map_err(|e| (e.to_string(), e.is_transient()))?;
     let status = response.status();

@@ -99,6 +99,12 @@ jobs:
           if git grep -nwE '25565|25575' -- src tests examples deploy ':!src/minecraft.rs' ':!tests/formats.rs' ':!tests/fixtures'; then exit 1; fi
           if git grep -n 'DockerResponseServerError' -- src tests ':!src/runtime/docker.rs'; then exit 1; fi
           if git grep -nE '(status|status_code|code)(: *| *== *)[1-5][0-9]{2}\b|as_u16\(\) *[=!<>]=? *[0-9]|\.status, *[1-5][0-9]{2}\b' -- src tests; then exit 1; fi
+      # A length of time comes from std's Duration::from_mins/from_hours or a named constant, not
+      # a hand-written 3600 or 86_400; and a comment says why, not who decided it.
+      - name: Durations and comments
+        run: |
+          if git grep -nE '\b(3_?600|86_?400|604_?800)\b|\b60 ?\* ?60\b' -- '*.rs'; then exit 1; fi
+          if git grep -niE "owner'?s decision|owner decided|per the owner|as requested" -- . ':!.github/workflows/ci.yml'; then exit 1; fi
       - name: Structure
         run: |
           curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/b380886862aad14671df1d7ca278fa90b78c0eb7/scripts/check-structure.ts \

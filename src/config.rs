@@ -172,7 +172,7 @@ impl Default for DockerConfig {
             // dockerd's own default (`--host`); bollard keeps its copy private.
             socket: PathBuf::from("/var/run/docker.sock"),
             network: "blockly-workloads".into(),
-            pull_timeout_seconds: 20 * 60,
+            pull_timeout_seconds: Duration::from_mins(20).as_secs(),
         }
     }
 }
@@ -199,7 +199,7 @@ impl Default for NetworkConfig {
             port_range: [42000, 42999],
             edge_ips: vec![IpAddr::from([127, 0, 0, 1])],
             control_ips: vec![IpAddr::from([127, 0, 0, 1])],
-            port_quarantine_seconds: 600,
+            port_quarantine_seconds: Duration::from_mins(10).as_secs(),
         }
     }
 }
@@ -243,6 +243,12 @@ impl Default for WorkloadPolicy {
             trash_retention_hours: 24,
             min_memory_mb: 256,
         }
+    }
+}
+
+impl WorkloadPolicy {
+    pub(crate) fn trash_retention(&self) -> Duration {
+        Duration::from_hours(self.trash_retention_hours)
     }
 }
 

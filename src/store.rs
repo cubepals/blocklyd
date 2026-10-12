@@ -40,6 +40,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -322,7 +323,8 @@ impl Store {
     }
 
     /// Purges trash entries older than `retention_secs`. Returns what it removed.
-    pub(crate) fn purge_trash(&self, now_unix: i64, retention_secs: i64) -> Vec<PathBuf> {
+    pub(crate) fn purge_trash(&self, now_unix: i64, retention: Duration) -> Vec<PathBuf> {
+        let retention_secs = i64::try_from(retention.as_secs()).unwrap_or(i64::MAX);
         let Ok(entries) = fs::read_dir(self.trash_dir()) else { return Vec::new() };
         let mut purged = Vec::new();
         for entry in entries.filter_map(Result::ok) {
@@ -470,8 +472,9 @@ pub(crate) mod tests {
         let moved = store.trash(&id, 1_000).unwrap().unwrap();
         assert!(!store.workload_dir(&id).exists());
         assert!(moved.join("workload.json").exists());
-        assert!(store.purge_trash(1_000 + 60, 3600).is_empty());
-        assert_eq!(store.purge_trash(1_000 + 3600, 3600).len(), 1);
+        let hour = Duration::from_hours(1);
+        assert!(store.purge_trash(1_000 + 60, hour).is_empty());
+        assert_eq!(store.purge_trash(1_000 + hour.as_secs() as i64, hour).len(), 1);
         assert!(store.trash(&id, 2_000).unwrap().is_none(), "trashing twice is a no-op");
     }
 

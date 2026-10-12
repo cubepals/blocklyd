@@ -32,6 +32,12 @@ fn write(path: &Path, contents: &str, mode: u32) -> std::io::Result<()> {
     file.write_all(contents.as_bytes())
 }
 
+/// How far before now a certificate is valid from, so a peer whose clock runs a little behind
+/// accepts it.
+const BACKDATE: Duration = Duration::minutes(5);
+/// How long a certificate made here stays valid.
+const VALIDITY: Duration = Duration::days(30);
+
 pub struct Authority {
     issuer: Issuer<'static, KeyPair>,
     pub pem: String,
@@ -45,8 +51,8 @@ pub fn authority(name: &str) -> anyhow::Result<Authority> {
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, name);
     params.distinguished_name = dn;
-    params.not_before = OffsetDateTime::now_utc() - Duration::minutes(5);
-    params.not_after = OffsetDateTime::now_utc() + Duration::days(30);
+    params.not_before = OffsetDateTime::now_utc() - BACKDATE;
+    params.not_after = OffsetDateTime::now_utc() + VALIDITY;
     let cert = params.self_signed(&key)?;
     Ok(Authority { pem: cert.pem(), issuer: Issuer::new(params, key) })
 }
@@ -75,8 +81,8 @@ pub fn leaf(ca: &Authority, dns: &[String], ips: &[IpAddr], role: Role) -> anyho
     let mut dn = DistinguishedName::new();
     dn.push(DnType::CommonName, dns.first().cloned().unwrap_or_else(|| "blockly".into()));
     params.distinguished_name = dn;
-    params.not_before = OffsetDateTime::now_utc() - Duration::minutes(5);
-    params.not_after = OffsetDateTime::now_utc() + Duration::days(30);
+    params.not_before = OffsetDateTime::now_utc() - BACKDATE;
+    params.not_after = OffsetDateTime::now_utc() + VALIDITY;
     let cert = params.signed_by(&key, &ca.issuer)?;
     Ok((cert.pem(), key.serialize_pem()))
 }

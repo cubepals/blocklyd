@@ -20,7 +20,7 @@ impl Manager {
     pub async fn restart_supervisor(self: Arc<Self>, cancel: tokio_util::sync::CancellationToken) {
         loop {
             let next = self.state.lock().unwrap().restart_due.values().min().copied();
-            let wait = next.map_or(Duration::from_secs(3600), |at| at.saturating_duration_since(Instant::now()));
+            let wait = next.map_or(Duration::from_hours(1), |at| at.saturating_duration_since(Instant::now()));
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
                 () = self.restart_wake.notified() => continue,
