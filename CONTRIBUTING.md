@@ -25,7 +25,14 @@ Cubepals' control plane against your build. The README's "Build and test" has th
 
 `main` is the trunk. Branch from it, keep the change small, and open a pull request. CI's `check`
 must pass. Pull requests are squash-merged, so the title becomes the commit on `main`: a plain
-sentence about what changes. `main` keeps a linear history.
+sentence about what changes, of 50 characters or fewer. `main` keeps a linear history.
+
+Commit subjects follow the same rule, which [lefthook](https://lefthook.dev)'s `commit-msg` hook
+checks (`lefthook.yml`, `scripts/check-subject.sh`). Install it once per clone, with Node:
+
+```sh
+npx lefthook@2.1.15 install
+```
 
 A change to the protocol only adds within v1 (a new field, a new endpoint, announced in
 `features`), so a control plane one release behind keeps working. Regenerate the specs with

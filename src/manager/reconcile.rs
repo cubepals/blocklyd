@@ -58,39 +58,8 @@ impl Manager {
         if from == Records::FromDisk {
             host_issues = self.load_from_disk(&mut issues).await?;
         }
-
-        let network_labels = BTreeMap::from([
-            (LABEL_MANAGED.to_owned(), "true".to_owned()),
-            (LABEL_DEPLOYMENT.to_owned(), self.config.deployment_id.clone()),
-        ]);
-        let network = self.note(self.runtime.ensure_network(&self.config.docker.network, &network_labels).await)?;
-        if !network.isolated {
-            host_issues.push(Issue::new(
-                IssueCode::NetworkNotIsolated,
-                format!("{} lets workloads reach each other (enable_icc is not false)", self.config.docker.network),
-            ));
-        }
-        if let Ok(info) = self.runtime.info().await {
-            if info.live_restore != Some(true) {
-                host_issues.push(Issue::new(
-                    IssueCode::LiveRestoreOff,
-                    "the Docker daemon stops every workload when it restarts (live-restore is off)",
-                ));
-            }
-            *self.runtime_info.lock().unwrap() = Some(info);
-        }
-
-        let containers = self.note(self.runtime.list(&self.owner_labels()).await)?;
-        let mut by_workload: HashMap<WorkloadId, Vec<ContainerInfo>> = HashMap::new();
-        for c in containers {
-            match c.labels.get(LABEL_WORKLOAD).map(|w| WorkloadId::parse(w)) {
-                Some(Ok(id)) => by_workload.entry(id).or_default().push(c),
-                _ => host_issues.push(Issue::new(
-                    IssueCode::UnlabelledContainer,
-                    format!("{} carries no valid workload id", c.name),
-                )),
-            }
-        }
+        host_issues.extend(self.check_host().await?);
+        let mut by_workload = self.containers_by_workload(&mut host_issues).await?;
 
         let mut adopted = 0u64;
         let records: Vec<WorkloadRecord> = self.state.lock().unwrap().records.values().cloned().collect();
@@ -117,42 +86,91 @@ impl Manager {
             }
         }
 
-        // Ports: rebuilt from records, every pass, so the allocator can't drift from them.
-        {
-            let mut state = self.state.lock().unwrap();
-            state.ports.clear();
-            let records: Vec<WorkloadRecord> = state.records.values().cloned().collect();
-            for r in records.iter().filter(|r| r.phase != Phase::Retained) {
-                for p in &r.ports {
-                    if let Err(e) = state.ports.claim(&r.id, p.protocol, p.host_port) {
-                        let issue = match e {
-                            PortError::Conflict { .. } => Issue::new(IssueCode::PortConflict, e.to_string()),
-                            _ => Issue::new(IssueCode::PortOutOfRange, e.to_string()),
-                        };
-                        issues.entry(r.id.clone()).or_default().push(issue);
-                        if let PortError::Conflict { holder, .. } = &e {
-                            issues
-                                .entry(holder.clone())
-                                .or_default()
-                                .push(Issue::new(IssueCode::PortConflict, e.to_string()));
-                        }
-                    }
-                }
-            }
-        }
-
+        self.claim_ports(&mut issues);
         for dir in self.store.orphan_dirs(&seen) {
             host_issues.push(Issue::new(
                 IssueCode::OrphanData,
                 format!("{} holds data no workload claims; left alone", dir.display()),
             ));
         }
+        self.replace_issues(issues, host_issues);
+        Ok((seen.len() as u64, adopted))
+    }
 
-        let workloads = seen.len() as u64;
+    /// Makes sure of the workloads' network and reads the runtime's details. Returns the host's
+    /// issues with either: a network that lets workloads reach each other, a daemon that stops
+    /// them when it restarts.
+    async fn check_host(&self) -> Result<Vec<Issue>, NodeError> {
+        let mut host_issues = Vec::new();
+        let network_labels = BTreeMap::from([
+            (LABEL_MANAGED.to_owned(), "true".to_owned()),
+            (LABEL_DEPLOYMENT.to_owned(), self.config.deployment_id.clone()),
+        ]);
+        let network = self.note(self.runtime.ensure_network(&self.config.docker.network, &network_labels).await)?;
+        if !network.isolated {
+            host_issues.push(Issue::new(
+                IssueCode::NetworkNotIsolated,
+                format!("{} lets workloads reach each other (enable_icc is not false)", self.config.docker.network),
+            ));
+        }
+        if let Ok(info) = self.runtime.info().await {
+            if info.live_restore != Some(true) {
+                host_issues.push(Issue::new(
+                    IssueCode::LiveRestoreOff,
+                    "the Docker daemon stops every workload when it restarts (live-restore is off)",
+                ));
+            }
+            *self.runtime_info.lock().unwrap() = Some(info);
+        }
+        Ok(host_issues)
+    }
+
+    /// The runtime's containers of this deployment, by the workload their label names. One
+    /// whose label names none is a host issue.
+    async fn containers_by_workload(
+        &self,
+        host_issues: &mut Vec<Issue>,
+    ) -> Result<HashMap<WorkloadId, Vec<ContainerInfo>>, NodeError> {
+        let containers = self.note(self.runtime.list(&self.owner_labels()).await)?;
+        let mut by_workload: HashMap<WorkloadId, Vec<ContainerInfo>> = HashMap::new();
+        for c in containers {
+            match c.labels.get(LABEL_WORKLOAD).map(|w| WorkloadId::parse(w)) {
+                Some(Ok(id)) => by_workload.entry(id).or_default().push(c),
+                _ => host_issues.push(Issue::new(
+                    IssueCode::UnlabelledContainer,
+                    format!("{} carries no valid workload id", c.name),
+                )),
+            }
+        }
+        Ok(by_workload)
+    }
+
+    /// Rebuilds the port allocator from the records, every pass, so it can't drift from them.
+    /// A port two records claim, or one out of range, is an issue of each workload involved.
+    fn claim_ports(&self, issues: &mut HashMap<WorkloadId, Vec<Issue>>) {
         let mut state = self.state.lock().unwrap();
-        // A pass finds each issue again, but for two it can't see, which are kept: storage use
-        // (measured on its own interval) and a restart refused for room. Those of workloads that no
-        // longer exist go.
+        state.ports.clear();
+        let records: Vec<WorkloadRecord> = state.records.values().cloned().collect();
+        for r in records.iter().filter(|r| r.phase != Phase::Retained) {
+            for p in &r.ports {
+                let Err(e) = state.ports.claim(&r.id, p.protocol, p.host_port) else { continue };
+                let issue = match e {
+                    PortError::Conflict { .. } => Issue::new(IssueCode::PortConflict, e.to_string()),
+                    _ => Issue::new(IssueCode::PortOutOfRange, e.to_string()),
+                };
+                issues.entry(r.id.clone()).or_default().push(issue);
+                if let PortError::Conflict { holder, .. } = &e {
+                    issues.entry(holder.clone()).or_default().push(Issue::new(IssueCode::PortConflict, e.to_string()));
+                }
+            }
+        }
+    }
+
+    /// Puts what this pass found in place of what the last one did. A pass finds each issue
+    /// again, but for two it can't see, which are kept: storage use (measured on its own
+    /// interval) and a restart refused for room. Those of workloads that no longer exist go.
+    fn replace_issues(&self, mut issues: HashMap<WorkloadId, Vec<Issue>>, host_issues: Vec<Issue>) {
+        let mut state = self.state.lock().unwrap();
         let known: BTreeSet<_> = state.records.keys().cloned().collect();
         state.issues.retain(|id, _| known.contains(id));
         for (id, list) in state.issues.iter_mut() {
@@ -165,7 +183,6 @@ impl Manager {
             state.issues.insert(id, list);
         }
         state.host_issues = host_issues;
-        Ok((workloads, adopted))
     }
 
     /// Holds a record up against the containers found for it: completes a create its container
