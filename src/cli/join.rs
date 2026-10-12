@@ -35,7 +35,7 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use super::reenroll::{Reenroll, reenroll};
-use super::service::{Service, Systemd};
+use super::service::{Service, Systemd, UNIT_NAME};
 use crate::config::Config;
 use crate::doctor;
 use crate::fleet::identity::{Identity, write_atomic};
@@ -46,7 +46,7 @@ use crate::infer::API_PORT;
 /// The paths as the host sees them; under `root` when one is given.
 const CA: &str = "/etc/blocklyd/fleet-ca.pem";
 const TOKEN: &str = "/var/lib/blocklyd/enrollment-token";
-const UNIT: &str = "/etc/systemd/system/blocklyd.service";
+pub const UNIT: &str = "/etc/systemd/system/blocklyd.service";
 
 const UNIT_FILE: &str = include_str!("../../deploy/blocklyd.service");
 
@@ -168,9 +168,9 @@ pub async fn join(options: Join) -> anyhow::Result<String> {
             .await
             .with_context(|| format!("wrote {}, and left blocklyd stopped", written.join(", ")))?;
         service.systemctl(&["daemon-reload"])?;
-        service.systemctl(&["enable", "blocklyd"])?;
+        service.systemctl(&["enable", UNIT_NAME])?;
         // A start that failed before this join (an old token) is retried with the new one.
-        service.systemctl(&["restart", "blocklyd"])?;
+        service.systemctl(&["restart", UNIT_NAME])?;
     }
     Ok(report(&token, &config, config_file, existing.is_some(), &written, options.start))
 }

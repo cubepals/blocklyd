@@ -41,7 +41,7 @@ pub fn state_dir(config: &Path) -> PathBuf {
         state_dir: Option<PathBuf>,
     }
     let text = std::fs::read_to_string(config).unwrap_or_default();
-    toml::from_str::<StateDir>(&text).ok().and_then(|c| c.state_dir).unwrap_or_else(|| "/var/lib/blocklyd".into())
+    toml::from_str::<StateDir>(&text).ok().and_then(|c| c.state_dir).unwrap_or_else(|| crate::config::STATE_DIR.into())
 }
 
 #[cfg(test)]

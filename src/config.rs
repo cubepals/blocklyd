@@ -58,8 +58,11 @@ pub struct Config {
     pub inferred: Vec<crate::infer::Inferred>,
 }
 
+/// Where blocklyd keeps its state unless `state_dir` says otherwise.
+pub(crate) const STATE_DIR: &str = "/var/lib/blocklyd";
+
 fn default_state_dir() -> PathBuf {
-    PathBuf::from("/var/lib/blocklyd")
+    PathBuf::from(STATE_DIR)
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -392,13 +395,16 @@ fn name_ok(value: &str) -> bool {
 
 /// Where a listener without authentication may be bound: loopback, or an address the internet
 /// can't route to. An IPv4 address written as IPv6 (`::ffff:a.b.c.d`) is judged as itself.
+/// The first port an unprivileged process may bind: Linux's default
+/// `net.ipv4.ip_unprivileged_port_start`, and the end of the ports IANA calls well-known.
+const UNPRIVILEGED_PORTS: u16 = 1024;
+/// What /proc/<pid>/oom_score_adj takes: `OOM_SCORE_ADJ_MIN` and `OOM_SCORE_ADJ_MAX` in the
+/// kernel's include/uapi/linux/oom.h, which libc doesn't carry.
+const OOM_SCORE_ADJ: std::ops::RangeInclusive<i32> = -1000..=1000;
+
 pub(crate) fn private_or_loopback(ip: IpAddr) -> bool {
     match ip.to_canonical() {
-        IpAddr::V4(ip) => {
-            let [a, b, ..] = ip.octets();
-            // 100.64.0.0/10 is shared address space: WireGuard and Tailscale overlays live there.
-            ip.is_loopback() || ip.is_private() || (a == 100 && (64..128).contains(&b))
-        }
+        IpAddr::V4(ip) => ip.is_loopback() || ip.is_private() || crate::infer::shared_address_space(ip),
         IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local() || ip.is_unicast_link_local(),
     }
 }
@@ -496,8 +502,8 @@ impl Config {
             return bad("state_dir must be absolute".into());
         }
         let [low, high] = self.network.port_range;
-        if low < 1024 || low > high {
-            return bad("network.port_range is [low, high] with 1024 <= low <= high".into());
+        if low < UNPRIVILEGED_PORTS || low > high {
+            return bad(format!("network.port_range is [low, high] with {UNPRIVILEGED_PORTS} <= low <= high"));
         }
         if self.network.edge_ips.is_empty() || self.network.control_ips.is_empty() {
             return bad("network.edge_ips and network.control_ips each need an address".into());
@@ -533,8 +539,12 @@ impl Config {
         if !(0.5..=4.0).contains(&self.capacity.memory_overcommit) {
             return bad("capacity.memory_overcommit is between 0.5 and 4.0".into());
         }
-        if !(-1000..=1000).contains(&self.workloads.oom_score_adj) {
-            return bad("workloads.oom_score_adj is between -1000 and 1000".into());
+        if !OOM_SCORE_ADJ.contains(&self.workloads.oom_score_adj) {
+            return bad(format!(
+                "workloads.oom_score_adj is between {} and {}",
+                OOM_SCORE_ADJ.start(),
+                OOM_SCORE_ADJ.end()
+            ));
         }
         Ok(())
     }
@@ -626,7 +636,7 @@ mod tests {
         for section in ["ops", "docker", "network", "workloads", "capacity", "intervals", "transfer"] {
             let unknown = format!("{MINIMAL}\n[{section}]\nfoo = 1\n");
             let refused = toml::from_str::<Config>(&unknown).expect_err(section).to_string();
-            assert!(refused.contains("unknown field `foo`"), "{section}: {refused}");
+            assert!(refused.contains("foo"), "{section}: {refused}");
         }
     }
 

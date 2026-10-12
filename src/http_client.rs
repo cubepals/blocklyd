@@ -342,7 +342,7 @@ mod tests {
             !tls(Error::other(rustls::Error::General("no versions".into()))).is_transient(),
             "settings rustls refused"
         );
-        assert!(tls(Error::new(ErrorKind::UnexpectedEof, "tls handshake eof")).is_transient(), "closed mid-handshake");
+        assert!(tls(Error::from(ErrorKind::UnexpectedEof)).is_transient(), "closed mid-handshake");
         assert!(tls(Error::from(ErrorKind::ConnectionReset)).is_transient());
         assert!(!ClientError::BadUrl("ftp://cp.example".into()).is_transient());
         assert!(!ClientError::NoTls("https://cp.example".into()).is_transient());

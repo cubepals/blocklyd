@@ -62,7 +62,12 @@ pub(crate) fn validate_exclude(exclude: &[String]) -> Result<(), Vec<FieldError>
         return bad("at most 64 names");
     }
     for name in exclude {
-        if name.is_empty() || name.len() > 255 || name == "." || name == ".." || name.contains(['/', '\0']) {
+        if name.is_empty()
+            || name.len() > libc::NAME_MAX as usize
+            || name == "."
+            || name == ".."
+            || name.contains(['/', '\0'])
+        {
             return bad("each is one plain name at the top of the data");
         }
     }

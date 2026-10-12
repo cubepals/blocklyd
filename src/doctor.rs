@@ -138,7 +138,10 @@ pub async fn run(options: &Options) -> Report {
         None => checks.push(Check::warn(
             "docker",
             format!("docker.socket {} isn't a path blocklyd can use", config.docker.socket.display()),
-            "Set docker.socket to Docker's unix socket, usually /var/run/docker.sock",
+            format!(
+                "Set docker.socket to Docker's unix socket, usually {}",
+                crate::config::DockerConfig::default().socket.display()
+            ),
         )),
     }
     checks.extend(state::checks(&config, &options.config));

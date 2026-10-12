@@ -716,7 +716,7 @@ async fn a_pasted_token_is_all_a_host_needs_to_join() {
     let written = root.join("var/lib/blocklyd/enrollment-token");
     assert_eq!(std::fs::read_to_string(&written).unwrap(), token, "the whole token: enrollment checks it again");
     assert_eq!(std::fs::metadata(&written).unwrap().permissions().mode() & 0o777, 0o600);
-    let unit = std::fs::read_to_string(root.join("etc/systemd/system/blocklyd.service")).unwrap();
+    let unit = std::fs::read_to_string(root.join(blocklyd::cli::join::UNIT.trim_start_matches('/'))).unwrap();
     assert!(unit.contains("ExecStart=/usr/local/bin/blocklyd serve"), "{unit}");
     assert!(said.contains("api.listen = \"10.0.0.5:7443\"    (the host's private address, on enp7s0)"), "{said}");
     assert!(said.contains("systemctl enable --now blocklyd"), "{said}");

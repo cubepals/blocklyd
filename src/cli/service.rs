@@ -19,6 +19,9 @@ use hyper::Method;
 
 use crate::http_client as client;
 
+/// blocklyd's systemd unit, as deploy/blocklyd.service installs it.
+pub(crate) const UNIT_NAME: &str = "blocklyd";
+
 pub(crate) trait Service {
     /// `systemctl` with these arguments; an error when it fails.
     fn systemctl(&self, args: &[&str]) -> anyhow::Result<()>;

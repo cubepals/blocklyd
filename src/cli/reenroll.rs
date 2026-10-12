@@ -28,7 +28,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, bail};
 
-use super::service::Service;
+use super::service::{Service, UNIT_NAME};
 use crate::fleet::identity::{Identity, write_atomic};
 
 pub(crate) struct Reenroll<'a> {
@@ -53,14 +53,14 @@ pub(crate) async fn reenroll(swap: Reenroll<'_>, service: &impl Service) -> anyh
     let old_ca = std::fs::read(&swap.ca_file).with_context(|| format!("reading {}", swap.ca_file.display()))?;
     let new_ca = old_ca != swap.ca;
 
-    service.systemctl(&["stop", "blocklyd"])?;
+    service.systemctl(&["stop", UNIT_NAME])?;
     let attempt = async {
         std::fs::rename(&identity, &old).with_context(|| format!("moving {} aside", identity.display()))?;
         if new_ca {
             write_atomic(&swap.ca_file, swap.ca, 0o644)?;
         }
         write_atomic(&swap.token_file, swap.token.trim().as_bytes(), 0o600)?;
-        service.systemctl(&["start", "blocklyd"])?;
+        service.systemctl(&["start", UNIT_NAME])?;
         println!("Re-enrolling node {}: waiting for its first heartbeat.", swap.node);
         anyhow::Ok(service.first_beat(swap.ops, swap.within).await)
     };
@@ -96,7 +96,7 @@ pub(crate) async fn reenroll(swap: Reenroll<'_>, service: &impl Service) -> anyh
     }
 
     let failed = swap.state_dir.join(format!("identity.failed-{stamp}"));
-    service.systemctl(&["stop", "blocklyd"])?;
+    service.systemctl(&["stop", UNIT_NAME])?;
     if old.exists() {
         if identity.exists() {
             std::fs::rename(&identity, &failed).with_context(|| format!("moving {} aside", identity.display()))?;
@@ -112,7 +112,7 @@ pub(crate) async fn reenroll(swap: Reenroll<'_>, service: &impl Service) -> anyh
         }
         _ => {}
     }
-    service.systemctl(&["start", "blocklyd"])?;
+    service.systemctl(&["start", UNIT_NAME])?;
     let kept =
         if failed.exists() { format!(" What the attempt enrolled is in {}.", failed.display()) } else { String::new() };
     bail!(

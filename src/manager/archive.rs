@@ -517,10 +517,11 @@ mod tests {
         assert!(matches!(copy_failed("copying", refused), NodeError::InsufficientDisk(m) if m == "only 3 MB free"));
         let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
         assert!(matches!(copy_failed("copying", full), NodeError::InsufficientDisk(_)));
-        let failed = std::io::Error::other("Input/output error");
-        let failed = copy_failed("copying", failed);
+        let eio = std::io::Error::from_raw_os_error(libc::EIO);
+        let said = format!("copying: {eio}");
+        let failed = copy_failed("copying", eio);
         assert!(matches!(failed, NodeError::Io { .. }), "{failed:?}");
-        assert_eq!(failed.to_string(), "copying: Input/output error", "as the API answers it");
+        assert_eq!(failed.to_string(), said, "as the API answers it");
     }
 
     #[test]

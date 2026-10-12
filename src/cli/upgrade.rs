@@ -59,7 +59,7 @@ pub async fn upgrade(config: &Path, restart: bool) -> anyhow::Result<String> {
         layout.prev().display()
     );
     if restart {
-        let status = std::process::Command::new("systemctl").args(["restart", "blocklyd"]).status();
+        let status = std::process::Command::new("systemctl").args(["restart", super::service::UNIT_NAME]).status();
         anyhow::ensure!(
             status.is_ok_and(|s| s.success()),
             "{said}systemctl restart blocklyd failed: restart it yourself"
