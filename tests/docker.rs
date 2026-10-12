@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
-use blocklyd::manager::{Manager, NodeError, Precondition, Records};
+use blocklyd::manager::{ConflictCode, Manager, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, EnsureOutcome, ExecRequest, WorkloadSpec, WorkloadState};
 use blocklyd::runtime::ContainerRuntime;
 use blocklyd::runtime::docker::DockerRuntime;
@@ -390,6 +390,42 @@ async fn a_port_another_process_holds_is_skipped() {
     assert!(m.start(id("p"), None).await.unwrap().changed);
     drop(squatter);
     cleanup(&m, &["p"]).await;
+}
+
+/// Docker's own refusals, not the fake's: a host port another daemon's container holds, and one
+/// another process holds, which no probe looked for. Each is the workload's port conflict.
+#[tokio::test]
+#[ignore = "needs Docker"]
+async fn a_start_docker_refuses_for_a_taken_port_is_a_port_conflict() {
+    let refused = |e: NodeError| matches!(e, NodeError::Conflict { code: ConflictCode::PortConflict, .. });
+    let (dir, other_dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let (dep, other) = (deployment(), deployment());
+    let (_cleanup, _other_cleanup) = (Cleanup(dep.clone()), Cleanup(other.clone()));
+    // Two daemons over one range, the mistake tests/docker.rs's port slots exist to avoid.
+    let first = daemon(dir.path(), &dep);
+    first.reconcile(Records::FromDisk).await;
+    first.ensure(id("a"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
+    assert!(first.start(id("a"), None).await.unwrap().changed);
+    let second = manager_on(other_dir.path(), docker(), &extra(&dep).replace(&dep, &other));
+    second.reconcile(Records::FromDisk).await;
+    second.ensure(id("b"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
+    let err = second.start(id("b"), None).await.unwrap_err();
+    assert!(refused(err), "a port another container holds");
+    cleanup(&second, &["b"]).await;
+    cleanup(&first, &["a"]).await;
+
+    // Above `extra()`'s range and a_port_another_process_holds_is_skipped's.
+    let squatter = TcpListener::bind("127.0.0.1:48020").unwrap();
+    let text = format!(
+        "deployment_id = \"{dep}\"\n[network]\nport_range = [48020, 48030]\nport_quarantine_seconds = 0\n{HOST_OWNERSHIP}"
+    );
+    let unprobed = manager_on(dir.path(), docker(), &text);
+    unprobed.reconcile(Records::FromDisk).await;
+    unprobed.ensure(id("p"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
+    let err = unprobed.start(id("p"), None).await.unwrap_err();
+    assert!(refused(err), "a port another process holds");
+    drop(squatter);
+    cleanup(&unprobed, &["p"]).await;
 }
 
 #[tokio::test]
