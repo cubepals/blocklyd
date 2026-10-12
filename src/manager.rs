@@ -71,8 +71,8 @@ use crate::protocol::{
     StorageView, UploadRequest, WorkloadSpec, WorkloadState, WorkloadView,
 };
 use crate::runtime::{
-    ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
-    RuntimeError, RuntimeInfo, exit_by, format_time, parse_time,
+    ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, DIED, LogOptions, LogStream, PortBinding,
+    RawStats, RuntimeError, RuntimeInfo, exit_by, format_time, parse_time,
 };
 use crate::store::restore::Recovery;
 use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Store, WorkloadRecord};
@@ -592,7 +592,7 @@ impl Manager {
                 .map(|r| r.id.clone())
         };
         let Some(id) = id else { return };
-        if action == "die" && exit_code.is_some_and(|c| !clean_exit(c)) {
+        if action == DIED && exit_code.is_some_and(|c| !clean_exit(c)) {
             self.state.lock().unwrap().last_failure.insert(id.clone(), at);
         }
         if let Ok(record) = self.record(&id) {

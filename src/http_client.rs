@@ -18,7 +18,7 @@ use futures_util::StreamExt;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Collected, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
-use hyper::header::{CONTENT_LENGTH, HOST};
+use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST};
 use hyper::{Method, Request, Response, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
@@ -29,6 +29,9 @@ use tokio_rustls::TlsConnector;
 use crate::protocol::redact;
 
 pub(crate) type Body = BoxBody<Bytes, std::io::Error>;
+
+/// How long one call to the control plane may take: enrollment, renewal, its CA.
+pub(crate) const CONTROL_PLANE_CALL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ClientError {
@@ -224,7 +227,8 @@ pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwne
     timeout: Duration,
 ) -> Result<Resp, JsonError> {
     let body = serde_json::to_vec(request).map_err(|e| JsonError::Local(e.to_string()))?;
-    let headers = [("content-type", "application/json".to_owned()), (CONTENT_LENGTH.as_str(), body.len().to_string())];
+    let headers =
+        [(CONTENT_TYPE.as_str(), "application/json".to_owned()), (CONTENT_LENGTH.as_str(), body.len().to_string())];
     let exchange = async {
         let response =
             send(method, url, &headers, full(body), Some(tls), timeout).await.map_err(JsonError::Transport)?;

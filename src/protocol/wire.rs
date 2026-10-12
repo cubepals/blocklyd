@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{ExitInfo, Issue, ProtocolVersions, WorkloadState};
 
+/// Where the control plane's node endpoint serves what this module describes, below its URL.
+pub(crate) const FLEET_API: &str = "/fleet/v1";
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]

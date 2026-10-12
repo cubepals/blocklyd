@@ -228,7 +228,7 @@ type Answered = Result<Response<Full<Bytes>>, std::io::Error>;
 
 fn json(status: StatusCode, body: &impl serde::Serialize) -> Answered {
     let body = Full::new(Bytes::from(serde_json::to_vec(body).unwrap()));
-    Ok(Response::builder().status(status).header("content-type", "application/json").body(body).unwrap())
+    Ok(Response::builder().status(status).header(hyper::header::CONTENT_TYPE, "application/json").body(body).unwrap())
 }
 
 fn refused(status: StatusCode, code: &str) -> Answered {

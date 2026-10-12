@@ -19,8 +19,8 @@ use time::OffsetDateTime;
 use tokio::sync::broadcast;
 
 use super::{
-    ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, ExecOutput, LogChunk, LogOptions, LogStream,
-    NetworkReport, RawStats, RuntimeError, RuntimeEvent, RuntimeInfo, exit_by, format_time,
+    ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, DIED, ExecOutput, LogChunk, LogOptions, LogStream,
+    NetworkReport, RawStats, RuntimeError, RuntimeEvent, RuntimeInfo, STARTED, exit_by, format_time,
 };
 
 #[derive(Clone, Debug)]
@@ -124,7 +124,7 @@ impl FakeRuntime {
         c.finished_at = Some(OffsetDateTime::now_utc());
         let snapshot = c.clone();
         drop(all);
-        self.emit(&snapshot, "die");
+        self.emit(&snapshot, DIED);
     }
 
     /// Someone removed the container behind blocklyd's back.
@@ -244,7 +244,7 @@ impl ContainerRuntime for FakeRuntime {
         c.logs.push((LogStream::Stdout, "started".into()));
         let snapshot = c.clone();
         drop(all);
-        self.emit(&snapshot, "start");
+        self.emit(&snapshot, STARTED);
         Ok(())
     }
 
@@ -261,7 +261,7 @@ impl ContainerRuntime for FakeRuntime {
         c.finished_at = Some(OffsetDateTime::now_utc());
         let snapshot = c.clone();
         drop(all);
-        self.emit(&snapshot, "die");
+        self.emit(&snapshot, DIED);
         Ok(())
     }
 

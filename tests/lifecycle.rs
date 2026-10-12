@@ -14,7 +14,7 @@ use std::time::Duration;
 use blocklyd::fleet::heartbeat::heartbeat_report;
 use blocklyd::manager::{ConflictCode, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, IssueCode, WorkloadState};
-use blocklyd::runtime::exit_by;
+use blocklyd::runtime::{DIED, exit_by};
 use blocklyd::store::Phase;
 use support::{fixture, id, spec, spec_with};
 use tokio_util::sync::CancellationToken;
@@ -189,7 +189,7 @@ async fn a_record_written_from_two_sides_at_once_ends_as_the_newest() {
             let (m, done, name) = (f.manager.clone(), done.clone(), format!("blockly-test-{w}"));
             async move {
                 while !done.load(Ordering::SeqCst) {
-                    m.on_event(&name, "die", Some(exit_by(libc::SIGTERM)), time::OffsetDateTime::now_utc()).await;
+                    m.on_event(&name, DIED, Some(exit_by(libc::SIGTERM)), time::OffsetDateTime::now_utc()).await;
                     tokio::task::yield_now().await;
                 }
             }

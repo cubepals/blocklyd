@@ -299,7 +299,7 @@ pub(crate) async fn request(
         req = req.header(*k, *v);
     }
     if body.is_some() {
-        req = req.header("content-type", "application/json");
+        req = req.header(hyper::header::CONTENT_TYPE, "application/json");
     }
     let req = req.body(Full::new(Bytes::from(body.unwrap_or_default()))).unwrap();
     // With TLS 1.3 a refused client certificate surfaces on the first read, not the handshake.

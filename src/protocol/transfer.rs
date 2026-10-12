@@ -21,7 +21,7 @@ use crate::ids::{SnapshotId, WorkloadId};
 pub const MAX_SINGLE_PUT_BYTES: u64 = 5 * 1024 * 1024 * 1024 - 5 * 1024 * 1024;
 /// The bounds S3 puts on a multipart upload: every part but the last is at least 5 MiB, none is
 /// larger than one PUT may be, and there are at most 10,000 of them.
-pub(crate) const MIN_PART_BYTES: u64 = 5 * 1024 * 1024;
+pub const MIN_PART_BYTES: u64 = 5 * 1024 * 1024;
 pub(crate) const MAX_PART_BYTES: u64 = MAX_SINGLE_PUT_BYTES;
 pub(crate) const MAX_PARTS: u64 = 10_000;
 

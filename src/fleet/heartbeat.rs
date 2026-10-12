@@ -31,6 +31,7 @@ use crate::http_client as client;
 use crate::ids::{NodeId, WorkloadId};
 use crate::manager::{Lifecycle, Manager};
 use crate::protocol::ProtocolVersions;
+use crate::protocol::wire::FLEET_API;
 use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse, WorkloadReport};
 use crate::upgrade::Upgrader;
 
@@ -89,7 +90,7 @@ pub async fn run(
     cancel: CancellationToken,
 ) {
     let node_id = credentials.node_id();
-    let url = format!("{}/fleet/v1/nodes/{node_id}/heartbeat", control_plane.trim_end_matches('/'));
+    let url = format!("{}{FLEET_API}/nodes/{node_id}/heartbeat", control_plane.trim_end_matches('/'));
     let session = uuid::Uuid::new_v4().to_string();
     let boot = crate::host::boot_id();
     let mut interval = Duration::from_secs(every);

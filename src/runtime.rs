@@ -148,6 +148,12 @@ pub struct RawStats {
     pub(crate) tx_bytes: Option<u64>,
 }
 
+/// A container's process ended: Docker's event action for it (the Engine API's `/events`), which
+/// bollard passes on as a string.
+pub const DIED: &str = "die";
+/// A container started: Docker's event action for it.
+pub(crate) const STARTED: &str = "start";
+
 /// Something happened to a container. A hint to look again, never the truth itself.
 #[derive(Clone, Debug)]
 pub struct RuntimeEvent {

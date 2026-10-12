@@ -8,6 +8,7 @@
 mod support;
 
 use hyper::StatusCode;
+use hyper::header::{CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
 use support::{CLIENT, client, fixture, pki, request, serve, server_cert_as_client, spec_json};
 
 struct Env {
@@ -133,7 +134,8 @@ async fn malformed_requests_get_the_protocols_errors() {
     let r = e.call("POST", "/v1/workloads/w1/exec", Some(huge)).await;
     assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "bodies are bounded");
 
-    let r = e.call_with("PUT", path, &[("if-match", "a"), ("if-none-match", "*")], Some(spec_json())).await;
+    let r =
+        e.call_with("PUT", path, &[(IF_MATCH.as_str(), "a"), (IF_NONE_MATCH.as_str(), "*")], Some(spec_json())).await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST);
 }
 
@@ -181,7 +183,7 @@ async fn a_whole_lifecycle_over_http() {
     let path = "/v1/workloads/w1";
     let created = e.call("PUT", path, Some(spec_json())).await;
     assert_eq!(created.status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&created.body));
-    let etag = created.headers.get("etag").unwrap().to_str().unwrap().to_owned();
+    let etag = created.headers.get(ETAG).unwrap().to_str().unwrap().to_owned();
     assert_eq!(etag, format!("\"{}\"", created.json()["workload"]["specDigest"].as_str().unwrap()));
     let body = created.json();
     assert!(!String::from_utf8_lossy(&created.body).contains("first-secret"), "secrets never come back");
@@ -197,7 +199,7 @@ async fn a_whole_lifecycle_over_http() {
         "a duplicate create is an unchanged 200"
     );
     assert_eq!(
-        e.call_with("PUT", path, &[("if-none-match", "*")], Some(spec_json())).await.status,
+        e.call_with("PUT", path, &[(IF_NONE_MATCH.as_str(), "*")], Some(spec_json())).await.status,
         StatusCode::PRECONDITION_FAILED
     );
 
@@ -218,7 +220,7 @@ async fn a_whole_lifecycle_over_http() {
     assert_eq!(exec.json()["stdout"], "cat /data/whitelist.json");
 
     let logs = e.call("GET", &format!("{path}/logs?tail=5"), None).await;
-    assert_eq!(logs.headers.get("content-type").unwrap(), "application/x-ndjson");
+    assert_eq!(logs.headers.get(CONTENT_TYPE).unwrap(), "application/x-ndjson");
     let lines: Vec<serde_json::Value> =
         String::from_utf8_lossy(&logs.body).lines().map(|l| serde_json::from_str(l).unwrap()).collect();
     assert_eq!(lines.last().unwrap()["event"], "end");

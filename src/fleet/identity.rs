@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use crate::api::tls::ServerCert;
 use crate::config::TlsConfig;
 use crate::ids::NodeId;
+use crate::protocol::wire::FLEET_API;
 use crate::protocol::wire::{RenewRequest, RenewResponse};
 use crate::tls::{TlsSetupError, load_certs, load_key};
 
@@ -324,12 +325,17 @@ impl Credentials {
             .context("signing the certificate request")?
             .pem()
             .context("encoding the certificate request")?;
-        let url = format!("{}/fleet/v1/nodes/{}/renew", control_plane.trim_end_matches('/'), current.node_id());
+        let url = format!("{}{FLEET_API}/nodes/{}/renew", control_plane.trim_end_matches('/'), current.node_id());
         let request = RenewRequest { node_id: current.node_id().to_string(), csr_pem: csr };
-        let answer: RenewResponse =
-            crate::http_client::json(hyper::Method::POST, &url, &request, self.client(), Duration::from_secs(15))
-                .await
-                .context("asking the control plane")?;
+        let answer: RenewResponse = crate::http_client::json(
+            hyper::Method::POST,
+            &url,
+            &request,
+            self.client(),
+            crate::http_client::CONTROL_PLANE_CALL,
+        )
+        .await
+        .context("asking the control plane")?;
         let ca = load_certs(&current.dir.join("ca.pem")).context("reading the fleet CA")?;
         anyhow::ensure!(
             same_certificates(&answer.ca_pem, &ca),

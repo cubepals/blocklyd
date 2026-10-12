@@ -42,6 +42,7 @@ use crate::fleet::identity::{Identity, write_atomic};
 use crate::fleet::token::JoinToken;
 use crate::http_client as client;
 use crate::infer::API_PORT;
+use crate::protocol::wire::FLEET_API;
 
 /// The paths as the host sees them; under `root` when one is given.
 const CA: &str = "/etc/blocklyd/fleet-ca.pem";
@@ -233,7 +234,7 @@ fn report(token: &JoinToken, config: &Config, file: &Path, kept: bool, written: 
 
 /// The fleet CA as the token's endpoint serves it, once it is the one the token names.
 async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
-    let url = format!("{}/fleet/v1/ca.pem", token.url.trim_end_matches('/'));
+    let url = format!("{}{FLEET_API}/ca.pem", token.url.trim_end_matches('/'));
     let provider = crate::tls::provider();
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -241,9 +242,10 @@ async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
         .with_custom_certificate_verifier(Arc::new(PinnedByHash(provider)))
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let response = client::send(Method::GET, &url, &[], client::empty(), Some(Arc::new(tls)), Duration::from_secs(15))
-        .await
-        .with_context(|| format!("fetching the fleet CA from {url}"))?;
+    let response =
+        client::send(Method::GET, &url, &[], client::empty(), Some(Arc::new(tls)), client::CONTROL_PLANE_CALL)
+            .await
+            .with_context(|| format!("fetching the fleet CA from {url}"))?;
     let status = response.status();
     let body = client::read_body(response, 64 * 1024).await.map_err(|e| anyhow!("fetching {url}: {e}"))?;
     if !status.is_success() {

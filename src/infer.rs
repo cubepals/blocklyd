@@ -117,8 +117,7 @@ pub(crate) fn reserved_memory_mb(total_mb: u64) -> u64 {
 
 fn memory_total_mb(root: &Path) -> Option<u64> {
     let text = std::fs::read_to_string(root.join("proc/meminfo")).ok()?;
-    let kb = text.lines().find_map(|line| line.strip_prefix("MemTotal:"))?.split_whitespace().next()?;
-    kb.parse::<u64>().ok().map(|kb| kb / 1024)
+    crate::host::meminfo_bytes(&text, "MemTotal").map(|bytes| bytes / (1024 * 1024))
 }
 
 /// The table `name`, made if absent. None when the file gives `name` as something else, which
