@@ -1,24 +1,4 @@
 {
-  "clippy::too_many_lines": {
-    "src/manager/reconcile.rs › impl Manager › fn reconcile_inner": {
-      "n": 102,
-      "reason": "Over the threshold when the check began, and not yet looked at."
-    },
-    "src/protocol/spec/validate.rs › impl WorkloadSpec › fn validate": {
-      "n": 114,
-      "reason": "Over the threshold when the check began, and not yet looked at."
-    }
-  },
-  "clippy::cognitive_complexity": {
-    "src/manager/reconcile.rs › impl Manager › fn reconcile_inner": {
-      "n": 26,
-      "reason": "Over the threshold when the check began, and not yet looked at."
-    },
-    "src/protocol/spec/validate.rs › impl WorkloadSpec › fn validate": {
-      "n": 36,
-      "reason": "Over the threshold when the check began, and not yet looked at."
-    }
-  },
   "cycles": {
     "src/protocol.rs ↔ src/protocol/exec.rs ↔ src/protocol/lifecycle.rs ↔ src/protocol/node.rs ↔ src/protocol/spec.rs ↔ src/protocol/spec/validate.rs ↔ src/protocol/transfer.rs ↔ src/protocol/workload.rs": {
       "n": 8,

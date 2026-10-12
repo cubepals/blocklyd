@@ -163,6 +163,21 @@ async fn orphaned_data_is_reported_and_never_touched() {
 }
 
 #[tokio::test]
+async fn an_issue_the_next_pass_no_longer_finds_is_gone() {
+    let f = fixture("").await;
+    let orphan = f.manager.store.workloads_dir().join("nobody");
+    std::fs::create_dir_all(orphan.join("data")).unwrap();
+    f.manager.reconcile(Records::InMemory).await;
+    let host = f.manager.node_status().await;
+    assert!(host.issues.iter().any(|i| i.code == IssueCode::OrphanData));
+    std::fs::remove_dir_all(&orphan).unwrap();
+    let report = f.manager.reconcile(Records::InMemory).await;
+    assert!(report.error.is_none());
+    let host = f.manager.node_status().await;
+    assert!(!host.issues.iter().any(|i| i.code == IssueCode::OrphanData), "a pass replaces the host's issues");
+}
+
+#[tokio::test]
 async fn another_deployments_containers_are_invisible() {
     let f = fixture("").await;
     f.manager.ensure(id("a"), spec(), Precondition::None, None).await.unwrap();
