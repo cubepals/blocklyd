@@ -18,6 +18,10 @@ use serde::Deserialize;
 
 use crate::ids::NodeId;
 
+/// Where a host keeps its configuration: what `blocklyd join` writes and every command reads
+/// unless told otherwise.
+pub const PATH: &str = "/etc/blocklyd/blocklyd.toml";
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -162,6 +166,7 @@ pub struct DockerConfig {
 impl Default for DockerConfig {
     fn default() -> Self {
         Self {
+            // dockerd's own default (`--host`); bollard keeps its copy private.
             socket: PathBuf::from("/var/run/docker.sock"),
             network: "blockly-workloads".into(),
             pull_timeout_seconds: 20 * 60,

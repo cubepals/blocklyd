@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
+use blocklyd::config::DockerConfig;
 use blocklyd::labels::LABEL_DEPLOYMENT;
 use blocklyd::manager::{ConflictCode, Manager, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, EnsureOutcome, ExecRequest, WorkloadSpec, WorkloadState};
@@ -24,10 +25,8 @@ use blocklyd::runtime::ContainerRuntime;
 use blocklyd::runtime::docker::DockerRuntime;
 use support::{id, manager_on, manager_probed};
 
-const SOCKET: &str = "/var/run/docker.sock";
-
 fn docker() -> Arc<dyn ContainerRuntime> {
-    Arc::new(DockerRuntime::new(std::path::Path::new(SOCKET)).unwrap())
+    Arc::new(DockerRuntime::new(&DockerConfig::default().socket).unwrap())
 }
 
 /// A test's own deployment id, which carries its port slot for `extra`. Slots are handed out in

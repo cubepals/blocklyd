@@ -688,7 +688,7 @@ async fn join(root: &Path, token: String, address: Option<std::net::IpAddr>) -> 
     let options = blocklyd::cli::join::Join {
         token,
         address,
-        config: blocklyd::cli::join::CONFIG.into(),
+        config: blocklyd::config::PATH.into(),
         root: root.to_owned(),
         start: false,
         systemctl: "systemctl".into(),

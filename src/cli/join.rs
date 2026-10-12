@@ -44,7 +44,6 @@ use crate::http_client as client;
 use crate::infer::API_PORT;
 
 /// The paths as the host sees them; under `root` when one is given.
-pub const CONFIG: &str = "/etc/blocklyd/blocklyd.toml";
 const CA: &str = "/etc/blocklyd/fleet-ca.pem";
 const TOKEN: &str = "/var/lib/blocklyd/enrollment-token";
 const UNIT: &str = "/etc/systemd/system/blocklyd.service";
@@ -60,7 +59,7 @@ pub struct Join {
     pub token: String,
     /// The address to serve the fleet on, where the host's own can't be told (infer.rs).
     pub address: Option<IpAddr>,
-    /// The configuration to write, or to keep: `CONFIG`, but elsewhere in tests.
+    /// The configuration to write, or to keep: `config::PATH`, but elsewhere in tests.
     pub config: PathBuf,
     /// Where `/` is: another directory in tests.
     pub root: PathBuf,
