@@ -58,3 +58,8 @@ A change isn't done when its PR is green. It is done when the runs it starts on 
 ## Commits
 
 Signed, as their author. No attribution lines in commits or pull requests.
+
+A commit's subject, and a pull request's title (the squash commit on `main`), says the change in
+50 characters or fewer, with no closing period; the detail goes in the body. A `Move: …` title
+fits too. `scripts/check-subject.sh` enforces it, in lefthook's `commit-msg` hook
+(CONTRIBUTING.md installs it) and in CI's `subject` job on the title.
