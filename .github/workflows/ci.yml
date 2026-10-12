@@ -223,8 +223,24 @@ jobs:
       - run: docker build -t blocklyd .
       - run: docker run --rm blocklyd --version
 
+  # The pull request's title becomes the squash commit's subject on main, so it follows the rule
+  # lefthook's commit-msg hook holds commits to: scripts/check-subject.sh. Bots' titles are their own.
+  subject:
+    name: Commit subjects
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: scripts/check-subject-test.sh
+      - name: The pull request's title fits
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$TITLE" | scripts/check-subject.sh
+
   check:
-    needs: [changes, test, supply-chain, contract, image]
+    needs: [changes, test, supply-chain, contract, subject, image]
     if: always()
     runs-on: ubuntu-24.04
     steps:
