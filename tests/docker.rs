@@ -377,16 +377,18 @@ async fn a_port_another_process_holds_is_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let dep = deployment();
     let _cleanup = Cleanup(dep.clone());
-    // Above `extra()`'s 44000..47999, so no other test's daemon can be holding these ports.
-    let squatter = TcpListener::bind("127.0.0.1:48000").unwrap();
+    // A port the kernel hands out: a fixed one can already be some outbound connection's.
+    let squatter = TcpListener::bind("127.0.0.1:0").unwrap();
+    let held = squatter.local_addr().unwrap().port();
     let probe = blocklyd::ports::bind_probe(vec!["127.0.0.1".parse().unwrap()]);
     let text = format!(
-        "deployment_id = \"{dep}\"\n[network]\nport_range = [48000, 48010]\nport_quarantine_seconds = 0\n{HOST_OWNERSHIP}"
+        "deployment_id = \"{dep}\"\n[network]\nport_range = [{held}, {}]\nport_quarantine_seconds = 0\n{HOST_OWNERSHIP}",
+        held + 10
     );
     let m = manager_probed(dir.path(), docker(), &text, probe);
     m.reconcile(Records::FromDisk).await;
     let made = m.ensure(id("p"), shell(SERVER, 256), Precondition::None, None).await.unwrap();
-    assert_eq!(made.workload.ports[0].host_port, 48001, "48000 is someone else's");
+    assert!(made.workload.ports[0].host_port > held, "{held} is someone else's");
     assert!(m.start(id("p"), None).await.unwrap().changed);
     drop(squatter);
     cleanup(&m, &["p"]).await;
@@ -414,10 +416,11 @@ async fn a_start_docker_refuses_for_a_taken_port_is_a_port_conflict() {
     cleanup(&second, &["b"]).await;
     cleanup(&first, &["a"]).await;
 
-    // Above `extra()`'s range and a_port_another_process_holds_is_skipped's.
-    let squatter = TcpListener::bind("127.0.0.1:48020").unwrap();
+    let squatter = TcpListener::bind("127.0.0.1:0").unwrap();
+    let held = squatter.local_addr().unwrap().port();
     let text = format!(
-        "deployment_id = \"{dep}\"\n[network]\nport_range = [48020, 48030]\nport_quarantine_seconds = 0\n{HOST_OWNERSHIP}"
+        "deployment_id = \"{dep}\"\n[network]\nport_range = [{held}, {}]\nport_quarantine_seconds = 0\n{HOST_OWNERSHIP}",
+        held + 10
     );
     let unprobed = manager_on(dir.path(), docker(), &text);
     unprobed.reconcile(Records::FromDisk).await;
