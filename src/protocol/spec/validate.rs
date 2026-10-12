@@ -26,6 +26,11 @@ const MAX_ENTRYPOINT_ARGS: usize = 64;
 const MAX_ARG: usize = 64 * 1024;
 const MAX_PORTS: usize = 8;
 const MAX_LABELS: usize = 32;
+/// The weights Docker passes on as the container's cpu.shares: the kernel's bounds for it
+/// (`MIN_SHARES` and `MAX_SHARES`, kernel/sched/sched.h), which nothing exports.
+pub(crate) const CPU_WEIGHTS: std::ops::RangeInclusive<u32> = 2..=262_144;
+/// The longest a stop waits for the workload to exit before it is killed.
+pub(crate) const MAX_STOP_TIMEOUT: u32 = 600;
 
 fn env_key_ok(key: &str) -> bool {
     let b = key.as_bytes();
@@ -167,9 +172,12 @@ impl WorkloadSpec {
                 .add("resources.cpuMillis", format!("must be between 100 and {} on this host", policy.max_cpu_millis));
         }
         if let Some(weight) = r.cpu_weight
-            && !(2..=262_144).contains(&weight)
+            && !CPU_WEIGHTS.contains(&weight)
         {
-            problems.add("resources.cpuWeight", "must be between 2 and 262144");
+            problems.add(
+                "resources.cpuWeight",
+                format!("must be between {} and {}", CPU_WEIGHTS.start(), CPU_WEIGHTS.end()),
+            );
         }
         if let Some(pids) = r.pids_limit
             && !(64..=65_536).contains(&pids)
@@ -215,8 +223,8 @@ impl WorkloadSpec {
     }
 
     fn check_stop_and_restart(&self, problems: &mut Problems) {
-        if !(1..=600).contains(&self.stop.timeout_seconds) {
-            problems.add("stop.timeoutSeconds", "must be between 1 and 600");
+        if !(1..=MAX_STOP_TIMEOUT).contains(&self.stop.timeout_seconds) {
+            problems.add("stop.timeoutSeconds", format!("must be between 1 and {MAX_STOP_TIMEOUT}"));
         }
         if self.restart.max_retries > 10 {
             problems.add("restart.maxRetries", "must be at most 10");

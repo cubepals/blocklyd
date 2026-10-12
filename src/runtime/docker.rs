@@ -34,10 +34,10 @@ use super::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, ExecOutput, LogChunk, LogOptions, LogStream,
     NetworkReport, RawStats, RuntimeError, RuntimeEvent, RuntimeInfo, parse_time,
 };
-use crate::protocol::Health;
+use crate::protocol::{Health, MAX_STOP_TIMEOUT};
 
-/// Longer than the longest stop (600 s): Docker answers a stop only once the container exited.
-const CLIENT_TIMEOUT_SECS: u64 = 660;
+/// Longer than the longest stop: Docker answers a stop only once the container exited.
+const CLIENT_TIMEOUT_SECS: u64 = MAX_STOP_TIMEOUT as u64 + 60;
 /// Quick calls get a much shorter leash of their own.
 const QUICK: Duration = Duration::from_secs(20);
 const ICC_OPTION: &str = "com.docker.network.bridge.enable_icc";

@@ -63,12 +63,12 @@ use crate::labels::{
 use crate::metrics::Metrics;
 use crate::ports::{PortAllocator, PortError, Probe};
 use crate::protocol::{
-    Audience, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView, EnsureOutcome,
-    EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse, FieldError,
-    Issue, IssueCode, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse,
-    ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, RestoreSource, SnapshotDeleteResponse,
-    SnapshotList, SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest,
-    WorkloadSpec, WorkloadState, WorkloadView,
+    Audience, CPU_WEIGHTS, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView,
+    EnsureOutcome, EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse,
+    FieldError, Issue, IssueCode, Locate, LogRecord, MAX_STOP_TIMEOUT, NodeHealth, NodeStatus, PartsTarget, PortView,
+    PowerResponse, ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, RestoreSource,
+    SnapshotDeleteResponse, SnapshotList, SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView,
+    StorageView, UploadRequest, WorkloadSpec, WorkloadState, WorkloadView,
 };
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
