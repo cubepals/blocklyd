@@ -107,7 +107,7 @@ jobs:
           if git grep -niE "owner'?s decision|owner decided|per the owner|as requested" -- . ':!.github/workflows/ci.yml'; then exit 1; fi
       - name: Structure
         run: |
-          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/b380886862aad14671df1d7ca278fa90b78c0eb7/scripts/check-structure.ts \
+          curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/e264c475d05aa31ec8871b2ceb8c421cf7370200/scripts/check-structure.ts \
             -o "$RUNNER_TEMP/check-structure.ts"
           bun "$RUNNER_TEMP/check-structure.ts"
           bun "$RUNNER_TEMP/check-structure.ts" --rust
