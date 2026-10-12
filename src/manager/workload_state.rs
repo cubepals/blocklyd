@@ -6,7 +6,7 @@
 //! what every view, heartbeat and restart decision goes by.
 
 use crate::protocol::WorkloadState;
-use crate::runtime::{ContainerInfo, ContainerStatus, parse_time};
+use crate::runtime::{ContainerInfo, ContainerStatus, exit_by, parse_time};
 use crate::store::{Phase, WorkloadRecord};
 
 /// Whether a stop blocklyd was asked for is under way: a container still running then reads as
@@ -78,10 +78,10 @@ pub(super) fn derive_power_state(
     }
 }
 
-/// Requested stops end with these without being failures: SIGTERM handled late (143), SIGINT
-/// (130), or a clean exit.
+/// Requested stops end with these without being failures: SIGTERM handled late, SIGINT, or a
+/// clean exit.
 pub(super) fn clean_exit(code: i64) -> bool {
-    matches!(code, 0 | 130 | 143)
+    code == 0 || code == exit_by(libc::SIGTERM) || code == exit_by(libc::SIGINT)
 }
 
 #[cfg(test)]
@@ -127,12 +127,17 @@ mod tests {
             WorkloadState::Crashed
         );
         assert_eq!(
-            derive_state(&r, Some(&exited(137, true, later)), Stopping::NotAsked, Sight::Current),
+            derive_state(&r, Some(&exited(exit_by(libc::SIGKILL), true, later)), Stopping::NotAsked, Sight::Current),
             WorkloadState::Crashed
         );
         let asked = record(Phase::Active, Some(at));
         assert_eq!(
-            derive_state(&asked, Some(&exited(137, false, later)), Stopping::NotAsked, Sight::Current),
+            derive_state(
+                &asked,
+                Some(&exited(exit_by(libc::SIGKILL), false, later)),
+                Stopping::NotAsked,
+                Sight::Current
+            ),
             WorkloadState::Stopped
         );
         // A crash before the stop request is still a crash.

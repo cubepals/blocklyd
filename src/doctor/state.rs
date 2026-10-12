@@ -11,7 +11,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use super::check::Check;
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::protocol::Proto;
 use crate::store::{Store, StoreError};
 
@@ -118,7 +118,7 @@ fn serves(args: &[String], config_path: &Path) -> bool {
         .position(|a| a == "--config")
         .and_then(|i| args.get(i + 1).cloned())
         .or_else(|| args.iter().find_map(|a| a.strip_prefix("--config=").map(str::to_owned)))
-        .unwrap_or_else(|| "/etc/blocklyd/blocklyd.toml".into());
+        .unwrap_or_else(|| config::PATH.into());
     let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_owned());
     canonical(Path::new(&configured)) == canonical(config_path)
 }
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn a_missing_state_dir_is_a_warning_blocklyd_fixes_itself() {
         let dir = tempfile::tempdir().unwrap();
-        let checks = checks(&config(&dir.path().join("state")), Path::new("/etc/blocklyd/blocklyd.toml"));
+        let checks = checks(&config(&dir.path().join("state")), Path::new(config::PATH));
         assert_eq!(checks.len(), 1);
         assert_eq!((checks[0].status, checks[0].gates_start), (Status::Warn, false));
     }
@@ -195,7 +195,7 @@ mod tests {
     fn a_usable_state_dir_passes_and_reflink_is_never_worse_than_a_warning() {
         let dir = tempfile::tempdir().unwrap();
         Store::open(dir.path()).unwrap();
-        let checks = checks(&config(dir.path()), Path::new("/etc/blocklyd/blocklyd.toml"));
+        let checks = checks(&config(dir.path()), Path::new(config::PATH));
         for name in ["state_dir", "state_dir.ownable", "state_dir.lock", "state_dir.disk"] {
             assert_eq!(by_name(&checks, name).status, Status::Pass, "{name}: {checks:?}");
         }
@@ -207,7 +207,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("state");
         std::fs::write(&file, "").unwrap();
-        let checks = checks(&config(&file), Path::new("/etc/blocklyd/blocklyd.toml"));
+        let checks = checks(&config(&file), Path::new(config::PATH));
         assert_eq!((checks[0].status, checks[0].gates_start), (Status::Fail, true));
     }
 
@@ -226,7 +226,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
         let _held = store.lock().unwrap();
-        let check = lock(&store, Path::new("/etc/blocklyd/blocklyd.toml"));
+        let check = lock(&store, Path::new(config::PATH));
         assert_eq!((check.status, check.gates_start), (Status::Fail, false));
         assert!(check.detail.contains(&format!("pid {}", std::process::id())), "{}", check.detail);
     }
@@ -234,8 +234,8 @@ mod tests {
     #[test]
     fn serving_this_config_is_this_blocklyd() {
         let args = |a: &str| a.split(' ').map(str::to_owned).collect::<Vec<_>>();
-        let config = Path::new("/etc/blocklyd/blocklyd.toml");
-        assert!(serves(&args("/usr/local/bin/blocklyd serve --config /etc/blocklyd/blocklyd.toml"), config));
+        let config = Path::new(config::PATH);
+        assert!(serves(&args(&format!("/usr/local/bin/blocklyd serve --config {}", config::PATH)), config));
         assert!(serves(&args("blocklyd serve"), config));
         assert!(!serves(&args("/usr/local/bin/blocklyd serve --config /srv/other.toml"), config));
         assert!(!serves(&args("/usr/bin/flock blocklyd serve"), config));

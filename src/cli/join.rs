@@ -35,19 +35,19 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, SignatureScheme};
 
 use super::reenroll::{Reenroll, reenroll};
-use super::service::{Service, Systemd};
+use super::service::{Service, Systemd, UNIT_NAME};
 use crate::config::Config;
 use crate::doctor;
 use crate::fleet::identity::{Identity, write_atomic};
 use crate::fleet::token::JoinToken;
 use crate::http_client as client;
 use crate::infer::API_PORT;
+use crate::protocol::wire::FLEET_API;
 
 /// The paths as the host sees them; under `root` when one is given.
-pub const CONFIG: &str = "/etc/blocklyd/blocklyd.toml";
 const CA: &str = "/etc/blocklyd/fleet-ca.pem";
 const TOKEN: &str = "/var/lib/blocklyd/enrollment-token";
-const UNIT: &str = "/etc/systemd/system/blocklyd.service";
+pub const UNIT: &str = "/etc/systemd/system/blocklyd.service";
 
 const UNIT_FILE: &str = include_str!("../../deploy/blocklyd.service");
 
@@ -60,7 +60,7 @@ pub struct Join {
     pub token: String,
     /// The address to serve the fleet on, where the host's own can't be told (infer.rs).
     pub address: Option<IpAddr>,
-    /// The configuration to write, or to keep: `CONFIG`, but elsewhere in tests.
+    /// The configuration to write, or to keep: `config::PATH`, but elsewhere in tests.
     pub config: PathBuf,
     /// Where `/` is: another directory in tests.
     pub root: PathBuf,
@@ -169,9 +169,9 @@ pub async fn join(options: Join) -> anyhow::Result<String> {
             .await
             .with_context(|| format!("wrote {}, and left blocklyd stopped", written.join(", ")))?;
         service.systemctl(&["daemon-reload"])?;
-        service.systemctl(&["enable", "blocklyd"])?;
+        service.systemctl(&["enable", UNIT_NAME])?;
         // A start that failed before this join (an old token) is retried with the new one.
-        service.systemctl(&["restart", "blocklyd"])?;
+        service.systemctl(&["restart", UNIT_NAME])?;
     }
     Ok(report(&token, &config, config_file, existing.is_some(), &written, options.start))
 }
@@ -234,7 +234,7 @@ fn report(token: &JoinToken, config: &Config, file: &Path, kept: bool, written: 
 
 /// The fleet CA as the token's endpoint serves it, once it is the one the token names.
 async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
-    let url = format!("{}/fleet/v1/ca.pem", token.url.trim_end_matches('/'));
+    let url = format!("{}{FLEET_API}/ca.pem", token.url.trim_end_matches('/'));
     let provider = crate::tls::provider();
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -242,9 +242,10 @@ async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
         .with_custom_certificate_verifier(Arc::new(PinnedByHash(provider)))
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let response = client::send(Method::GET, &url, &[], client::empty(), Some(Arc::new(tls)), Duration::from_secs(15))
-        .await
-        .with_context(|| format!("fetching the fleet CA from {url}"))?;
+    let response =
+        client::send(Method::GET, &url, &[], client::empty(), Some(Arc::new(tls)), client::CONTROL_PLANE_CALL)
+            .await
+            .with_context(|| format!("fetching the fleet CA from {url}"))?;
     let status = response.status();
     let body = client::read_body(response, 64 * 1024).await.map_err(|e| anyhow!("fetching {url}: {e}"))?;
     if !status.is_success() {

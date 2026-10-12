@@ -20,9 +20,12 @@ fn read(path: &str) -> Option<String> {
     std::fs::read_to_string(path).ok().map(|s| s.trim().to_owned())
 }
 
-/// `/proc/meminfo` values are in kB.
 fn meminfo(field: &str) -> Option<u64> {
-    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    meminfo_bytes(&std::fs::read_to_string("/proc/meminfo").ok()?, field)
+}
+
+/// A field of `/proc/meminfo`, whose text is `text`, in bytes: the file says kB.
+pub(crate) fn meminfo_bytes(text: &str, field: &str) -> Option<u64> {
     text.lines()
         .find(|l| l.starts_with(field) && l[field.len()..].starts_with(':'))
         .and_then(|l| l.split_whitespace().nth(1))

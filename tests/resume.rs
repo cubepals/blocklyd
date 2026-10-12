@@ -16,6 +16,7 @@ use blocklyd::config::FleetConfig;
 use blocklyd::manager::{Lifecycle, Manager, Precondition, Records};
 use blocklyd::metrics::Metrics;
 use blocklyd::protocol::WorkloadState;
+use blocklyd::runtime::exit_by;
 use blocklyd::runtime::fake::FakeRuntime;
 use blocklyd::store::Store;
 use support::{id, spec};
@@ -50,7 +51,7 @@ async fn running_then_host_down(fleet: bool) -> (tempfile::TempDir, Arc<FakeRunt
     first.reconcile(Records::FromDisk).await;
     first.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
     first.start(id("w"), Some(1)).await.unwrap();
-    fake.crash(NAME, 143, false);
+    fake.crash(NAME, exit_by(libc::SIGTERM), false);
     (dir, fake)
 }
 

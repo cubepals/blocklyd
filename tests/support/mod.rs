@@ -126,8 +126,8 @@ pub(crate) fn spec_json() -> serde_json::Value {
         "resources": { "memoryMb": 1024 },
         "storage": { "mountPath": "/data", "sizeGb": 1 },
         "ports": [
-            { "name": "game", "containerPort": 25565, "audience": ["edge", "control"] },
-            { "name": "rcon", "containerPort": 25575, "audience": ["control"] }
+            { "name": "game", "containerPort": blocklyd::minecraft::GAME_PORT, "audience": ["edge", "control"] },
+            { "name": "rcon", "containerPort": blocklyd::minecraft::RCON_PORT, "audience": ["control"] }
         ],
         "stop": { "timeoutSeconds": 5 },
         "labels": { "blockly.server": "s1" }
@@ -247,7 +247,7 @@ pub(crate) async fn serve(manager: Arc<Manager>) -> Server {
 }
 
 pub(crate) struct Response {
-    pub status: u16,
+    pub status: hyper::StatusCode,
     pub headers: hyper::HeaderMap,
     pub body: Vec<u8>,
 }
@@ -299,12 +299,12 @@ pub(crate) async fn request(
         req = req.header(*k, *v);
     }
     if body.is_some() {
-        req = req.header("content-type", "application/json");
+        req = req.header(hyper::header::CONTENT_TYPE, "application/json");
     }
     let req = req.body(Full::new(Bytes::from(body.unwrap_or_default()))).unwrap();
     // With TLS 1.3 a refused client certificate surfaces on the first read, not the handshake.
     let response = sender.send_request(req).await.map_err(|e| e.to_string())?;
-    let status = response.status().as_u16();
+    let status = response.status();
     let headers = response.headers().clone();
     let body = response.into_body().collect().await.map_err(|e| e.to_string())?.to_bytes().to_vec();
     Ok(Response { status, headers, body })

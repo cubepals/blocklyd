@@ -148,6 +148,12 @@ pub struct RawStats {
     pub(crate) tx_bytes: Option<u64>,
 }
 
+/// A container's process ended: Docker's event action for it (the Engine API's `/events`), which
+/// bollard passes on as a string.
+pub const DIED: &str = "die";
+/// A container started: Docker's event action for it.
+pub(crate) const STARTED: &str = "start";
+
 /// Something happened to a container. A hint to look again, never the truth itself.
 #[derive(Clone, Debug)]
 pub struct RuntimeEvent {
@@ -190,8 +196,17 @@ pub enum RuntimeError {
     Timeout(String),
     #[error("runtime refused ({status}): {message}")]
     Rejected { status: u16, message: String },
+    /// A start refused because a host port the container binds is taken.
+    #[error("runtime refused ({status}): {message}")]
+    PortTaken { status: u16, message: String },
     #[error("{0}")]
     Other(String),
+}
+
+/// The exit code a container's process ends with when `signal` ends it: 128 plus the signal's
+/// number, as a shell reports it and Docker passes on.
+pub fn exit_by(signal: libc::c_int) -> i64 {
+    128 + i64::from(signal)
 }
 
 impl RuntimeError {

@@ -26,6 +26,9 @@ const MAX_ENTRYPOINT_ARGS: usize = 64;
 const MAX_ARG: usize = 64 * 1024;
 const MAX_PORTS: usize = 8;
 const MAX_LABELS: usize = 32;
+/// The weights Docker passes on as the container's cpu.shares: the kernel's bounds for it
+/// (`MIN_SHARES` and `MAX_SHARES`, kernel/sched/sched.h), which nothing exports.
+pub(crate) const CPU_WEIGHTS: std::ops::RangeInclusive<u32> = 2..=262_144;
 
 fn env_key_ok(key: &str) -> bool {
     let b = key.as_bytes();
@@ -167,9 +170,12 @@ impl WorkloadSpec {
                 .add("resources.cpuMillis", format!("must be between 100 and {} on this host", policy.max_cpu_millis));
         }
         if let Some(weight) = r.cpu_weight
-            && !(2..=262_144).contains(&weight)
+            && !CPU_WEIGHTS.contains(&weight)
         {
-            problems.add("resources.cpuWeight", "must be between 2 and 262144");
+            problems.add(
+                "resources.cpuWeight",
+                format!("must be between {} and {}", CPU_WEIGHTS.start(), CPU_WEIGHTS.end()),
+            );
         }
         if let Some(pids) = r.pids_limit
             && !(64..=65_536).contains(&pids)
@@ -270,12 +276,12 @@ mod tests {
         v["image"] = "evil/image:latest".into();
         v["storage"]["mountPath"] = "/data/../etc".into();
         v["resources"]["memoryMb"] = 64.into();
-        v["labels"]["blocklyd.workload"] = "someone-else".into();
+        v["labels"][crate::labels::LABEL_WORKLOAD] = "someone-else".into();
         v["env"]["BAD-NAME"] = "x".into();
         let errors = spec(v).validate(&policy()).unwrap_err();
         let fields: Vec<_> = errors.iter().map(|e| e.field.as_str()).collect();
-        for expected in ["image", "storage.mountPath", "resources.memoryMb", "labels.blocklyd.workload", "env.BAD-NAME"]
-        {
+        let label = format!("labels.{}", crate::labels::LABEL_WORKLOAD);
+        for expected in ["image", "storage.mountPath", "resources.memoryMb", label.as_str(), "env.BAD-NAME"] {
             assert!(fields.contains(&expected), "{expected} in {fields:?}");
         }
     }
@@ -314,8 +320,8 @@ mod tests {
     fn ports_must_be_distinct_and_audienced() {
         let mut v = blockly_like();
         v["ports"] = serde_json::json!([
-            { "name": "game", "containerPort": 25565, "audience": ["edge"] },
-            { "name": "game", "containerPort": 25565, "audience": [] }
+            { "name": "game", "containerPort": crate::minecraft::GAME_PORT, "audience": ["edge"] },
+            { "name": "game", "containerPort": crate::minecraft::GAME_PORT, "audience": [] }
         ]);
         let errors = spec(v).validate(&policy()).unwrap_err();
         assert!(errors.iter().any(|e| e.problem.contains("used twice")));

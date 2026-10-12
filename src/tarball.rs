@@ -494,7 +494,10 @@ mod tests {
         for (name, kind, data) in cases {
             let (dir, archive) = archive_of(&[(name, kind, data), ("level.dat", tar::EntryType::Regular, b"x")]);
             let err = unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(())).unwrap_err();
-            assert!(matches!(&err, UnpackError::Damaged(m) if m.contains("run past 1048576 bytes")), "{kind:?}: {err}");
+            assert!(
+                matches!(&err, UnpackError::Damaged(m) if m.contains(&format!("run past {MAX_METADATA_BYTES} bytes"))),
+                "{kind:?}: {err}"
+            );
         }
     }
 

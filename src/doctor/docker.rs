@@ -91,8 +91,11 @@ fn live_restore(info: &RuntimeInfo) -> Check {
     Check::warn(
         "docker.live_restore",
         "live-restore is off: every server stops when Docker restarts",
-        "Run blocklyd doctor --fix on a host with no servers yet, or set \"live-restore\": true in /etc/docker/daemon.json \
-         and reload Docker (systemctl reload docker)",
+        format!(
+            "Run blocklyd doctor --fix on a host with no servers yet, or set \"live-restore\": true in {} and reload \
+             Docker (systemctl reload docker)",
+            super::DAEMON_JSON
+        ),
     )
 }
 
@@ -131,7 +134,7 @@ fn log_driver(info: &RuntimeInfo, on_disk: Option<&Map<String, Value>>) -> Check
         _ => Check::warn(
             "docker.log_driver",
             format!("log driver {driver} may not be bounded: containers blocklyd didn't make can fill the disk"),
-            "Set \"log-driver\": \"local\" in /etc/docker/daemon.json (blocklyd doctor --fix does)",
+            format!("Set \"log-driver\": \"local\" in {} (blocklyd doctor --fix does)", super::DAEMON_JSON),
         ),
     }
 }

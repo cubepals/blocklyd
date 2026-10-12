@@ -124,6 +124,7 @@ impl Manager {
 
     fn container_spec(&self, record: &WorkloadRecord, spec: &WorkloadSpec) -> ContainerSpec {
         let r = &spec.resources;
+        let (min_weight, max_weight) = (i64::from(*CPU_WEIGHTS.start()), i64::from(*CPU_WEIGHTS.end()));
         let mut labels = spec.labels.clone();
         labels.insert(LABEL_MANAGED.into(), "true".into());
         labels.insert(LABEL_DEPLOYMENT.into(), self.config.deployment_id.clone());
@@ -150,7 +151,7 @@ impl Manager {
             // 1024, a 3 GB one 768, an 8 GB one 2048. Contention is shared as the price is.
             cpu_shares: r
                 .cpu_weight
-                .map_or_else(|| (i64::from(r.memory_mb) * 1024 / 4096).clamp(2, 262_144), i64::from),
+                .map_or_else(|| (i64::from(r.memory_mb) * 1024 / 4096).clamp(min_weight, max_weight), i64::from),
             pids_limit: i64::from(r.pids_limit.unwrap_or(self.config.workloads.default_pids_limit)),
             read_only_rootfs: self.config.workloads.read_only_rootfs,
             tmp_size_mb: self.config.workloads.tmp_size_mb,

@@ -50,6 +50,10 @@ pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const SUPPORTED_VERSIONS: &[u32] = &[1];
 /// Sent on every response so a client can tell which protocol answered.
 pub(crate) const PROTOCOL_HEADER: &str = "blocklyd-protocol";
+/// Makes an exec run once: a repeat with the same key gets the first answer.
+pub(crate) const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
+/// Names a request in the node's logs and in its answer; one is made when a client sends none.
+pub(crate) const REQUEST_ID_HEADER: &str = "x-request-id";
 /// Must echo the workload id for `DELETE …?data=delete`: data never goes on a single typo.
 pub(crate) const CONFIRM_DELETE_HEADER: &str = "x-blockly-confirm-delete-data";
 /// Features a client may rely on, beyond protocol v1's base. Only ever added to (`features_only_grow`).

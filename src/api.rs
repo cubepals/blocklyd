@@ -40,13 +40,14 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tracing::{Instrument, info, info_span, warn};
 
-use self::error::error_response;
+use self::error::{INVALID_REQUEST, INVALID_WORKLOAD_ID, error_response};
 use self::tls::ClientIdentity;
 use crate::ids::{SnapshotId, WorkloadId};
 use crate::manager::{Manager, NodeError, Precondition};
 use crate::protocol::{
-    CONFIRM_DELETE_HEADER, DataDisposition, EPOCH_HEADER, ExecRequest, ExportRequest, FenceRequest, LogRecord,
-    PROTOCOL_HEADER, PROTOCOL_VERSION, RestoreRequest, SnapshotRequest, StopRequest, UploadRequest, WorkloadSpec,
+    CONFIRM_DELETE_HEADER, DataDisposition, EPOCH_HEADER, ExecRequest, ExportRequest, FenceRequest,
+    IDEMPOTENCY_KEY_HEADER, LogRecord, PROTOCOL_HEADER, PROTOCOL_VERSION, REQUEST_ID_HEADER, RestoreRequest,
+    SnapshotRequest, StopRequest, UploadRequest, WorkloadSpec,
 };
 use crate::runtime::parse_time;
 
@@ -63,10 +64,10 @@ impl<S: Send + Sync> FromRequestParts<S> for WorkloadPath {
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let Path(raw) = Path::<String>::from_request_parts(parts, state)
             .await
-            .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_request", e.body_text(), None))?;
+            .map_err(|e| error_response(StatusCode::BAD_REQUEST, INVALID_REQUEST, e.body_text(), None))?;
         WorkloadId::parse(&raw)
             .map(WorkloadPath)
-            .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_workload_id", e.to_string(), None))
+            .map_err(|e| error_response(StatusCode::BAD_REQUEST, INVALID_WORKLOAD_ID, e.to_string(), None))
     }
 }
 
@@ -78,9 +79,9 @@ impl<S: Send + Sync> FromRequestParts<S> for SnapshotPath {
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let Path((workload, snapshot)) = Path::<(String, String)>::from_request_parts(parts, state)
             .await
-            .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_request", e.body_text(), None))?;
+            .map_err(|e| error_response(StatusCode::BAD_REQUEST, INVALID_REQUEST, e.body_text(), None))?;
         let workload = WorkloadId::parse(&workload)
-            .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_workload_id", e.to_string(), None))?;
+            .map_err(|e| error_response(StatusCode::BAD_REQUEST, INVALID_WORKLOAD_ID, e.to_string(), None))?;
         let snapshot = SnapshotId::parse(&snapshot)
             .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_snapshot_id", e.to_string(), None))?;
         Ok(Self(workload, snapshot))
@@ -95,7 +96,7 @@ impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequest<S> for ApiJson<
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         Json::<T>::from_request(req, state).await.map(|Json(v)| Self(v)).map_err(|e| {
             let status = e.status();
-            let code = if status == StatusCode::PAYLOAD_TOO_LARGE { "payload_too_large" } else { "invalid_request" };
+            let code = if status == StatusCode::PAYLOAD_TOO_LARGE { "payload_too_large" } else { INVALID_REQUEST };
             error_response(status, code, e.body_text(), None)
         })
     }
@@ -110,7 +111,7 @@ impl<S: Send + Sync, T: serde::de::DeserializeOwned> FromRequestParts<S> for Api
         Query::<T>::from_request_parts(parts, state)
             .await
             .map(|Query(v)| Self(v))
-            .map_err(|e| error_response(StatusCode::BAD_REQUEST, "invalid_request", e.body_text(), None))
+            .map_err(|e| error_response(StatusCode::BAD_REQUEST, INVALID_REQUEST, e.body_text(), None))
     }
 }
 
@@ -132,7 +133,7 @@ fn precondition(headers: &HeaderMap) -> Result<Precondition, Response> {
     match (text(header::IF_MATCH), text(header::IF_NONE_MATCH)) {
         (Some(_), Some(_)) => Err(error_response(
             StatusCode::BAD_REQUEST,
-            "invalid_request",
+            INVALID_REQUEST,
             "send If-Match or If-None-Match, not both",
             None,
         )),
@@ -140,7 +141,7 @@ fn precondition(headers: &HeaderMap) -> Result<Precondition, Response> {
         (Some(m), None) => Ok(Precondition::IfMatch(m.trim_matches('"').to_owned())),
         (None, Some(n)) if n == "*" => Ok(Precondition::IfNoneMatch),
         (None, Some(_)) => {
-            Err(error_response(StatusCode::BAD_REQUEST, "invalid_request", "If-None-Match takes only *", None))
+            Err(error_response(StatusCode::BAD_REQUEST, INVALID_REQUEST, "If-None-Match takes only *", None))
         }
         (None, None) => Ok(Precondition::None),
     }
@@ -154,14 +155,14 @@ fn epoch(headers: &HeaderMap) -> Result<Option<u64>, Response> {
         Some(Ok(raw)) => raw.parse::<u64>().map(Some).map_err(|_| {
             error_response(
                 StatusCode::BAD_REQUEST,
-                "invalid_request",
+                INVALID_REQUEST,
                 format!("{EPOCH_HEADER} is a non-negative integer"),
                 None,
             )
         }),
         Some(Err(_)) => Err(error_response(
             StatusCode::BAD_REQUEST,
-            "invalid_request",
+            INVALID_REQUEST,
             format!("{EPOCH_HEADER} is a non-negative integer"),
             None,
         )),
@@ -188,7 +189,7 @@ async fn list(State(app): State<AppState>, ApiQuery(q): ApiQuery<ListQuery>) -> 
         Some(raw) => match parse_time(Some(raw)) {
             Some(t) => Some(t),
             None => {
-                return error_response(StatusCode::BAD_REQUEST, "invalid_request", "changedSince is RFC 3339", None);
+                return error_response(StatusCode::BAD_REQUEST, INVALID_REQUEST, "changedSince is RFC 3339", None);
             }
         },
     };
@@ -246,7 +247,7 @@ async fn stop(
         StopRequest::default()
     } else {
         serde_json::from_slice(&body)
-            .map_err(|e| error_response(StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", e.to_string(), None))?
+            .map_err(|e| error_response(StatusCode::UNPROCESSABLE_ENTITY, INVALID_REQUEST, e.to_string(), None))?
     };
     let manager = app.manager.clone();
     let result = detached(async move { manager.stop(id, request.timeout_seconds, epoch).await })
@@ -367,13 +368,13 @@ async fn exec(
     headers: HeaderMap,
     ApiJson(request): ApiJson<ExecRequest>,
 ) -> Result<Response, Response> {
-    let key = match headers.get("idempotency-key").map(|v| v.to_str()) {
+    let key = match headers.get(IDEMPOTENCY_KEY_HEADER).map(|v| v.to_str()) {
         None => None,
         Some(Ok(k)) if !k.is_empty() && k.len() <= 128 && k.bytes().all(|b| b.is_ascii_graphic()) => Some(k.to_owned()),
         Some(_) => {
             return Err(error_response(
                 StatusCode::BAD_REQUEST,
-                "invalid_request",
+                INVALID_REQUEST,
                 "Idempotency-Key is 1-128 visible ASCII characters",
                 None,
             ));
@@ -426,7 +427,7 @@ async fn envelope(State(app): State<AppState>, request: Request, next: Next) -> 
         request.extensions().get::<MatchedPath>().map_or_else(|| "unmatched".to_owned(), |p| p.as_str().to_owned());
     let request_id = request
         .headers()
-        .get("x-request-id")
+        .get(REQUEST_ID_HEADER)
         .and_then(|v| v.to_str().ok())
         .filter(|v| {
             !v.is_empty() && v.len() <= 64 && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
@@ -456,7 +457,7 @@ async fn envelope(State(app): State<AppState>, request: Request, next: Next) -> 
     let headers = response.headers_mut();
     headers.insert(PROTOCOL_HEADER, HeaderValue::from(PROTOCOL_VERSION));
     if let Ok(v) = HeaderValue::from_str(&request_id) {
-        headers.insert("x-request-id", v);
+        headers.insert(REQUEST_ID_HEADER, v);
     }
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     let _enter = span.enter();

@@ -28,6 +28,7 @@ use tracing::{info, warn};
 use super::identity::{Identity, IdentityFile, same_certificates};
 use crate::config::{Config, FleetConfig};
 use crate::http_client::{self as client, JsonError};
+use crate::protocol::wire::FLEET_API;
 use crate::protocol::wire::{EnrollRequest, EnrollResponse, NodeFacts};
 use crate::tls::load_certs;
 
@@ -77,19 +78,21 @@ pub async fn ensure_identity(config: &Config, fleet: &FleetConfig, facts: NodeFa
         .context("encoding the certificate request")?;
     let roots = load_certs(&fleet.ca).context("the fleet CA certificate")?;
     let tls = client::tls_config(roots.clone(), None, true).context("TLS to the control plane")?;
-    let url = format!("{}/fleet/v1/enroll", fleet.url.trim_end_matches('/'));
+    let url = format!("{}{FLEET_API}/enroll", fleet.url.trim_end_matches('/'));
     let request = EnrollRequest { token, csr_pem: csr, facts };
 
     let mut wait = Duration::from_secs(1);
     let response: EnrollResponse = loop {
-        match client::json(Method::POST, &url, &request, tls.clone(), Duration::from_secs(15)).await {
+        match client::json(Method::POST, &url, &request, tls.clone(), client::CONTROL_PLANE_CALL).await {
             Ok(response) => break response,
             Err(e) if e.is_transient() => {
                 warn!(error = %e, retry_in_s = wait.as_secs(), "enrollment: control plane not reachable yet");
                 tokio::time::sleep(wait).await;
                 wait = (wait * 2).min(Duration::from_secs(30));
             }
-            Err(JsonError::Status(code, body)) => bail!("the control plane refused enrollment (HTTP {code}): {body}"),
+            Err(JsonError::Status(code, body)) => {
+                bail!("the control plane refused enrollment (HTTP {}): {body}", code.as_u16())
+            }
             Err(e) => bail!("enrollment failed: {e}"),
         }
     };

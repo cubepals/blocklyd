@@ -30,6 +30,27 @@ Players know the product as **Cubepals**; **Blockly** is its codename.
 - **blocklyd never links Cubepals' code.** The two talk over the API only; Cubepals is
   AGPL-3.0, blocklyd is FSL-1.1-ALv2.
 
+## Values from elsewhere
+
+A value that belongs to another system is taken from that system, never typed out again: a
+library's error codes and messages, a protocol's numbers (HTTP statuses, Docker Engine API answers,
+Minecraft's ports), an API's shapes, another module's enum or limit.
+
+- **Import the owner's constant or type.** An HTTP status is `StatusCode` (`hyper`'s or `axum`'s
+  re-export of `http`), never a number. A signal is `libc::SIGKILL`, and the exit it causes
+  `runtime::exit_by(libc::SIGKILL)`, never 137. Another module's limit, label or enum is that
+  module's item, imported (`labels::LABEL_EPOCH`, `protocol::MAX_STOP_TIMEOUT`).
+- **When nothing exports it**, only its documentation gives it, it is one named constant in one
+  place, with a comment saying where it comes from: Minecraft's ports in `minecraft.rs`, the
+  kernel's cpu.shares bounds and R2's PUT limit in `protocol/`.
+- **Docker's answers are read once, in `runtime/docker.rs`,** and turned into `RuntimeError`'s
+  variants. The rest of the crate matches variants, never a status or a message's text.
+- **Tests take errors and answers from the real thing:** the real library, or a real Docker in
+  `tests/docker.rs` where they already can. A shape built by hand keeps passing after the real one
+  changes. The fake runtime answers with the same variants in its own words, not Docker's.
+- `tests/formats.rs` and `tests/fixtures/` pin the wire and on-disk formats byte for byte, so they
+  spell them out. CI's `Values from elsewhere` step greps for what a grep can see.
+
 ## Releases
 
 - A release is a pull request that raises `version` in `Cargo.toml`, and nothing else does.

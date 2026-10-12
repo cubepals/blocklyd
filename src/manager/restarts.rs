@@ -275,7 +275,7 @@ mod tests {
     #[tokio::test]
     async fn only_a_crash_is_due_a_restart_never_a_stop_that_ended_badly() {
         let (_dir, fake, m) = running().await;
-        // Killed when asked: exit 137, and a stop all the same.
+        // Killed when asked: SIGKILL's exit, and a stop all the same.
         m.kill(w(), None).await.unwrap();
         assert!(!restart_due(&m), "a requested kill");
         // A graceful stop the workload ignored, ended by SIGKILL.
@@ -285,7 +285,7 @@ mod tests {
         assert!(!restart_due(&m), "a stop that needed a kill");
         // The same exit, unasked, is a crash.
         m.start(w(), None).await.unwrap();
-        fake.crash("blockly-test-w", 137, false);
+        fake.crash("blockly-test-w", exit_by(libc::SIGKILL), false);
         m.stats(&w()).await.unwrap();
         assert!(restart_due(&m), "a crash blocklyd watched happen");
     }

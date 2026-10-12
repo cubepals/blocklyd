@@ -63,16 +63,16 @@ use crate::labels::{
 use crate::metrics::Metrics;
 use crate::ports::{PortAllocator, PortError, Probe};
 use crate::protocol::{
-    Audience, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView, EnsureOutcome,
-    EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse, FieldError,
-    Issue, IssueCode, Locate, LogRecord, NodeHealth, NodeStatus, PartsTarget, PortView, PowerResponse,
-    ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, RestoreSource, SnapshotDeleteResponse,
-    SnapshotList, SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView, StorageView, UploadRequest,
-    WorkloadSpec, WorkloadState, WorkloadView,
+    Audience, CPU_WEIGHTS, CapacityView, DaemonView, DataDisposition, DataOutcome, DeleteResponse, DockerView,
+    EnsureOutcome, EnsureResponse, ExecRequest, ExecResponse, ExitInfo, ExportRequest, ExportResponse, FenceResponse,
+    FieldError, Issue, IssueCode, Locate, LogRecord, MAX_STOP_TIMEOUT, NodeHealth, NodeStatus, PartsTarget, PortView,
+    PowerResponse, ProtocolVersions, PutPart, ReconcileView, RestoreRequest, RestoreResponse, RestoreSource,
+    SnapshotDeleteResponse, SnapshotList, SnapshotRequest, SnapshotResponse, SnapshotView, SpecPolicy, StatsView,
+    StorageView, UploadRequest, WorkloadSpec, WorkloadState, WorkloadView,
 };
 use crate::runtime::{
-    ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
-    RuntimeError, RuntimeInfo, format_time, parse_time,
+    ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, DIED, LogOptions, LogStream, PortBinding,
+    RawStats, RuntimeError, RuntimeInfo, exit_by, format_time, parse_time,
 };
 use crate::store::restore::Recovery;
 use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Store, WorkloadRecord};
@@ -592,7 +592,7 @@ impl Manager {
                 .map(|r| r.id.clone())
         };
         let Some(id) = id else { return };
-        if action == "die" && exit_code.is_some_and(|c| !clean_exit(c)) {
+        if action == DIED && exit_code.is_some_and(|c| !clean_exit(c)) {
             self.state.lock().unwrap().last_failure.insert(id.clone(), at);
         }
         if let Ok(record) = self.record(&id) {
@@ -608,11 +608,10 @@ fn restart_backoff(attempt: u32) -> Duration {
 
 /// A start that fails because the port is taken says so plainly, and names the workload.
 fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
-    let text = e.to_string();
-    if text.contains("port is already allocated") || text.contains("address already in use") {
+    if matches!(e, RuntimeError::PortTaken { .. }) {
         NodeError::Conflict {
             code: ConflictCode::PortConflict,
-            message: format!("{id}: a host port it holds is in use: {text}"),
+            message: format!("{id}: a host port it holds is in use: {e}"),
         }
     } else {
         e.into()

@@ -8,7 +8,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
 
 use anyhow::{Context, bail};
 use hyper::Method;
@@ -17,6 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::config::Config;
 use crate::fleet::identity::Identity;
 use crate::http_client as client;
+use crate::protocol::wire::FLEET_API;
 pub use crate::upgrade::Trial;
 use crate::upgrade::{Layout, TRIAL_SECONDS, install};
 
@@ -36,10 +36,11 @@ pub async fn upgrade(config: &Path, restart: bool) -> anyhow::Result<String> {
         bail!("this node hasn't enrolled yet: start blocklyd first, and upgrade once it has");
     };
     let tls = identity.client_tls()?;
-    let url = format!("{}/fleet/v1/blocklyd.sha256", fleet.url.trim_end_matches('/'));
-    let response = client::send(Method::GET, &url, &[], client::empty(), Some(tls.clone()), Duration::from_secs(30))
-        .await
-        .with_context(|| format!("asking {url}"))?;
+    let url = format!("{}{FLEET_API}/blocklyd.sha256", fleet.url.trim_end_matches('/'));
+    let response =
+        client::send(Method::GET, &url, &[], client::empty(), Some(tls.clone()), crate::upgrade::ANSWER_TIMEOUT)
+            .await
+            .with_context(|| format!("asking {url}"))?;
     let status = response.status();
     let body = client::read_body(response, 64 * 1024).await.map_err(anyhow::Error::msg)?;
     let text = String::from_utf8_lossy(&body);
@@ -59,7 +60,7 @@ pub async fn upgrade(config: &Path, restart: bool) -> anyhow::Result<String> {
         layout.prev().display()
     );
     if restart {
-        let status = std::process::Command::new("systemctl").args(["restart", "blocklyd"]).status();
+        let status = std::process::Command::new("systemctl").args(["restart", super::service::UNIT_NAME]).status();
         anyhow::ensure!(
             status.is_ok_and(|s| s.success()),
             "{said}systemctl restart blocklyd failed: restart it yourself"

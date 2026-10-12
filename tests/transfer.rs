@@ -449,6 +449,8 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
 }
 
 const MIB: usize = 1024 * 1024;
+/// The smallest part S3 takes, and so the parts these tests cut.
+const PART: usize = blocklyd::protocol::MIN_PART_BYTES as usize;
 
 /// A world of about `mib` MiB, most of it incompressible.
 fn big_world(data: &std::path::Path, mib: usize) {
@@ -483,7 +485,7 @@ async fn an_archive_larger_than_one_put_goes_in_parts_and_restores_whole() {
 
     let request: ExportRequest = serde_json::from_value(serde_json::json!({
         "url": format!("{base}/whole.tar.gz"),
-        "parts": in_parts(&base, 5 * MIB, 4),
+        "parts": in_parts(&base, PART, 4),
     }))
     .unwrap();
     let exported = f.manager.export(id("big"), request, Some(1)).await.unwrap();
@@ -493,8 +495,8 @@ async fn an_archive_larger_than_one_put_goes_in_parts_and_restores_whole() {
     assert!(objects.lock().unwrap().get("part-4").is_none(), "a URL left over is never called");
     {
         let held = objects.lock().unwrap();
-        assert_eq!(held["part-1"].len(), 5 * MIB);
-        assert_eq!(held["part-2"].len(), 5 * MIB);
+        assert_eq!(held["part-1"].len(), PART);
+        assert_eq!(held["part-2"].len(), PART);
         // Each part's ETag is the one the store answered that part with.
         for part in &parts {
             assert_eq!(part.etag, etag(&held[&format!("part-{}", part.number)]));
@@ -527,7 +529,7 @@ async fn parts_too_few_for_the_archive_are_refused_before_anything_is_sent() {
     // control plane can ask again with enough.
     let request: ExportRequest = serde_json::from_value(serde_json::json!({
         "url": format!("{base}/whole.tar.gz"),
-        "parts": in_parts(&base, 5 * MIB, 2),
+        "parts": in_parts(&base, PART, 2),
     }))
     .unwrap();
     let err = f.manager.export(id("big"), request, Some(1)).await.unwrap_err();
@@ -582,7 +584,7 @@ async fn a_part_the_store_failed_to_take_is_sent_again() {
     big_world(std::path::Path::new(&made.workload.locate.data_dir), 11);
     let request: ExportRequest = serde_json::from_value(serde_json::json!({
         "url": format!("{base}/whole.tar.gz"),
-        "parts": in_parts(&base, 5 * MIB, 3),
+        "parts": in_parts(&base, PART, 3),
     }))
     .unwrap();
     let exported = f.manager.export(id("big"), request, Some(1)).await.unwrap();
@@ -601,7 +603,7 @@ async fn parts_the_store_cant_take_are_refused_and_a_small_archive_still_goes_wh
     std::fs::write(data.join("server.properties"), "level-name=world\n").unwrap();
 
     // S3 takes no part under 5 MiB but the last, and at most 10,000 of them.
-    for parts in [in_parts(&base, MIB, 2), serde_json::json!({ "partSize": 5 * MIB, "urls": [] })] {
+    for parts in [in_parts(&base, MIB, 2), serde_json::json!({ "partSize": PART, "urls": [] })] {
         let request: ExportRequest =
             serde_json::from_value(serde_json::json!({ "url": format!("{base}/w.tar.gz"), "parts": parts })).unwrap();
         let err = f.manager.export(id("w"), request, Some(1)).await.unwrap_err();
@@ -610,7 +612,7 @@ async fn parts_the_store_cant_take_are_refused_and_a_small_archive_still_goes_wh
     // A world one PUT carries goes in one PUT, whatever parts are offered.
     let request: ExportRequest = serde_json::from_value(serde_json::json!({
         "url": format!("{base}/w.tar.gz"),
-        "parts": in_parts(&base, 5 * MIB, 2),
+        "parts": in_parts(&base, PART, 2),
     }))
     .unwrap();
     let exported = f.manager.export(id("w"), request, Some(1)).await.unwrap();
@@ -634,7 +636,7 @@ async fn a_snapshot_larger_than_one_put_uploads_in_parts() {
             blocklyd::ids::SnapshotId::parse(SNAP).unwrap(),
             serde_json::from_value(serde_json::json!({
                 "url": format!("{base}/snap.tar.gz"),
-                "parts": in_parts(&base, 5 * MIB, 2),
+                "parts": in_parts(&base, PART, 2),
             }))
             .unwrap(),
         )

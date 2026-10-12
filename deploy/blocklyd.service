@@ -35,7 +35,7 @@ RestartSec=2
 # children and keep running.
 KillSignal=SIGTERM
 TimeoutStopSec=45
-# Workloads (oom_score_adj 500) go before blocklyd when the host runs out of memory.
+# Workloads (their workloads.oom_score_adj) go before blocklyd when the host runs out of memory.
 OOMScoreAdjust=-500
 LimitNOFILE=65536
 

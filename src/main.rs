@@ -50,7 +50,7 @@ enum LogFormat {
 enum Command {
     /// Run the daemon.
     Serve {
-        #[arg(long, default_value = "/etc/blocklyd/blocklyd.toml")]
+        #[arg(long, default_value = blocklyd::config::PATH)]
         config: PathBuf,
         #[arg(long, value_enum, default_value = "json")]
         log_format: LogFormat,
@@ -76,7 +76,7 @@ enum Command {
         #[arg(long, hide = true, default_value = "/")]
         root: PathBuf,
         /// The configuration, for tests that keep it elsewhere.
-        #[arg(long, hide = true, default_value = blocklyd::cli::join::CONFIG)]
+        #[arg(long, hide = true, default_value = blocklyd::config::PATH)]
         config: PathBuf,
         /// What to run as systemctl, for tests that run blocklyd as a plain process.
         #[arg(long, hide = true, default_value = "systemctl")]
@@ -84,7 +84,7 @@ enum Command {
     },
     /// Check this host the way blocklyd will use it, and say what to fix.
     Doctor {
-        #[arg(long, default_value = "/etc/blocklyd/blocklyd.toml")]
+        #[arg(long, default_value = blocklyd::config::PATH)]
         config: PathBuf,
         /// Print {checks: [{name, status, detail, fix}]} instead of text.
         #[arg(long)]
@@ -99,7 +99,7 @@ enum Command {
     /// Upgrade to the blocklyd the control plane serves, and restart into it. It puts this one back
     /// by itself if the new one doesn't come up.
     Upgrade {
-        #[arg(long, default_value = "/etc/blocklyd/blocklyd.toml")]
+        #[arg(long, default_value = blocklyd::config::PATH)]
         config: PathBuf,
         /// Install it, and leave the running blocklyd as it is until the next restart.
         #[arg(long)]

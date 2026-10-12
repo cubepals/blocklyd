@@ -18,8 +18,8 @@ use futures_util::StreamExt;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Collected, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
-use hyper::header::{CONTENT_LENGTH, HOST};
-use hyper::{Method, Request, Response, Uri};
+use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST};
+use hyper::{Method, Request, Response, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -29,6 +29,9 @@ use tokio_rustls::TlsConnector;
 use crate::protocol::redact;
 
 pub(crate) type Body = BoxBody<Bytes, std::io::Error>;
+
+/// How long one call to the control plane may take: enrollment, renewal, its CA.
+pub(crate) const CONTROL_PLANE_CALL: Duration = Duration::from_secs(15);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ClientError {
@@ -224,7 +227,8 @@ pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwne
     timeout: Duration,
 ) -> Result<Resp, JsonError> {
     let body = serde_json::to_vec(request).map_err(|e| JsonError::Local(e.to_string()))?;
-    let headers = [("content-type", "application/json".to_owned()), (CONTENT_LENGTH.as_str(), body.len().to_string())];
+    let headers =
+        [(CONTENT_TYPE.as_str(), "application/json".to_owned()), (CONTENT_LENGTH.as_str(), body.len().to_string())];
     let exchange = async {
         let response =
             send(method, url, &headers, full(body), Some(tls), timeout).await.map_err(JsonError::Transport)?;
@@ -239,7 +243,7 @@ pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwne
         .await
         .map_err(|_| JsonError::Transport(ClientError::Timeout(redact(url), timeout)))??;
     if !status.is_success() {
-        return Err(JsonError::Status(status.as_u16(), String::from_utf8_lossy(&bytes).chars().take(500).collect()));
+        return Err(JsonError::Status(status, String::from_utf8_lossy(&bytes).chars().take(500).collect()));
     }
     serde_json::from_slice(&bytes).map_err(|e| JsonError::Local(format!("unexpected answer: {e}")))
 }
@@ -248,8 +252,8 @@ pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwne
 pub(crate) enum JsonError {
     #[error(transparent)]
     Transport(ClientError),
-    #[error("HTTP {0}: {1}")]
-    Status(u16, String),
+    #[error("HTTP {}: {}", .0.as_u16(), .1)]
+    Status(StatusCode, String),
     #[error("{0}")]
     Local(String),
 }
@@ -258,7 +262,7 @@ impl JsonError {
     pub(crate) fn is_transient(&self) -> bool {
         match self {
             Self::Transport(e) => e.is_transient(),
-            Self::Status(code, _) => *code >= 500 || *code == 429,
+            Self::Status(code, _) => code.is_server_error() || *code == StatusCode::TOO_MANY_REQUESTS,
             Self::Local(_) => false,
         }
     }
@@ -342,7 +346,7 @@ mod tests {
             !tls(Error::other(rustls::Error::General("no versions".into()))).is_transient(),
             "settings rustls refused"
         );
-        assert!(tls(Error::new(ErrorKind::UnexpectedEof, "tls handshake eof")).is_transient(), "closed mid-handshake");
+        assert!(tls(Error::from(ErrorKind::UnexpectedEof)).is_transient(), "closed mid-handshake");
         assert!(tls(Error::from(ErrorKind::ConnectionReset)).is_transient());
         assert!(!ClientError::BadUrl("ftp://cp.example".into()).is_transient());
         assert!(!ClientError::NoTls("https://cp.example".into()).is_transient());

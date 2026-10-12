@@ -245,10 +245,13 @@ pub fn disk_usage(root: &Path) -> io::Result<u64> {
     Ok(total)
 }
 
+/// The unit of `st_blocks`, whatever the filesystem's block size (stat(2)).
+const ST_BLOCK_BYTES: u64 = 512;
+
 /// Bytes allocated to an entry, and the filesystem it is on.
 #[allow(clippy::unnecessary_cast)] // The field types differ between architectures.
 fn allocated(stat: &rustix::fs::Stat) -> (u64, u64) {
-    (stat.st_blocks.max(0) as u64 * 512, stat.st_dev as u64)
+    (stat.st_blocks.max(0) as u64 * ST_BLOCK_BYTES, stat.st_dev as u64)
 }
 
 fn count(dir: OwnedFd, device: u64, depth: usize, total: &mut u64) -> io::Result<()> {
@@ -555,12 +558,12 @@ mod tests {
     /// The disk usage as it was measured before, by path: what an honest tree still comes to.
     fn usage_by_path(root: &Path) -> u64 {
         use std::os::unix::fs::MetadataExt;
-        let mut total = fs::symlink_metadata(root).unwrap().blocks() * 512;
+        let mut total = fs::symlink_metadata(root).unwrap().blocks() * ST_BLOCK_BYTES;
         let mut stack = vec![root.to_owned()];
         while let Some(dir) = stack.pop() {
             for entry in fs::read_dir(&dir).unwrap().map(Result::unwrap) {
                 let meta = entry.metadata().unwrap();
-                total += meta.blocks() * 512;
+                total += meta.blocks() * ST_BLOCK_BYTES;
                 if meta.is_dir() {
                     stack.push(entry.path());
                 }

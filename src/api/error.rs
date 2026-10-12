@@ -12,6 +12,11 @@ use axum::response::{IntoResponse, Response};
 use crate::manager::NodeError;
 use crate::protocol::{ErrorBody, ErrorDetail};
 
+/// A request that doesn't parse or validate, whichever part of it is wrong.
+pub(crate) const INVALID_REQUEST: &str = "invalid_request";
+/// A workload id in the path that isn't one.
+pub(crate) const INVALID_WORKLOAD_ID: &str = "invalid_workload_id";
+
 pub(crate) fn error_response(
     status: StatusCode,
     code: &str,
@@ -27,7 +32,7 @@ impl IntoResponse for NodeError {
         let message = self.to_string();
         let (status, code, details) = match &self {
             Self::Invalid(errors) => {
-                (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request", Some(serde_json::json!({ "fields": errors })))
+                (StatusCode::UNPROCESSABLE_ENTITY, INVALID_REQUEST, Some(serde_json::json!({ "fields": errors })))
             }
             Self::NotFound(_) => (StatusCode::NOT_FOUND, "not_found", None),
             Self::SnapshotNotFound(_) => (StatusCode::NOT_FOUND, "snapshot_not_found", None),

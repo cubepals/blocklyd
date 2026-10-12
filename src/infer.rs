@@ -28,6 +28,13 @@ use toml::{Table, Value};
 /// The API's port when `api.listen` is inferred.
 pub(crate) const API_PORT: u16 = 7443;
 
+/// 100.64.0.0/10, shared address space (RFC 6598): WireGuard and Tailscale overlays live there.
+/// `Ipv4Addr::is_shared` would say it, but isn't stable.
+pub(crate) fn shared_address_space(ip: Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 100 && (64..128).contains(&b)
+}
+
 /// One value filled in, as the configuration would write it, and where it came from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Inferred {
@@ -110,8 +117,7 @@ pub(crate) fn reserved_memory_mb(total_mb: u64) -> u64 {
 
 fn memory_total_mb(root: &Path) -> Option<u64> {
     let text = std::fs::read_to_string(root.join("proc/meminfo")).ok()?;
-    let kb = text.lines().find_map(|line| line.strip_prefix("MemTotal:"))?.split_whitespace().next()?;
-    kb.parse::<u64>().ok().map(|kb| kb / 1024)
+    crate::host::meminfo_bytes(&text, "MemTotal").map(|bytes| bytes / (1024 * 1024))
 }
 
 /// The table `name`, made if absent. None when the file gives `name` as something else, which
@@ -191,7 +197,7 @@ pub(crate) fn candidates(root: &Path) -> Vec<Candidate> {
             Some(net) if std::fs::read_to_string(net.join("uevent")).is_ok_and(|u| u.contains("DEVTYPE=wireguard")) => {
                 true
             }
-            _ => ip.is_private() || (ip.octets()[0] == 100 && (64..128).contains(&ip.octets()[1])),
+            _ => ip.is_private() || shared_address_space(ip),
         };
         if take {
             found.push(Candidate { ip, interface });

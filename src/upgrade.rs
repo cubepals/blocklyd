@@ -56,6 +56,7 @@ use tracing::{error, info, warn};
 
 use crate::durable::write_atomic;
 use crate::http_client as client;
+use crate::protocol::wire::FLEET_API;
 use crate::protocol::wire::{UpgradeFailure, UpgradeOffer};
 
 /// How long a new blocklyd has to reconcile and get a heartbeat accepted before it is put back.
@@ -63,6 +64,8 @@ pub(crate) const TRIAL_SECONDS: u64 = 120;
 /// No blocklyd is this big; a download that is stops.
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(10);
+/// How long the control plane has to start answering for its blocklyd or the blocklyd's sha256.
+pub(crate) const ANSWER_TIMEOUT: Duration = Duration::from_secs(30);
 /// After a failed attempt, an offer is taken up again only this long after: by then the control
 /// plane has heard of a failure, and offers again only once an operator retries.
 const RETRY_AFTER: Duration = Duration::from_mins(1);
@@ -218,11 +221,11 @@ async fn download(
     tls: Option<Arc<rustls::ClientConfig>>,
     sha256: &str,
 ) -> Result<(), UpgradeError> {
-    let url = format!("{}/fleet/v1/blocklyd", control_plane.trim_end_matches('/'));
+    let url = format!("{}{FLEET_API}/blocklyd", control_plane.trim_end_matches('/'));
     let next = layout.next();
     let transient = |e: &dyn std::fmt::Display| UpgradeError::Transient(format!("{url}: {e}"));
     let fetch = async {
-        let response = client::send(Method::GET, &url, &[], client::empty(), tls, Duration::from_secs(30))
+        let response = client::send(Method::GET, &url, &[], client::empty(), tls, ANSWER_TIMEOUT)
             .await
             .map_err(|e| transient(&e))?;
         let status = response.status();
@@ -669,7 +672,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let layout = layout(root.path());
         let missing = install(&layout, &serving(None).await, None, (&"0".repeat(64), None), None).await.unwrap_err();
-        assert!(matches!(missing, UpgradeError::Failed(ref e) if e.contains("404")), "{missing}");
+        assert!(
+            matches!(missing, UpgradeError::Failed(ref e) if e.contains(axum::http::StatusCode::NOT_FOUND.as_str())),
+            "{missing}"
+        );
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
         let down = install(&layout, &format!("http://{closed}"), None, (&"0".repeat(64), None), None).await;
         assert!(matches!(down, Err(UpgradeError::Transient(_))));

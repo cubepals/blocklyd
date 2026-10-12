@@ -14,6 +14,7 @@ use std::time::Duration;
 use blocklyd::fleet::heartbeat::heartbeat_report;
 use blocklyd::manager::{ConflictCode, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, IssueCode, WorkloadState};
+use blocklyd::runtime::{DIED, exit_by};
 use blocklyd::store::Phase;
 use support::{fixture, id, spec, spec_with};
 use tokio_util::sync::CancellationToken;
@@ -128,7 +129,7 @@ async fn a_stop_that_needed_a_kill_says_so_and_is_still_a_stop() {
     let stopped = f.manager.stop(id("w"), Some(1), None).await.unwrap();
     assert!(stopped.forced);
     assert_eq!(stopped.workload.state, WorkloadState::Stopped, "requested, so not a crash");
-    assert_eq!(stopped.workload.exit.unwrap().code, 137);
+    assert_eq!(stopped.workload.exit.unwrap().code, exit_by(libc::SIGKILL));
 }
 
 #[tokio::test]
@@ -144,7 +145,7 @@ async fn crashes_and_oom_kills_are_reported_as_such() {
     assert_eq!(view.state, WorkloadState::Crashed);
     assert_eq!(view.exit.as_ref().unwrap().code, 1);
     f.manager.start(id("w"), None).await.unwrap();
-    f.fake.crash("blockly-test-w", 137, true);
+    f.fake.crash("blockly-test-w", exit_by(libc::SIGKILL), true);
     f.manager.stats(&id("w")).await.unwrap();
     let view = f.manager.view(&id("w")).unwrap();
     assert_eq!(view.state, WorkloadState::Crashed);
@@ -188,7 +189,7 @@ async fn a_record_written_from_two_sides_at_once_ends_as_the_newest() {
             let (m, done, name) = (f.manager.clone(), done.clone(), format!("blockly-test-{w}"));
             async move {
                 while !done.load(Ordering::SeqCst) {
-                    m.on_event(&name, "die", Some(143), time::OffsetDateTime::now_utc()).await;
+                    m.on_event(&name, DIED, Some(exit_by(libc::SIGTERM)), time::OffsetDateTime::now_utc()).await;
                     tokio::task::yield_now().await;
                 }
             }

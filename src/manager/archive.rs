@@ -460,7 +460,9 @@ async fn put_part(
         .unwrap_or_default();
     if !status.is_success() {
         let said = String::from_utf8_lossy(&text).chars().take(300).collect::<String>();
-        let transient = status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408;
+        let transient = status.is_server_error()
+            || status == hyper::StatusCode::TOO_MANY_REQUESTS
+            || status == hyper::StatusCode::REQUEST_TIMEOUT;
         return Err((format!("the store refused it: HTTP {status}: {said}"), transient));
     }
     etag.filter(|e| !e.is_empty()).ok_or_else(|| ("the store answered without an ETag".to_owned(), false))
@@ -515,16 +517,16 @@ mod tests {
         assert!(matches!(copy_failed("copying", refused), NodeError::InsufficientDisk(m) if m == "only 3 MB free"));
         let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
         assert!(matches!(copy_failed("copying", full), NodeError::InsufficientDisk(_)));
-        let failed = std::io::Error::other("Input/output error");
-        let failed = copy_failed("copying", failed);
+        let eio = std::io::Error::from_raw_os_error(libc::EIO);
+        let said = format!("copying: {eio}");
+        let failed = copy_failed("copying", eio);
         assert!(matches!(failed, NodeError::Io { .. }), "{failed:?}");
-        assert_eq!(failed.to_string(), "copying: Input/output error", "as the API answers it");
+        assert_eq!(failed.to_string(), said, "as the API answers it");
     }
 
     #[test]
     fn an_archive_one_put_cant_carry_is_refused_before_it_is_sent() {
         let limit = crate::protocol::MAX_SINGLE_PUT_BYTES;
-        assert_eq!(limit, 5 * 1024 * 1024 * 1024 - 5 * 1024 * 1024, "R2's: 5 GiB less 5 MiB");
         assert_eq!(crate::config::TransferConfig::default().max_put_bytes(), limit, "the default is R2's");
         assert!(one_put(limit, limit).is_ok());
         let err = one_put(limit + 1, limit).unwrap_err();

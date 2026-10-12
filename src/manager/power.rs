@@ -71,11 +71,11 @@ impl Manager {
         epoch: Option<u64>,
     ) -> Result<PowerResponse, NodeError> {
         if let Some(g) = grace
-            && !(1..=600).contains(&g)
+            && !(1..=MAX_STOP_TIMEOUT).contains(&g)
         {
             return Err(NodeError::Invalid(vec![FieldError {
                 field: "timeoutSeconds".into(),
-                problem: "must be between 1 and 600".into(),
+                problem: format!("must be between 1 and {MAX_STOP_TIMEOUT}"),
             }]));
         }
         let lock = self.lock_for(&id);
@@ -130,7 +130,7 @@ impl Manager {
         self.note(result)?;
         let after = self.observe(&record).await?;
         // A graceful stop that ended in SIGKILL didn't get to save.
-        let forced = !kill && after.as_ref().is_some_and(|i| i.exit_code == 137 && !i.oom_killed);
+        let forced = !kill && after.as_ref().is_some_and(|i| i.exit_code == exit_by(libc::SIGKILL) && !i.oom_killed);
         Ok(PowerResponse { changed: true, forced, workload: self.view(id)? })
     }
 }
