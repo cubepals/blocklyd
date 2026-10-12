@@ -85,7 +85,7 @@ fn shell(script: &str, memory_mb: u32) -> WorkloadSpec {
         "secrets": { "RCON_PASSWORD": "docker-test-secret" },
         "resources": { "memoryMb": memory_mb, "cpuMillis": 500 },
         "storage": { "mountPath": "/data", "sizeGb": 1 },
-        "ports": [{ "name": "game", "containerPort": 25565, "audience": ["edge", "control"] }],
+        "ports": [{ "name": "game", "containerPort": blocklyd::minecraft::GAME_PORT, "audience": ["edge", "control"] }],
         "stop": { "timeoutSeconds": 10 },
         "restart": { "policy": "on-failure", "maxRetries": 2 }
     }))

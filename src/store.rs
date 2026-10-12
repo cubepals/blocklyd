@@ -372,7 +372,7 @@ pub(crate) mod tests {
             ports: vec![AllocatedPort {
                 name: "game".into(),
                 protocol: Proto::Tcp,
-                container_port: 25565,
+                container_port: crate::minecraft::GAME_PORT,
                 host_port: 42000,
             }],
             container_name: format!("bly-{id}"),

@@ -314,8 +314,8 @@ mod tests {
     fn ports_must_be_distinct_and_audienced() {
         let mut v = blockly_like();
         v["ports"] = serde_json::json!([
-            { "name": "game", "containerPort": 25565, "audience": ["edge"] },
-            { "name": "game", "containerPort": 25565, "audience": [] }
+            { "name": "game", "containerPort": crate::minecraft::GAME_PORT, "audience": ["edge"] },
+            { "name": "game", "containerPort": crate::minecraft::GAME_PORT, "audience": [] }
         ]);
         let errors = spec(v).validate(&policy()).unwrap_err();
         assert!(errors.iter().any(|e| e.problem.contains("used twice")));

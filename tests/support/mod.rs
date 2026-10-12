@@ -126,8 +126,8 @@ pub(crate) fn spec_json() -> serde_json::Value {
         "resources": { "memoryMb": 1024 },
         "storage": { "mountPath": "/data", "sizeGb": 1 },
         "ports": [
-            { "name": "game", "containerPort": 25565, "audience": ["edge", "control"] },
-            { "name": "rcon", "containerPort": 25575, "audience": ["control"] }
+            { "name": "game", "containerPort": blocklyd::minecraft::GAME_PORT, "audience": ["edge", "control"] },
+            { "name": "rcon", "containerPort": blocklyd::minecraft::RCON_PORT, "audience": ["control"] }
         ],
         "stop": { "timeoutSeconds": 5 },
         "labels": { "blockly.server": "s1" }

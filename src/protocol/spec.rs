@@ -260,8 +260,8 @@ mod tests {
             "resources": { "memoryMb": 3072, "cpuMillis": 2000 },
             "storage": { "mountPath": "/data", "sizeGb": 5 },
             "ports": [
-                { "name": "game", "containerPort": 25565, "audience": ["edge", "control"] },
-                { "name": "rcon", "containerPort": 25575, "audience": ["control"] }
+                { "name": "game", "containerPort": crate::minecraft::GAME_PORT, "audience": ["edge", "control"] },
+                { "name": "rcon", "containerPort": crate::minecraft::RCON_PORT, "audience": ["control"] }
             ],
             "stop": { "signal": "SIGTERM", "timeoutSeconds": 90 },
             "labels": { "blockly.server": "0b6f1f2e-6a47-4c9a-9a39-2f4ac7e51f10" }
@@ -278,8 +278,8 @@ mod tests {
             "resources": { "memoryMb": 6144, "cpuMillis": 3000, "cpuWeight": 200, "pidsLimit": 2048 },
             "storage": { "mountPath": "/data", "sizeGb": 20 },
             "ports": [
-                { "name": "game", "containerPort": 25565, "protocol": "tcp", "audience": ["edge", "control"] },
-                { "name": "voice", "containerPort": 24454, "protocol": "udp", "audience": ["edge"] }
+                { "name": "game", "containerPort": crate::minecraft::GAME_PORT, "protocol": "tcp", "audience": ["edge", "control"] },
+                { "name": "voice", "containerPort": crate::minecraft::VOICE_PORT, "protocol": "udp", "audience": ["edge"] }
             ],
             "stop": { "signal": "SIGINT", "timeoutSeconds": 30 },
             "restart": { "policy": "no", "maxRetries": 0 },
@@ -332,7 +332,7 @@ mod tests {
         ] {
             assert_eq!(with("restart", value.clone()).expect("parses").restart, expected, "restart: {value:?}");
         }
-        let port = json!([{ "name": "game", "containerPort": 25565, "audience": ["edge"] }]);
+        let port = json!([{ "name": "game", "containerPort": crate::minecraft::GAME_PORT, "audience": ["edge"] }]);
         assert_eq!(with("ports", Some(port)).expect("parses").ports[0].protocol, Proto::Tcp);
         assert!(with("stop", Some(json!({ "signal": "SIGTERM", "graceSeconds": 5 }))).is_err());
         assert!(with("restart", Some(json!({ "backoffSeconds": 5 }))).is_err());

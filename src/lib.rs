@@ -24,6 +24,8 @@ pub(crate) mod infer;
 pub(crate) mod labels;
 pub mod manager;
 pub mod metrics;
+#[cfg(any(test, feature = "fake"))]
+pub mod minecraft;
 pub mod ports;
 pub mod protocol;
 pub mod reconcile;
