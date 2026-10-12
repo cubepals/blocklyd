@@ -254,7 +254,7 @@ impl Drop for Renewal {
 }
 
 /// A failed renewal is tried again after this long, while the control plane keeps asking.
-const RETRY_RENEWAL: Duration = Duration::from_secs(600);
+const RETRY_RENEWAL: Duration = Duration::from_mins(10);
 
 impl Credentials {
     pub fn new(identity: Identity, server: Arc<ServerCert>) -> Result<Arc<Self>, IdentityError> {

@@ -166,6 +166,9 @@ impl Default for StopSpec {
     }
 }
 
+/// The longest `stop.timeoutSeconds` a spec may ask for.
+pub(crate) const MAX_STOP_TIMEOUT: u32 = 600;
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[cfg_attr(test, derive(schemars::JsonSchema))]
 #[serde(rename_all = "kebab-case")]

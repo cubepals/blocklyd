@@ -62,10 +62,10 @@ use crate::protocol::wire::{UpgradeFailure, UpgradeOffer};
 pub(crate) const TRIAL_SECONDS: u64 = 120;
 /// No blocklyd is this big; a download that is stops.
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
-const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(10);
 /// After a failed attempt, an offer is taken up again only this long after: by then the control
 /// plane has heard of a failure, and offers again only once an operator retries.
-const RETRY_AFTER: Duration = Duration::from_secs(60);
+const RETRY_AFTER: Duration = Duration::from_mins(1);
 const LINK: &str = "/usr/local/bin/blocklyd";
 
 /// The version this blocklyd reports to the control plane, which offers an upgrade to an older one.
