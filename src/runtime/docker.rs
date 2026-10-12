@@ -27,6 +27,7 @@ use bollard::query_parameters::{
     StatsOptionsBuilder, StopContainerOptionsBuilder,
 };
 use futures_util::stream::{BoxStream, StreamExt};
+use hyper::StatusCode;
 use time::OffsetDateTime;
 
 use super::{
@@ -88,13 +89,23 @@ impl DockerRuntime {
     }
 }
 
+/// What Docker says when a start can't bind a host port, which it answers with no code of its own,
+/// only a 500. Another container holds it: moby's port allocator (`ErrPortAlreadyAllocated`,
+/// "Bind for 127.0.0.1:42000 failed: port is already allocated"). Another process holds it: Go's
+/// text for EADDRINUSE ("failed to bind host port 127.0.0.1:42000/tcp: address already in use").
+/// tests/docker.rs has Docker say both.
+const PORT_TAKEN: [&str; 2] = ["port is already allocated", "address already in use"];
+
 fn map_err(error: BollardError) -> RuntimeError {
     match error {
-        BollardError::DockerResponseServerError { status_code: 404, message } => RuntimeError::NotFound(message),
-        BollardError::DockerResponseServerError { status_code: 409, message } => RuntimeError::Conflict(message),
-        BollardError::DockerResponseServerError { status_code, message } => {
-            RuntimeError::Rejected { status: status_code, message }
-        }
+        BollardError::DockerResponseServerError { status_code, message } => match StatusCode::from_u16(status_code) {
+            Ok(StatusCode::NOT_FOUND) => RuntimeError::NotFound(message),
+            Ok(StatusCode::CONFLICT) => RuntimeError::Conflict(message),
+            _ if PORT_TAKEN.iter().any(|said| message.contains(said)) => {
+                RuntimeError::PortTaken { status: status_code, message }
+            }
+            _ => RuntimeError::Rejected { status: status_code, message },
+        },
         BollardError::RequestTimeoutError => RuntimeError::Timeout("the Docker API didn't answer in time".into()),
         e @ (BollardError::IOError { .. }
         | BollardError::HyperResponseError { .. }
@@ -346,7 +357,7 @@ impl ContainerRuntime for DockerRuntime {
     async fn kill(&self, name: &str) -> Result<(), RuntimeError> {
         let options = KillContainerOptionsBuilder::new().signal("SIGKILL").build();
         match quick("kill", self.docker()?.kill_container(name, Some(options))).await {
-            // 409: not running. Nothing left to kill.
+            // A conflict: not running. Nothing left to kill.
             Err(RuntimeError::Conflict(_)) => Ok(()),
             other => other,
         }

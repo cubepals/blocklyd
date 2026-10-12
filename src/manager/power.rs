@@ -130,7 +130,7 @@ impl Manager {
         self.note(result)?;
         let after = self.observe(&record).await?;
         // A graceful stop that ended in SIGKILL didn't get to save.
-        let forced = !kill && after.as_ref().is_some_and(|i| i.exit_code == 137 && !i.oom_killed);
+        let forced = !kill && after.as_ref().is_some_and(|i| i.exit_code == exit_by(libc::SIGKILL) && !i.oom_killed);
         Ok(PowerResponse { changed: true, forced, workload: self.view(id)? })
     }
 }

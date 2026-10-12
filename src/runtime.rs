@@ -190,8 +190,17 @@ pub enum RuntimeError {
     Timeout(String),
     #[error("runtime refused ({status}): {message}")]
     Rejected { status: u16, message: String },
+    /// A start refused because a host port the container binds is taken.
+    #[error("runtime refused ({status}): {message}")]
+    PortTaken { status: u16, message: String },
     #[error("{0}")]
     Other(String),
+}
+
+/// The exit code a container's process ends with when `signal` ends it: 128 plus the signal's
+/// number, as a shell reports it and Docker passes on.
+pub fn exit_by(signal: libc::c_int) -> i64 {
+    128 + i64::from(signal)
 }
 
 impl RuntimeError {

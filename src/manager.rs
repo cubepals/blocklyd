@@ -72,7 +72,7 @@ use crate::protocol::{
 };
 use crate::runtime::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, LogOptions, LogStream, PortBinding, RawStats,
-    RuntimeError, RuntimeInfo, format_time, parse_time,
+    RuntimeError, RuntimeInfo, exit_by, format_time, parse_time,
 };
 use crate::store::restore::Recovery;
 use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Store, WorkloadRecord};
@@ -608,11 +608,10 @@ fn restart_backoff(attempt: u32) -> Duration {
 
 /// A start that fails because the port is taken says so plainly, and names the workload.
 fn port_clash(id: &WorkloadId, e: RuntimeError) -> NodeError {
-    let text = e.to_string();
-    if text.contains("port is already allocated") || text.contains("address already in use") {
+    if matches!(e, RuntimeError::PortTaken { .. }) {
         NodeError::Conflict {
             code: ConflictCode::PortConflict,
-            message: format!("{id}: a host port it holds is in use: {text}"),
+            message: format!("{id}: a host port it holds is in use: {e}"),
         }
     } else {
         e.into()

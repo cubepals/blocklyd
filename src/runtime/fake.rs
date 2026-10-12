@@ -20,7 +20,7 @@ use tokio::sync::broadcast;
 
 use super::{
     ContainerInfo, ContainerRuntime, ContainerSpec, ContainerStatus, ExecOutput, LogChunk, LogOptions, LogStream,
-    NetworkReport, RawStats, RuntimeError, RuntimeEvent, RuntimeInfo, format_time,
+    NetworkReport, RawStats, RuntimeError, RuntimeEvent, RuntimeInfo, exit_by, format_time,
 };
 
 #[derive(Clone, Debug)]
@@ -34,7 +34,7 @@ pub struct FakeContainer {
     pub(crate) finished_at: Option<OffsetDateTime>,
     pub(crate) restart_count: u32,
     pub(crate) logs: Vec<(LogStream, String)>,
-    /// Ignores the stop signal, so a stop ends in a kill (exit 137).
+    /// Ignores the stop signal, so a stop ends in a kill (SIGKILL's exit).
     pub(crate) stubborn: bool,
 }
 
@@ -231,9 +231,9 @@ impl ContainerRuntime for FakeRuntime {
             return Ok(());
         }
         if let Some(port) = c.spec.ports.iter().find(|p| taken.contains(&(p.protocol, p.host_port))) {
-            return Err(RuntimeError::Rejected {
-                status: 500,
-                message: format!("Bind for 0.0.0.0:{} failed: port is already allocated", port.host_port),
+            return Err(RuntimeError::PortTaken {
+                status: hyper::StatusCode::INTERNAL_SERVER_ERROR.as_u16(),
+                message: format!("host port {} is held by another container", port.host_port),
             });
         }
         c.status = ContainerStatus::Running;
@@ -257,7 +257,7 @@ impl ContainerRuntime for FakeRuntime {
             return Ok(());
         }
         c.status = ContainerStatus::Exited;
-        c.exit_code = if c.stubborn { 137 } else { 0 };
+        c.exit_code = if c.stubborn { exit_by(libc::SIGKILL) } else { 0 };
         c.finished_at = Some(OffsetDateTime::now_utc());
         let snapshot = c.clone();
         drop(all);
@@ -272,7 +272,7 @@ impl ContainerRuntime for FakeRuntime {
         let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
         if c.status == ContainerStatus::Running {
             c.status = ContainerStatus::Exited;
-            c.exit_code = 137;
+            c.exit_code = exit_by(libc::SIGKILL);
             c.finished_at = Some(OffsetDateTime::now_utc());
         }
         Ok(())
