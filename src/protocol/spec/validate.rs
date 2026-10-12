@@ -270,12 +270,12 @@ mod tests {
         v["image"] = "evil/image:latest".into();
         v["storage"]["mountPath"] = "/data/../etc".into();
         v["resources"]["memoryMb"] = 64.into();
-        v["labels"]["blocklyd.workload"] = "someone-else".into();
+        v["labels"][crate::labels::LABEL_WORKLOAD] = "someone-else".into();
         v["env"]["BAD-NAME"] = "x".into();
         let errors = spec(v).validate(&policy()).unwrap_err();
         let fields: Vec<_> = errors.iter().map(|e| e.field.as_str()).collect();
-        for expected in ["image", "storage.mountPath", "resources.memoryMb", "labels.blocklyd.workload", "env.BAD-NAME"]
-        {
+        let label = format!("labels.{}", crate::labels::LABEL_WORKLOAD);
+        for expected in ["image", "storage.mountPath", "resources.memoryMb", label.as_str(), "env.BAD-NAME"] {
             assert!(fields.contains(&expected), "{expected} in {fields:?}");
         }
     }

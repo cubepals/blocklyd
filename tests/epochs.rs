@@ -7,6 +7,7 @@
 
 mod support;
 
+use blocklyd::labels::LABEL_EPOCH;
 use blocklyd::manager::{NodeError, Precondition, Records};
 use blocklyd::protocol::{EnsureOutcome, ExecRequest, WorkloadState};
 use blocklyd::runtime::ContainerStatus;
@@ -23,7 +24,7 @@ async fn a_placed_copy_answers_only_to_its_own_epoch() {
     let f = fixture("").await;
     f.manager.ensure(id("w"), spec(), Precondition::None, Some(3)).await.unwrap();
     assert_eq!(f.manager.view(&id("w")).unwrap().epoch, Some(3));
-    assert_eq!(container(&f).spec.labels.get("blocklyd.epoch").map(String::as_str), Some("3"));
+    assert_eq!(container(&f).spec.labels.get(LABEL_EPOCH).map(String::as_str), Some("3"));
 
     let missing = f.manager.start(id("w"), None).await.unwrap_err();
     assert!(matches!(missing, NodeError::EpochRequired { current: 3 }), "{missing:?}");
@@ -65,7 +66,7 @@ async fn a_new_epoch_takes_the_copy_over_keeping_data_and_ports() {
     assert_eq!(again.workload.epoch, Some(5));
     assert_eq!(again.workload.generation, first.workload.generation + 1);
     assert_eq!(again.workload.ports[0].host_port, first.workload.ports[0].host_port);
-    assert_eq!(container(&f).spec.labels.get("blocklyd.epoch").map(String::as_str), Some("5"));
+    assert_eq!(container(&f).spec.labels.get(LABEL_EPOCH).map(String::as_str), Some("5"));
     assert_eq!(std::fs::read(&marker).unwrap(), b"world");
 
     // And the same epoch again is the usual no-op.

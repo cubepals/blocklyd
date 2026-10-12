@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
 
+use blocklyd::labels::LABEL_DEPLOYMENT;
 use blocklyd::manager::{ConflictCode, Manager, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, EnsureOutcome, ExecRequest, WorkloadSpec, WorkloadState};
 use blocklyd::runtime::ContainerRuntime;
@@ -43,7 +44,7 @@ struct Cleanup(String);
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        let filter = format!("label=blocklyd.deployment={}", self.0);
+        let filter = format!("label={LABEL_DEPLOYMENT}={}", self.0);
         if let Ok(out) = std::process::Command::new("docker").args(["ps", "-aq", "--filter", &filter]).output() {
             let ids: Vec<String> = String::from_utf8_lossy(&out.stdout).split_whitespace().map(str::to_owned).collect();
             if !ids.is_empty() {
