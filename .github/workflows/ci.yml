@@ -91,6 +91,12 @@ jobs:
       # Every file says whose it is and under what license, by its own SPDX lines or REUSE.toml.
       - name: Licenses
         run: pipx run reuse==6.2.0 lint
+      # A length of time comes from std's Duration::from_mins/from_hours or a named constant, not
+      # a hand-written 3600 or 86_400; and a comment says why, not who decided it.
+      - name: Durations and comments
+        run: |
+          if git grep -nE '\b(3_?600|86_?400|604_?800)\b|\b60 ?\* ?60\b' -- '*.rs'; then exit 1; fi
+          if git grep -niE "owner'?s decision|owner decided|per the owner|as requested" -- . ':!.github/workflows/ci.yml'; then exit 1; fi
       - name: Structure
         run: |
           curl -fsSL https://raw.githubusercontent.com/cubepals/cubepals/b380886862aad14671df1d7ca278fa90b78c0eb7/scripts/check-structure.ts \
