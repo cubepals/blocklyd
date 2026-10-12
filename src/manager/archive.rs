@@ -460,7 +460,9 @@ async fn put_part(
         .unwrap_or_default();
     if !status.is_success() {
         let said = String::from_utf8_lossy(&text).chars().take(300).collect::<String>();
-        let transient = status.is_server_error() || status.as_u16() == 429 || status.as_u16() == 408;
+        let transient = status.is_server_error()
+            || status == hyper::StatusCode::TOO_MANY_REQUESTS
+            || status == hyper::StatusCode::REQUEST_TIMEOUT;
         return Err((format!("the store refused it: HTTP {status}: {said}"), transient));
     }
     etag.filter(|e| !e.is_empty()).ok_or_else(|| ("the store answered without an ETag".to_owned(), false))

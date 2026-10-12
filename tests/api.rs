@@ -7,6 +7,7 @@
 
 mod support;
 
+use hyper::StatusCode;
 use support::{CLIENT, client, fixture, pki, request, serve, server_cert_as_client, spec_json};
 
 struct Env {
@@ -54,7 +55,7 @@ impl Env {
 async fn the_allowed_client_gets_in_and_every_answer_names_the_protocol() {
     let e = env().await;
     let r = e.call("GET", "/v1/health", None).await;
-    assert_eq!(r.status, 200);
+    assert_eq!(r.status, StatusCode::OK);
     assert_eq!(r.json()["status"], "ok", "reconciled, and the runtime answers");
     assert_eq!(r.headers.get("blocklyd-protocol").unwrap(), "1");
     assert!(r.headers.get("x-request-id").is_some());
@@ -92,7 +93,7 @@ async fn a_valid_certificate_for_another_name_is_forbidden() {
     let e = env().await;
     let edge = client(&e.pki.ca, "edge.test.blockly.internal");
     let r = request(e.server.addr, &e.pki.ca.pem, Some(&edge), "GET", "/v1/workloads", &[], None).await.unwrap();
-    assert_eq!(r.status, 403);
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
     assert_eq!(r.code(), "forbidden");
 }
 
@@ -103,33 +104,37 @@ async fn malformed_requests_get_the_protocols_errors() {
     let raw = request(e.server.addr, &e.pki.ca.pem, Some(&e.me), "PUT", path, &[], Some(b"{not json".to_vec()))
         .await
         .unwrap();
-    assert_eq!((raw.status, raw.code().as_str()), (400, "invalid_request"));
+    assert_eq!((raw.status, raw.code().as_str()), (StatusCode::BAD_REQUEST, "invalid_request"));
 
     let mut unknown = spec_json();
     unknown["privileged"] = true.into();
     let r = e.call("PUT", path, Some(unknown)).await;
-    assert_eq!((r.status, r.code().as_str()), (422, "invalid_request"), "unknown fields are refused");
+    assert_eq!(
+        (r.status, r.code().as_str()),
+        (StatusCode::UNPROCESSABLE_ENTITY, "invalid_request"),
+        "unknown fields are refused"
+    );
 
     let mut invalid = spec_json();
     invalid["image"] = "docker.io/attacker/miner:latest".into();
     invalid["resources"]["memoryMb"] = 1.into();
     let r = e.call("PUT", path, Some(invalid)).await;
-    assert_eq!(r.status, 422);
+    assert_eq!(r.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(r.json()["error"]["details"]["fields"].as_array().unwrap().len(), 2);
 
     for bad in ["/v1/workloads/..%2F..%2Fetc", "/v1/workloads/UPPER", "/v1/workloads/a_b", "/v1/workloads/-x"] {
         let r = e.call("GET", bad, None).await;
-        assert_eq!((r.status, r.code().as_str()), (400, "invalid_workload_id"), "{bad}");
+        assert_eq!((r.status, r.code().as_str()), (StatusCode::BAD_REQUEST, "invalid_workload_id"), "{bad}");
     }
     let r = e.call("GET", "/v2/workloads", None).await;
-    assert_eq!((r.status, r.code().as_str()), (404, "no_route"));
+    assert_eq!((r.status, r.code().as_str()), (StatusCode::NOT_FOUND, "no_route"));
 
     let huge = serde_json::json!({ "command": ["sh", "-c", "x".repeat(3 * 1024 * 1024)] });
     let r = e.call("POST", "/v1/workloads/w1/exec", Some(huge)).await;
-    assert_eq!(r.status, 413, "bodies are bounded");
+    assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "bodies are bounded");
 
     let r = e.call_with("PUT", path, &[("if-match", "a"), ("if-none-match", "*")], Some(spec_json())).await;
-    assert_eq!(r.status, 400);
+    assert_eq!(r.status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -137,7 +142,7 @@ async fn methods_nobody_uses_are_counted_under_one_label() {
     // Any token is a method to HTTP: one label value each would be a series kept for good.
     let e = env().await;
     for method in ["FOO", "BAR"] {
-        assert_eq!(e.call(method, "/v1/health", None).await.status, 405);
+        assert_eq!(e.call(method, "/v1/health", None).await.status, StatusCode::METHOD_NOT_ALLOWED);
     }
     let metrics = e._f.manager.metrics.render(&e._f.manager);
     let series: Vec<_> = metrics.lines().filter(|l| l.starts_with("blocklyd_http_requests_total{")).collect();
@@ -175,7 +180,7 @@ async fn a_whole_lifecycle_over_http() {
     let e = env().await;
     let path = "/v1/workloads/w1";
     let created = e.call("PUT", path, Some(spec_json())).await;
-    assert_eq!(created.status, 201, "{}", String::from_utf8_lossy(&created.body));
+    assert_eq!(created.status, StatusCode::CREATED, "{}", String::from_utf8_lossy(&created.body));
     let etag = created.headers.get("etag").unwrap().to_str().unwrap().to_owned();
     assert_eq!(etag, format!("\"{}\"", created.json()["workload"]["specDigest"].as_str().unwrap()));
     let body = created.json();
@@ -186,11 +191,18 @@ async fn a_whole_lifecycle_over_http() {
         format!("127.0.0.1:{}", body["workload"]["ports"][0]["hostPort"])
     );
 
-    assert_eq!(e.call("PUT", path, Some(spec_json())).await.status, 200, "a duplicate create is an unchanged 200");
-    assert_eq!(e.call_with("PUT", path, &[("if-none-match", "*")], Some(spec_json())).await.status, 412);
+    assert_eq!(
+        e.call("PUT", path, Some(spec_json())).await.status,
+        StatusCode::OK,
+        "a duplicate create is an unchanged 200"
+    );
+    assert_eq!(
+        e.call_with("PUT", path, &[("if-none-match", "*")], Some(spec_json())).await.status,
+        StatusCode::PRECONDITION_FAILED
+    );
 
     let started = e.call("POST", &format!("{path}/start"), None).await;
-    assert_eq!((started.status, started.json()["changed"].as_bool()), (200, Some(true)));
+    assert_eq!((started.status, started.json()["changed"].as_bool()), (StatusCode::OK, Some(true)));
     let again = e.call("POST", &format!("{path}/start"), None).await;
     assert_eq!(again.json()["changed"].as_bool(), Some(false));
 
@@ -202,7 +214,7 @@ async fn a_whole_lifecycle_over_http() {
             Some(serde_json::json!({ "command": ["cat", "/data/whitelist.json"] })),
         )
         .await;
-    assert_eq!(exec.status, 200);
+    assert_eq!(exec.status, StatusCode::OK);
     assert_eq!(exec.json()["stdout"], "cat /data/whitelist.json");
 
     let logs = e.call("GET", &format!("{path}/logs?tail=5"), None).await;
@@ -222,14 +234,17 @@ async fn a_whole_lifecycle_over_http() {
     let stopped = e.call("POST", &format!("{path}/stop"), Some(serde_json::json!({ "timeoutSeconds": 5 }))).await;
     assert_eq!(stopped.json()["workload"]["state"], "stopped");
     let bad_stop = e.call("POST", &format!("{path}/stop"), Some(serde_json::json!({ "timeoutSeconds": 0 }))).await;
-    assert_eq!(bad_stop.status, 422);
+    assert_eq!(bad_stop.status, StatusCode::UNPROCESSABLE_ENTITY);
 
     let unconfirmed = e.call("DELETE", &format!("{path}?data=delete"), None).await;
-    assert_eq!((unconfirmed.status, unconfirmed.code().as_str()), (428, "confirmation_required"));
+    assert_eq!(
+        (unconfirmed.status, unconfirmed.code().as_str()),
+        (StatusCode::PRECONDITION_REQUIRED, "confirmation_required")
+    );
     let deleted =
         e.call_with("DELETE", &format!("{path}?data=delete"), &[("x-blockly-confirm-delete-data", "w1")], None).await;
     assert_eq!(deleted.json()["data"], "trashed");
-    assert_eq!(e.call("GET", path, None).await.status, 404);
+    assert_eq!(e.call("GET", path, None).await.status, StatusCode::NOT_FOUND);
 
     let host = e.call("GET", "/v1/node", None).await;
     assert_eq!(host.json()["nodeId"], "test-node");

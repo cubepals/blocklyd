@@ -247,7 +247,7 @@ pub(crate) async fn serve(manager: Arc<Manager>) -> Server {
 }
 
 pub(crate) struct Response {
-    pub status: u16,
+    pub status: hyper::StatusCode,
     pub headers: hyper::HeaderMap,
     pub body: Vec<u8>,
 }
@@ -304,7 +304,7 @@ pub(crate) async fn request(
     let req = req.body(Full::new(Bytes::from(body.unwrap_or_default()))).unwrap();
     // With TLS 1.3 a refused client certificate surfaces on the first read, not the handshake.
     let response = sender.send_request(req).await.map_err(|e| e.to_string())?;
-    let status = response.status().as_u16();
+    let status = response.status();
     let headers = response.headers().clone();
     let body = response.into_body().collect().await.map_err(|e| e.to_string())?.to_bytes().to_vec();
     Ok(Response { status, headers, body })

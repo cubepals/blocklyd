@@ -669,7 +669,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let layout = layout(root.path());
         let missing = install(&layout, &serving(None).await, None, (&"0".repeat(64), None), None).await.unwrap_err();
-        assert!(matches!(missing, UpgradeError::Failed(ref e) if e.contains("404")), "{missing}");
+        assert!(
+            matches!(missing, UpgradeError::Failed(ref e) if e.contains(axum::http::StatusCode::NOT_FOUND.as_str())),
+            "{missing}"
+        );
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
         let down = install(&layout, &format!("http://{closed}"), None, (&"0".repeat(64), None), None).await;
         assert!(matches!(down, Err(UpgradeError::Transient(_))));

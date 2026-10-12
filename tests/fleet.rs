@@ -31,7 +31,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
-use hyper::{Request, Response};
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use rcgen::{
     BasicConstraints, CertificateParams, CertificateSigningRequestParams, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -226,12 +226,12 @@ fn endpoint_tls(ca: &Ca) -> Arc<rustls::ServerConfig> {
 
 type Answered = Result<Response<Full<Bytes>>, std::io::Error>;
 
-fn json(status: u16, body: &impl serde::Serialize) -> Answered {
+fn json(status: StatusCode, body: &impl serde::Serialize) -> Answered {
     let body = Full::new(Bytes::from(serde_json::to_vec(body).unwrap()));
     Ok(Response::builder().status(status).header("content-type", "application/json").body(body).unwrap())
 }
 
-fn refused(status: u16, code: &str) -> Answered {
+fn refused(status: StatusCode, code: &str) -> Answered {
     json(status, &serde_json::json!({ "error": { "code": code, "message": code } }))
 }
 
@@ -242,7 +242,9 @@ async fn answer(shared: Arc<Shared>, peer: Option<Vec<u8>>, request: Request<Inc
     match (path.as_str(), peer) {
         ("/fleet/v1/enroll", _) => enroll(&shared, serde_json::from_slice(&body).unwrap()).await,
         ("/fleet/v1/ca.pem", _) => Ok(Response::new(Full::new(Bytes::from(shared.ca.pem.clone())))),
-        (path, None) if path.starts_with("/fleet/v1/nodes/") => refused(401, "certificate_required"),
+        (path, None) if path.starts_with("/fleet/v1/nodes/") => {
+            refused(StatusCode::UNAUTHORIZED, "certificate_required")
+        }
         (path, Some(peer)) if path.ends_with("/heartbeat") => {
             let mut state = shared.state.lock().unwrap();
             state.beats.push(peer);
@@ -254,10 +256,10 @@ async fn answer(shared: Arc<Shared>, peer: Option<Vec<u8>>, request: Request<Inc
                 renew: state.renew,
                 upgrade: None,
             };
-            json(200, &answer)
+            json(StatusCode::OK, &answer)
         }
         (path, Some(peer)) if path.ends_with("/renew") => renew(&shared, peer, serde_json::from_slice(&body).unwrap()),
-        _ => refused(404, "no_route"),
+        _ => refused(StatusCode::NOT_FOUND, "no_route"),
     }
 }
 
@@ -269,10 +271,10 @@ async fn enroll(shared: &Shared, request: EnrollRequest) -> Answered {
         let mut state = shared.state.lock().unwrap();
         state.enrollments.push((request.token.clone(), key.der_bytes().to_vec()));
         let node = match state.tokens.get(&request.token) {
-            None => return refused(403, "invalid_token"),
+            None => return refused(StatusCode::FORBIDDEN, "invalid_token"),
             Some(None) => uuid::Uuid::new_v4().to_string(),
             Some(Some((spender, node))) if spender.as_slice() == key.der_bytes() => node.clone(),
-            Some(Some(_)) => return refused(403, "invalid_token"),
+            Some(Some(_)) => return refused(StatusCode::FORBIDDEN, "invalid_token"),
         };
         state.tokens.insert(request.token, Some((key.der_bytes().to_vec(), node.clone())));
         let answer = if state.answers.is_empty() { Answer::Issue } else { state.answers.remove(0) };
@@ -291,7 +293,7 @@ async fn enroll(shared: &Shared, request: EnrollRequest) -> Answered {
         _ => shared.ca.issue(&key, &name, true),
     };
     json(
-        200,
+        StatusCode::OK,
         &EnrollResponse {
             node_id: node,
             deployment_id: "test".into(),
@@ -314,13 +316,16 @@ fn renew(shared: &Shared, peer: Vec<u8>, request: RenewRequest) -> Answered {
     };
     let name = format!("{}.nodes.test.fleet", request.node_id);
     let (server_cert_pem, ca_pem) = match renewal {
-        Renewal::Refuse => return refused(503, "unavailable"),
+        Renewal::Refuse => return refused(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
         Renewal::Issue => (shared.ca.issue(&key, &name, true), shared.ca.pem.clone()),
         Renewal::Crlf => (shared.ca.issue(&key, &name, true), shared.ca.pem.replace('\n', "\r\n")),
         Renewal::OtherCa => (shared.ca.issue(&key, &name, true), Ca::new("another CA").pem),
         Renewal::WrongKey => (shared.ca.issue(&KeyPair::generate().unwrap(), &name, true), shared.ca.pem.clone()),
     };
-    json(200, &RenewResponse { server_cert_pem, client_cert_pem: shared.ca.issue(&key, &name, false), ca_pem })
+    json(
+        StatusCode::OK,
+        &RenewResponse { server_cert_pem, client_cert_pem: shared.ca.issue(&key, &name, false), ca_pem },
+    )
 }
 
 /// A host provisioned to join: its configuration, the fleet CA's certificate and a token.

@@ -19,7 +19,7 @@ use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Collected, Full, Limited, StreamBody};
 use hyper::body::{Frame, Incoming};
 use hyper::header::{CONTENT_LENGTH, HOST};
-use hyper::{Method, Request, Response, Uri};
+use hyper::{Method, Request, Response, StatusCode, Uri};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -239,7 +239,7 @@ pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwne
         .await
         .map_err(|_| JsonError::Transport(ClientError::Timeout(redact(url), timeout)))??;
     if !status.is_success() {
-        return Err(JsonError::Status(status.as_u16(), String::from_utf8_lossy(&bytes).chars().take(500).collect()));
+        return Err(JsonError::Status(status, String::from_utf8_lossy(&bytes).chars().take(500).collect()));
     }
     serde_json::from_slice(&bytes).map_err(|e| JsonError::Local(format!("unexpected answer: {e}")))
 }
@@ -248,8 +248,8 @@ pub(crate) async fn json<Req: serde::Serialize, Resp: serde::de::DeserializeOwne
 pub(crate) enum JsonError {
     #[error(transparent)]
     Transport(ClientError),
-    #[error("HTTP {0}: {1}")]
-    Status(u16, String),
+    #[error("HTTP {}: {}", .0.as_u16(), .1)]
+    Status(StatusCode, String),
     #[error("{0}")]
     Local(String),
 }
@@ -258,7 +258,7 @@ impl JsonError {
     pub(crate) fn is_transient(&self) -> bool {
         match self {
             Self::Transport(e) => e.is_transient(),
-            Self::Status(code, _) => *code >= 500 || *code == 429,
+            Self::Status(code, _) => code.is_server_error() || *code == StatusCode::TOO_MANY_REQUESTS,
             Self::Local(_) => false,
         }
     }

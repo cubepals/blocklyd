@@ -89,7 +89,9 @@ pub async fn ensure_identity(config: &Config, fleet: &FleetConfig, facts: NodeFa
                 tokio::time::sleep(wait).await;
                 wait = (wait * 2).min(Duration::from_secs(30));
             }
-            Err(JsonError::Status(code, body)) => bail!("the control plane refused enrollment (HTTP {code}): {body}"),
+            Err(JsonError::Status(code, body)) => {
+                bail!("the control plane refused enrollment (HTTP {}): {body}", code.as_u16())
+            }
             Err(e) => bail!("enrollment failed: {e}"),
         }
     };
