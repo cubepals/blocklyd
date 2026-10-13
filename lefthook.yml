@@ -3,3 +3,5 @@ commit-msg:
   commands:
     subject:
       run: scripts/check-subject.sh {1}
+    mentions:
+      run: scripts/check-mentions.sh {1}

@@ -28,7 +28,8 @@ must pass. Pull requests are squash-merged, so the title becomes the commit on `
 sentence about what changes, of 50 characters or fewer. `main` keeps a linear history.
 
 Commit subjects follow the same rule, which [lefthook](https://lefthook.dev)'s `commit-msg` hook
-checks (`lefthook.yml`, `scripts/check-subject.sh`). Install it once per clone, with Node:
+checks (`lefthook.yml`, `scripts/check-subject.sh`), with `scripts/check-mentions.sh` for names
+GitHub would turn into mentions. Install it once per clone, with Node:
 
 ```sh
 npx lefthook@2.1.15 install
