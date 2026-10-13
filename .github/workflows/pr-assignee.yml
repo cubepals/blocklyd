@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 The Cubepals Authors
+#
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
+name: PR assignee
+
+# A pull request is assigned to the account that opened it, so the list of open pull requests
+# shows whose each one is. pull_request_target gives the token write access on pull requests from
+# forks too; the job never checks out or runs their code. Bots can't be assigned: Dependabot's
+# pull requests are assigned in dependabot.yml.
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  assign:
+    name: Assign the author
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Assign the account that opened it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --add-assignee "$AUTHOR"

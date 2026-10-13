@@ -237,8 +237,10 @@ jobs:
       - run: docker build -t blocklyd .
       - run: docker run --rm blocklyd --version
 
-  # The pull request's title becomes the squash commit's subject on main, so it follows the rule
-  # lefthook's commit-msg hook holds commits to: scripts/check-subject.sh. Bots' titles are their own.
+  # The pull request's title becomes the squash commit's subject on main, and its body the commit's
+  # body, so they follow the rules lefthook's commit-msg hook holds commits to:
+  # scripts/check-subject.sh for the title, scripts/check-mentions.sh for both. Bots' are their own.
+  # Both are untrusted text: they reach the scripts through the environment, never the shell.
   subject:
     name: Commit subjects
     runs-on: ubuntu-24.04
@@ -247,11 +249,18 @@ jobs:
         with:
           persist-credentials: false
       - run: scripts/check-subject-test.sh
+      - run: scripts/check-mentions-test.sh
       - name: The pull request's title fits
         if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
         env:
           TITLE: ${{ github.event.pull_request.title }}
         run: printf '%s\n' "$TITLE" | scripts/check-subject.sh
+      - name: The pull request's title and body mention nobody
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.type != 'Bot'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/check-mentions.sh --pr
 
   check:
     needs: [changes, test, supply-chain, contract, subject, image]
