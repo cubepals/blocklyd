@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 The Cubepals Authors
+#
+# SPDX-License-Identifier: FSL-1.1-ALv2
+
+name: Security alerts
+
+# Every open code scanning alert (codeql.yml's) is assigned to v0id-user, so none waits unowned.
+# Actions has no trigger for a new alert, so this looks hourly and assigns those with nobody on
+# them. Dependabot's pull requests are assigned through its own configuration (dependabot.yml).
+# It checks out nothing and runs no code from the repository.
+on:
+  schedule:
+    - cron: '41 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  assign:
+    name: Assign open alerts
+    runs-on: ubuntu-24.04
+    permissions:
+      security-events: write
+    steps:
+      - name: Assign to v0id-user
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          alerts="repos/$GITHUB_REPOSITORY/code-scanning/alerts"
+          for n in $(gh api --paginate "$alerts?state=open" --jq '.[] | select((.assignees // []) | length == 0) | .number'); do
+            echo '{"assignees":["v0id-user"]}' | gh api -X PATCH "$alerts/$n" --input - --jq '"Alert \(.number) assigned"'
+          done
