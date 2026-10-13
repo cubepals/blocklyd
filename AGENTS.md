@@ -17,6 +17,12 @@ Players know the product as **Cubepals**; **Blockly** is its codename.
 - **Everything else stays Blockly:** the crate and binary (`blocklyd`), code comments, config
   keys, labels such as `blocklyd.record`, test names. Don't rename them to match the public name.
 
+## Business internals stay private
+
+Fraud and abuse tuning, costs and margins, competitors, pricing history, strategy and vendor trials
+never go in this repository, its commits, PRs or issues. A number like that reaches blocklyd from
+its environment or its deploy configuration, and the code's default is a harmless one.
+
 ## The protocol and the control plane
 
 - **The Rust types are the protocol.** `openapi/` is generated from them (`BLOCKLYD_WRITE_SCHEMA=1
@@ -84,3 +90,18 @@ A commit's subject, and a pull request's title (the squash commit on `main`), sa
 50 characters or fewer, with no closing period; the detail goes in the body. A `Move: …` title
 fits too. `scripts/check-subject.sh` enforces it, in lefthook's `commit-msg` hook
 (CONTRIBUTING.md installs it) and in CI's `subject` job on the title.
+
+## No accidental mentions
+
+Never put `@` before a name in a commit message or a PR's title or body, not even inside
+backticks. Commits do not render markdown, and a squash merge copies the PR body into the commit,
+so `@s` becomes a mention of the GitHub user "s". Write "the s selector" or "the player" instead.
+`scripts/check-mentions.sh` holds commits and PRs to it, in the same hook and CI job as the
+subject. In issues and comments, selectors, crate names and emails go inside backticks closed on
+the same line.
+
+## Titles and slips
+
+A PR or commit title says what changed, plainly, the way someone reading the history wants it. It
+doesn't state the motive. When something public goes wrong (a title, a mention, a post), stop, say
+what happened, and ask; don't close, reopen or force-push to cover it.
