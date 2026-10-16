@@ -8,7 +8,11 @@
 //! on the node. Workloads keep running, and the next beat that gets through reports the whole
 //! state again.
 //!
-//! A beat's body is `heartbeat_report`, put together from what the manager holds.
+//! A beat's body is `heartbeat_report`, put together from what the manager holds. Between beats
+//! the loop looks at the workloads a few times a second, and beats early once a workload's state,
+//! epoch or ports differ from the last beat's, though never sooner than `QUICKEST` after it: a
+//! stop frees its room in the control plane's ledger about a second later, not a whole interval.
+//! A beat that failed waits out the interval as before.
 //!
 //! The node never stops a workload because it lost contact: self-fencing on a lease would make a
 //! control-plane outage stop every server in the fleet (docs/fleet.md, "Epochs and fencing"). The
@@ -19,6 +23,7 @@
 //! An answer may also offer a newer blocklyd, which the node installs and restarts into
 //! (upgrade.rs); a beat accepted once reconciled ends the trial of one just installed.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,9 +36,15 @@ use crate::http_client as client;
 use crate::ids::{NodeId, WorkloadId};
 use crate::manager::{Lifecycle, Manager};
 use crate::protocol::ProtocolVersions;
+use crate::protocol::WorkloadState;
 use crate::protocol::wire::FLEET_API;
 use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse, WorkloadReport};
 use crate::upgrade::Upgrader;
+
+/// The soonest a beat follows the one before when what it reports changed.
+const QUICKEST: Duration = Duration::from_secs(1);
+/// How often the loop looks at the workloads between beats.
+const LOOK: Duration = Duration::from_millis(200);
 
 /// Everything this node holds, for a heartbeat.
 pub fn heartbeat_report(
@@ -43,7 +54,28 @@ pub fn heartbeat_report(
     boot_id: Option<String>,
     seq: u64,
 ) -> HeartbeatRequest {
-    let workloads = manager
+    let workloads = workload_reports(manager);
+    let issues = manager.host_issues();
+    HeartbeatRequest {
+        node_id: node_id.to_string(),
+        session_id: session.to_owned(),
+        boot_id,
+        seq,
+        daemon_version: crate::upgrade::daemon_version(),
+        protocol: ProtocolVersions::ours(),
+        features: crate::protocol::features(),
+        runtime_up: manager.docker_up(),
+        reconciled: manager.reconciled(),
+        capacity: manager.capacity(),
+        workloads,
+        issues,
+        addresses: manager.addresses(),
+        upgrade_failed: None,
+    }
+}
+
+fn workload_reports(manager: &Manager) -> Vec<WorkloadReport> {
+    manager
         .list(None)
         .into_iter()
         .map(|v| WorkloadReport {
@@ -61,23 +93,54 @@ pub fn heartbeat_report(
             ports: v.ports.iter().map(|p| (p.name.clone(), p.host_port)).collect(),
             issues: v.issues,
         })
-        .collect();
-    let issues = manager.host_issues();
-    HeartbeatRequest {
-        node_id: node_id.to_string(),
-        session_id: session.to_owned(),
-        boot_id,
-        seq,
-        daemon_version: crate::upgrade::daemon_version(),
-        protocol: ProtocolVersions::ours(),
-        features: crate::protocol::features(),
-        runtime_up: manager.docker_up(),
-        reconciled: manager.reconciled(),
-        capacity: manager.capacity(),
-        workloads,
-        issues,
-        addresses: manager.addresses(),
-        upgrade_failed: None,
+        .collect()
+}
+
+/// What of a report the control plane acts on at once: each workload's state, epoch and ports.
+#[derive(Debug, PartialEq)]
+struct Gist(Vec<Seen>);
+
+#[derive(Debug, PartialEq)]
+struct Seen {
+    id: String,
+    epoch: Option<u64>,
+    state: WorkloadState,
+    ports: BTreeMap<String, u16>,
+}
+
+impl Gist {
+    fn of(workloads: &[WorkloadReport]) -> Self {
+        let seen =
+            |w: &WorkloadReport| Seen { id: w.id.clone(), epoch: w.epoch, state: w.state, ports: w.ports.clone() };
+        Self(workloads.iter().map(seen).collect())
+    }
+}
+
+/// Waits for the next beat after one sent at `sent` that reported `last`: `interval` from now, or
+/// sooner once `look` finds something else, though not before `QUICKEST` after `sent`. A beat that
+/// failed (`!delivered`) waits out the interval. False once cancelled.
+async fn next_beat(
+    sent: Instant,
+    delivered: bool,
+    interval: Duration,
+    last: &Gist,
+    look: impl Fn() -> Gist,
+    cancel: &CancellationToken,
+) -> bool {
+    let due = Instant::now() + interval;
+    loop {
+        let now = Instant::now();
+        if now >= due {
+            return true;
+        }
+        let wake = if delivered { due.min(now + LOOK).max(sent + QUICKEST) } else { due };
+        tokio::select! {
+            () = tokio::time::sleep_until(wake.into()) => {}
+            () = cancel.cancelled() => return false,
+        }
+        if delivered && look() != *last {
+            return true;
+        }
     }
 }
 
@@ -100,10 +163,12 @@ pub async fn run(
         seq += 1;
         let mut request: HeartbeatRequest = heartbeat_report(&manager, &node_id, &session, boot.clone(), seq);
         request.upgrade_failed = upgrader.failure();
+        let reported = Gist::of(&request.workloads);
         let timeout = interval.max(Duration::from_secs(2)).min(Duration::from_secs(10));
         let sent = Instant::now();
         let result =
             client::json::<_, HeartbeatResponse>(Method::POST, &url, &request, credentials.client(), timeout).await;
+        let delivered = result.is_ok();
         match result {
             Ok(answer) => {
                 if let Some(since) = failing_since.take() {
@@ -149,9 +214,91 @@ pub async fn run(
                 }
             }
         }
-        tokio::select! {
-            () = tokio::time::sleep(interval) => {}
-            () = cancel.cancelled() => return,
+        let look = || Gist::of(&workload_reports(&manager));
+        if !next_beat(sent, delivered, interval, &reported, look, &cancel).await {
+            return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+    use crate::config::Config;
+    use crate::manager::{Precondition, Records};
+    use crate::metrics::Metrics;
+    use crate::runtime::fake::FakeRuntime;
+    use crate::store::Store;
+
+    fn gist(epoch: u64) -> Gist {
+        Gist(vec![Seen { id: "w".into(), epoch: Some(epoch), state: WorkloadState::Running, ports: BTreeMap::new() }])
+    }
+
+    /// Waits as the loop does after a beat sent now, and how long it took.
+    async fn waited(delivered: bool, interval: Duration, last: &Gist, look: impl Fn() -> Gist) -> Duration {
+        let sent = Instant::now();
+        assert!(next_beat(sent, delivered, interval, last, look, &CancellationToken::new()).await);
+        sent.elapsed()
+    }
+
+    #[tokio::test]
+    async fn nothing_changed_waits_out_the_interval() {
+        let took = waited(true, Duration::from_secs(2), &gist(1), || gist(1)).await;
+        assert!(took >= Duration::from_secs(2), "{took:?}");
+    }
+
+    #[tokio::test]
+    async fn under_steady_churn_beats_come_once_a_second() {
+        let epoch = AtomicU64::new(0);
+        let interval = Duration::from_secs(5);
+        for _ in 0..3 {
+            let last = gist(epoch.load(Ordering::SeqCst));
+            let took = waited(true, interval, &last, || gist(epoch.fetch_add(1, Ordering::SeqCst))).await;
+            assert!((QUICKEST..interval).contains(&took), "{took:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_beat_that_failed_is_not_retried_sooner_for_a_change() {
+        let took = waited(false, Duration::from_secs(2), &gist(1), || gist(2)).await;
+        assert!(took >= Duration::from_secs(2), "{took:?}");
+    }
+
+    #[tokio::test]
+    async fn a_stop_is_reported_within_about_a_second() {
+        let dir = tempfile::tempdir().unwrap();
+        let (uid, gid) = (rustix::process::getuid().as_raw(), rustix::process::getgid().as_raw());
+        let config: Config = toml::from_str(&format!(
+            "deployment_id = \"test\"\nnode_id = \"n\"\nstate_dir = \"{}\"\n[api]\nlisten = \"127.0.0.1:0\"\n\
+             [workloads]\nallowed_images = [\"alpine:\"]\ndata_owner = \"{uid}:{gid}\"\n\
+             [capacity]\nmin_free_disk_mb = 1\n",
+            dir.path().display()
+        ))
+        .unwrap();
+        let store = Store::open(&config.state_dir).unwrap();
+        let fake = Arc::new(FakeRuntime::new());
+        let m = Manager::new(Arc::new(config), fake, store, Arc::new(Metrics::new()), Arc::new(|_, _| true));
+        assert!(m.reconcile(Records::FromDisk).await.error.is_none());
+        let spec = serde_json::from_value(serde_json::json!({
+            "image": "alpine:3.22",
+            "resources": { "memoryMb": 1024 },
+            "storage": { "mountPath": "/data", "sizeGb": 1 },
+        }))
+        .unwrap();
+        let w = WorkloadId::parse("w").unwrap();
+        m.ensure(w.clone(), spec, Precondition::None, None).await.unwrap();
+        m.start(w.clone(), None).await.unwrap();
+
+        // A beat goes out with heartbeat_seconds = 5 just before the stop.
+        let look = || Gist::of(&workload_reports(&m));
+        let reported = look();
+        let sent = Instant::now();
+        m.stop(w, None, None).await.unwrap();
+        assert!(next_beat(sent, true, Duration::from_secs(5), &reported, look, &CancellationToken::new()).await);
+        assert!(sent.elapsed() < Duration::from_millis(1500), "{:?}", sent.elapsed());
+        let next = workload_reports(&m);
+        assert_eq!(next[0].state, WorkloadState::Stopped, "{:?}", next[0].state);
     }
 }
