@@ -613,7 +613,8 @@ token's secret (the control plane takes a whole join token too, and looks up its
 - The answer: `{ nodeId, deploymentId, serverCertPem, clientCertPem, caPem, allowedClients,
   heartbeatSeconds }`. Two certificates for the node's one key: serverAuth for its API, clientAuth
   for its heartbeats. blocklyd ignores this `heartbeatSeconds`: it beats every `heartbeat_seconds`
-  of its own configuration until a heartbeat answer names another interval (1–60 seconds).
+  of its own configuration until a heartbeat answer names another interval (1–60 seconds). Between beats it sends one
+  as soon as a workload's state, epoch or ports change, at most once a second.
 - `caPem` must be the certificate in `fleet.ca`, compared as DER rather than as PEM text: from then
   on the node trusts that CA for the control plane and for who may call its API. An answer naming
   another is refused, and no identity is written.
