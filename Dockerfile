@@ -6,9 +6,9 @@
 #   /LICENSE.md               FSL-1.1-ALv2
 # Cubepals' control plane image copies them out of it, pinned by digest.
 # The Rust is rust-toolchain.toml's, which isn't copied in: the tag says the same version, and CI
-# fails if they differ. It comes from AWS's mirror of Docker's official images: Docker Hub caps
-# anonymous pulls per IP, and CI runners share IPs.
-FROM public.ecr.aws/docker/library/rust:1.99.1-alpine3.22 AS build
+# fails if they differ. It comes from Google's mirror of Docker's official images: Docker Hub caps
+# anonymous pulls per IP, CI runners share IPs, and AWS's mirror refuses them past a data limit.
+FROM mirror.gcr.io/library/rust:1.99.1-alpine3.22 AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
