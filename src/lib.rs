@@ -27,6 +27,7 @@ pub mod metrics;
 #[cfg(any(test, feature = "fake"))]
 pub mod minecraft;
 pub mod ports;
+pub mod priority;
 pub mod protocol;
 pub mod reconcile;
 pub mod runtime;

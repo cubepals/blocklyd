@@ -38,6 +38,9 @@ TimeoutStopSec=45
 # Workloads (their workloads.oom_score_adj) go before blocklyd when the host runs out of memory.
 OOMScoreAdjust=-500
 LimitNOFILE=65536
+# Snapshots, exports and restores work at nice 19 (src/priority.rs); this lets their threads come
+# back to nice 0 afterwards, and no higher.
+LimitNICE=+0
 
 StateDirectory=blocklyd
 StateDirectoryMode=0700
