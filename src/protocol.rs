@@ -18,7 +18,7 @@
 //! Parts (`protocol/`):
 //! - `spec.rs`: what a workload is, as the control plane sends it and as blocklyd keeps it.
 //! - `workload.rs`: what blocklyd reports about one workload: its view, stats and log lines.
-//! - `lifecycle.rs`: the verbs that create, start, stop, fence and delete a workload.
+//! - `lifecycle.rs`: the verbs that create, start, suspend, stop, fence and delete a workload.
 //! - `transfer.rs`: moving a workload's data: export, restore, snapshots and their upload.
 //! - `exec.rs`: running one command inside a workload.
 //! - `node.rs`: what the node reports about itself.
@@ -70,6 +70,7 @@ pub(crate) const FEATURES: &[&str] = &[
     "resume-after-reboot",
     "multipart-upload",
     "self-upgrade",
+    "suspend",
 ];
 
 impl ProtocolVersions {

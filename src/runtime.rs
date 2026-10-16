@@ -233,6 +233,11 @@ pub trait ContainerRuntime: Send + Sync + 'static {
     /// Sends `signal`, waits up to `grace`, then kills. Returns once it has exited.
     async fn stop(&self, name: &str, signal: &str, grace: Duration) -> Result<(), RuntimeError>;
     async fn kill(&self, name: &str) -> Result<(), RuntimeError>;
+    /// Freezes every process in the container (the cgroup freezer), memory kept. A stop or kill
+    /// still reaches a frozen container.
+    async fn pause(&self, name: &str) -> Result<(), RuntimeError>;
+    /// Thaws a container `pause` froze. May not return if the freezer is stuck: callers bound it.
+    async fn unpause(&self, name: &str) -> Result<(), RuntimeError>;
     /// Sets the container's restart policy to never, so the runtime can't bring back a copy
     /// blocklyd has fenced.
     async fn disable_restart(&self, name: &str) -> Result<(), RuntimeError>;

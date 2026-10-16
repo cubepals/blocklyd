@@ -238,6 +238,18 @@ async fn start(
     Ok(Json(result).into_response())
 }
 
+async fn suspend(
+    State(app): State<AppState>,
+    WorkloadPath(id): WorkloadPath,
+    headers: HeaderMap,
+) -> Result<Response, Response> {
+    let epoch = epoch(&headers)?;
+    let manager = app.manager.clone();
+    let result =
+        detached(async move { manager.suspend(id, epoch).await }).await.map_err(IntoResponse::into_response)?;
+    Ok(Json(result).into_response())
+}
+
 async fn stop(
     State(app): State<AppState>,
     WorkloadPath(id): WorkloadPath,
@@ -475,6 +487,7 @@ pub fn router(state: AppState, max_body: usize) -> Router {
         .route("/v1/workloads", get(list))
         .route("/v1/workloads/{id}", put(put_workload).get(get_workload).delete(delete))
         .route("/v1/workloads/{id}/start", post(start))
+        .route("/v1/workloads/{id}/suspend", post(suspend))
         .route("/v1/workloads/{id}/stop", post(stop))
         .route("/v1/workloads/{id}/kill", post(kill))
         .route("/v1/workloads/{id}/fence", post(fence))

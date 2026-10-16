@@ -22,7 +22,7 @@
 //! - `room.rs`: whether the host has room for a workload: memory to run, disk above the floor.
 //! - `view.rs`: a workload as the protocol shows it.
 //! - `ensure.rs`: makes a workload match the spec it was sent.
-//! - `power.rs`: starts, stops and kills a workload when asked.
+//! - `power.rs`: starts, suspends, resumes, stops and kills a workload when asked.
 //! - `restarts.rs`: brings a workload back without being asked, after a crash or a host restart.
 //! - `fence.rs`: fences a copy a newer placement has superseded.
 //! - `delete.rs`: removes a workload, and its data when told to.
@@ -75,7 +75,7 @@ use crate::runtime::{
     RawStats, RuntimeError, RuntimeInfo, exit_by, format_time, parse_time,
 };
 use crate::store::restore::Recovery;
-use crate::store::{AllocatedPort, Phase, RECORD_VERSION, Store, WorkloadRecord};
+use crate::store::{AllocatedPort, PendingSpec, Phase, RECORD_VERSION, Store, SuspendRecord, WorkloadRecord};
 
 mod archive;
 mod delete;
@@ -100,7 +100,7 @@ mod workload_state;
 pub use error::{ConflictCode, NodeError};
 pub(crate) use error::{EpochRule, check_epoch};
 pub use label_record::LabelRecord;
-pub(crate) use workload_state::{Sight, Stopping, derive_state};
+pub(crate) use workload_state::{Sight, Stopping, Suspend, derive_state};
 use workload_state::{clean_exit, derive_power_state};
 
 fn now_str() -> String {
@@ -145,6 +145,10 @@ struct StatsSample {
 impl State {
     fn stopping(&self, id: &WorkloadId) -> Stopping {
         if self.stopping.contains(id) { Stopping::Underway } else { Stopping::NotAsked }
+    }
+
+    fn suspend(&self, id: &WorkloadId) -> Suspend {
+        if self.suspend.get(id).is_some_and(SuspendRecord::suspended) { Suspend::Asked } else { Suspend::NotAsked }
     }
 }
 
@@ -193,6 +197,11 @@ struct State {
     /// What local snapshots hold on disk, as last measured.
     snapshot_bytes: Option<u64>,
     last_reconcile: Option<ReconcileView>,
+    /// What each workload keeps for suspending (`suspend.json`), for those that keep anything.
+    suspend: HashMap<WorkloadId, SuspendRecord>,
+    /// Deferred specs whole, secret values included, which only memory holds. One lost to a
+    /// restart of blocklyd takes its secrets from the container it replaces (`boot_spec`).
+    pending: HashMap<WorkloadId, WorkloadSpec>,
 }
 
 pub struct Manager {
@@ -347,6 +356,7 @@ impl Manager {
         let [low, high] = config.network.port_range;
         let ports = PortAllocator::new(low..=high, Duration::from_secs(config.network.port_quarantine_seconds), probe);
         let facts = host::facts();
+        let suspend = store.load_suspends();
         Arc::new(Self {
             state: Arc::new(Mutex::new(State {
                 records: BTreeMap::new(),
@@ -363,6 +373,8 @@ impl Manager {
                 uploading: HashSet::new(),
                 snapshot_bytes: None,
                 last_reconcile: None,
+                suspend,
+                pending: HashMap::new(),
             })),
             disk_writes: Arc::default(),
             locks: Mutex::new(HashMap::new()),
@@ -504,6 +516,33 @@ impl Manager {
         self.state.lock().unwrap().records.get(id).cloned().ok_or_else(|| NodeError::NotFound(id.clone()))
     }
 
+    /// What the workload keeps for suspending; nothing for most.
+    fn suspension(&self, id: &WorkloadId) -> SuspendRecord {
+        self.state.lock().unwrap().suspend.get(id).cloned().unwrap_or_default()
+    }
+
+    /// Writes what the workload keeps for suspending, in turn with its record's writes, then holds
+    /// it in memory. A deferred spec memory holds whole goes once it is no longer the pending one.
+    async fn save_suspension(&self, id: &WorkloadId, suspend: SuspendRecord) -> Result<(), NodeError> {
+        let (turn, state, store, id) = (self.disk_writes.clone(), self.state.clone(), self.store.clone(), id.clone());
+        blocking(move || {
+            let _turn = turn.lock().unwrap();
+            store.save_suspend(&id, &suspend)?;
+            let mut state = state.lock().unwrap();
+            let digest = suspend.pending.as_ref().map(|p| &p.spec_digest);
+            if state.pending.get(&id).is_some_and(|spec| Some(&spec.record().digest()) != digest) {
+                state.pending.remove(&id);
+            }
+            if suspend == SuspendRecord::default() {
+                state.suspend.remove(&id);
+            } else {
+                state.suspend.insert(id, suspend);
+            }
+            Ok(())
+        })
+        .await?
+    }
+
     async fn inspect(&self, name: &str) -> Result<Option<ContainerInfo>, NodeError> {
         Ok(self.note(self.runtime.inspect(name).await)?)
     }
@@ -566,11 +605,13 @@ impl Manager {
         // Only when a restart will really follow: its policy allows one, retries are left, nothing
         // superseded this copy, and the exit reads as a crash (one after a stop was asked for is
         // that stop, a kill or a SIGKILL included). Otherwise the failure reads as what it is.
+        let suspend = state.suspend(id);
         let restartable = state.records.get(id).is_some_and(|r| {
             r.superseded_by.is_none()
                 && r.spec.restart.policy == crate::protocol::RestartPolicy::OnFailure
                 && attempt < r.spec.restart.max_retries
-                && derive_power_state(r, info.as_ref(), Stopping::NotAsked, Sight::Current) == WorkloadState::Crashed
+                && derive_power_state(r, info.as_ref(), Stopping::NotAsked, suspend, Sight::Current)
+                    == WorkloadState::Crashed
         });
         state.observed.insert(id.clone(), Observed { info, era });
         if was_running && failed && restartable {

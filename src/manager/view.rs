@@ -12,7 +12,13 @@ use super::*;
 impl Manager {
     pub(super) fn state_of(&self, record: &WorkloadRecord, info: Option<&ContainerInfo>) -> WorkloadState {
         let state = self.state.lock().unwrap();
-        pending_restart(&state, &record.id, derive_state(record, info, state.stopping(&record.id), self.sight()))
+        self.state_in(&state, record, info)
+    }
+
+    /// The state as every view, count and heartbeat reports it.
+    fn state_in(&self, state: &State, record: &WorkloadRecord, info: Option<&ContainerInfo>) -> WorkloadState {
+        let id = &record.id;
+        pending_restart(state, id, derive_state(record, info, state.stopping(id), state.suspend(id), self.sight()))
     }
 
     // ─── views ─────────────────────────────────────────────────────────────────────────────
@@ -25,8 +31,7 @@ impl Manager {
     }
 
     fn build_view(&self, state: &State, record: &WorkloadRecord, info: Option<&ContainerInfo>) -> WorkloadView {
-        let workload_state =
-            pending_restart(state, &record.id, derive_state(record, info, state.stopping(&record.id), self.sight()));
+        let workload_state = self.state_in(state, record, info);
         let exit = info
             .filter(|i| matches!(i.status, ContainerStatus::Exited | ContainerStatus::Dead))
             .map(|i| ExitInfo { code: i.exit_code, oom_killed: i.oom_killed, at: i.finished_at.map(format_time) });
@@ -75,6 +80,11 @@ impl Manager {
             epoch: record.epoch,
             superseded_by: record.superseded_by,
             spec_digest: record.spec_digest.clone(),
+            pending_spec_digest: state
+                .suspend
+                .get(&record.id)
+                .and_then(|s| s.pending.as_ref())
+                .map(|p| p.spec_digest.clone()),
             image: record.spec.image.clone(),
             state: workload_state,
             health: info.filter(|i| i.status == ContainerStatus::Running).and_then(|i| i.health),
@@ -131,8 +141,7 @@ impl Manager {
         let mut counts: BTreeMap<WorkloadState, u64> = WorkloadState::ALL.iter().map(|s| (*s, 0)).collect();
         for r in state.records.values() {
             let info = state.observed.get(&r.id).and_then(|o| o.info.as_ref());
-            let derived = derive_state(r, info, state.stopping(&r.id), self.sight());
-            *counts.entry(pending_restart(&state, &r.id, derived)).or_default() += 1;
+            *counts.entry(self.state_in(&state, r, info)).or_default() += 1;
         }
         counts
     }

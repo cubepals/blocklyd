@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-//! The verbs that decide whether a workload exists and runs: ensure, start and stop, fence and
-//! delete, each with its request and its answer. The workload view these answers carry is in
+//! The verbs that decide whether a workload exists and runs: ensure, start, suspend and stop,
+//! fence and delete, each with its request and its answer. The workload view these answers carry is in
 //! `workload.rs`. Moving a workload's data is in `transfer.rs`.
 
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,9 @@ pub enum EnsureOutcome {
     Unchanged,
     /// Made again for the new spec, keeping data and ports; started again if it was running.
     Replaced,
+    /// The workload is suspended and the spec names the `resumesOn` it was suspended on: it stays
+    /// suspended, and the spec (`pendingSpecDigest`) is put in place at its next boot.
+    Deferred,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -40,6 +43,10 @@ pub struct PowerResponse {
     /// For stop: the workload didn't exit within the grace and was killed.
     #[serde(default)]
     pub forced: bool,
+    /// For a start of a suspended workload: true when it came back from memory, false when the
+    /// resume didn't come back in time and it was started afresh on its data. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed: Option<bool>,
     pub workload: WorkloadView,
 }
 

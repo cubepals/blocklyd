@@ -10,6 +10,7 @@
 //!   ports.json                       0600 root    released host ports still in quarantine
 //!   workloads/<id>/                  0700 root
 //!     workload.json                  0600 root    blocklyd's record (no secret values)
+//!     suspend.json                   0600 root    its suspension and deferred spec, if any
 //!     data/                          0750 uid:gid the workload's persistent data, bind-mounted
 //!     snapshots/<snapshot>/                       local snapshots (tree.rs), never mounted
 //!       snapshot.json                             written last: a snapshot without it is unfinished
@@ -109,6 +110,38 @@ pub struct WorkloadRecord {
     pub restart_count: u32,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// What a workload keeps beside its record for suspending and resuming (`suspend.json`): its
+/// spec's `resumesOn`, whether it was asked to suspend, and a spec deferred to its next boot.
+/// Written only when one of them is set, and removed once none is, so a workload that never
+/// suspends has no such file and its record reads and writes as it always has.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SuspendRecord {
+    /// The current spec's `resumesOn`: what a deferred spec must name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumes_on: Option<String>,
+    /// When it was asked to suspend. Cleared when it is started, stopped, killed or fenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suspended_at: Option<String>,
+    /// A spec a `PUT` deferred while it was suspended, put in place at its next boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<PendingSpec>,
+}
+
+impl SuspendRecord {
+    pub(crate) fn suspended(&self) -> bool {
+        self.suspended_at.is_some()
+    }
+}
+
+/// A deferred spec, secret values dropped as in the record.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingSpec {
+    pub spec_digest: String,
+    pub spec: SpecRecord,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -212,6 +245,45 @@ impl Store {
         self.workload_dir(id).join("workload.json")
     }
 
+    fn suspend_path(&self, id: &WorkloadId) -> PathBuf {
+        self.workload_dir(id).join("suspend.json")
+    }
+
+    /// Writes what the workload keeps for suspending, or removes the file once nothing is kept.
+    /// Atomic, as a record's save is.
+    pub(crate) fn save_suspend(&self, id: &WorkloadId, suspend: &SuspendRecord) -> Result<(), StoreError> {
+        let path = self.suspend_path(id);
+        if *suspend == SuspendRecord::default() {
+            return match fs::remove_file(&path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(StoreError::Io { what: "removing", path, source: e }),
+                _ => Ok(()),
+            };
+        }
+        let bytes = serde_json::to_vec_pretty(suspend).expect("suspend records serialize");
+        Ok(durable::write_atomic(&path, &bytes, 0o600)?)
+    }
+
+    /// What every workload keeps for suspending, by id. One that can't be read is logged and read
+    /// as nothing kept: the workload then reads as running, never as suspended by mistake.
+    pub(crate) fn load_suspends(&self) -> std::collections::HashMap<WorkloadId, SuspendRecord> {
+        let Ok(entries) = fs::read_dir(self.workloads_dir()) else { return Default::default() };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|e| WorkloadId::parse(&e.file_name().to_string_lossy()).ok())
+            .filter_map(|id| {
+                let path = self.suspend_path(&id);
+                let bytes = fs::read(&path).ok()?;
+                match serde_json::from_slice::<SuspendRecord>(&bytes) {
+                    Ok(suspend) => Some((id, suspend)),
+                    Err(e) => {
+                        tracing::warn!(path = %path.display(), error = %e, "unreadable suspend record; ignored");
+                        None
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// Every record on disk, and the ones that couldn't be read.
     pub fn load_all(&self) -> Result<(Vec<WorkloadRecord>, Vec<BadRecord>), StoreError> {
         let dir = self.workloads_dir();
@@ -300,6 +372,7 @@ impl Store {
     /// directory only if it is empty (`remove_dir` refuses otherwise), so data can't be lost.
     pub(crate) fn abandon(&self, id: &WorkloadId) {
         let _ = fs::remove_file(self.record_path(id));
+        let _ = fs::remove_file(self.suspend_path(id));
         let _ = fs::remove_dir(self.data_dir(id));
         let _ = fs::remove_dir(self.workload_dir(id));
     }
@@ -489,6 +562,27 @@ pub(crate) mod tests {
         let (records, bad) = store.load_all().unwrap();
         assert!(bad.is_empty(), "{bad:?}");
         assert_eq!(records[0].restart_count, 0);
+    }
+
+    #[test]
+    fn a_suspend_record_is_kept_only_while_it_holds_something() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(tmp.path()).unwrap();
+        store.save(&record("w")).unwrap();
+        let id = WorkloadId::parse("w").unwrap();
+        let suspend = SuspendRecord {
+            resumes_on: Some("1.21.8".into()),
+            suspended_at: Some("2026-10-16T08:00:00Z".into()),
+            pending: Some(PendingSpec { spec_digest: "sha256:y".into(), spec: record("w").spec }),
+        };
+        store.save_suspend(&id, &suspend).unwrap();
+        assert_eq!(store.load_suspends().get(&id), Some(&suspend));
+        store.save_suspend(&id, &SuspendRecord::default()).unwrap();
+        assert!(store.load_suspends().is_empty());
+        let left: Vec<_> =
+            fs::read_dir(store.workloads_dir().join("w")).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(left, ["workload.json"], "nothing kept, no file");
+        store.save_suspend(&id, &SuspendRecord::default()).unwrap();
     }
 
     #[test]

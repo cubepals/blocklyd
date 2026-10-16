@@ -46,8 +46,8 @@ impl Manager {
         let mut removed_container = false;
         let info = if record.phase == Phase::Retained { None } else { self.inspect(&record.container_name).await? };
         if let Some(info) = info {
-            // Delete while running: the workload still gets its graceful stop first.
-            if matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting) {
+            // Delete while running, or suspended: the workload still gets its graceful stop first.
+            if matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused) {
                 record.stop_requested_at = Some(now_str());
                 self.save_record(&record).await?;
                 let grace = Duration::from_secs(u64::from(record.spec.stop.timeout_seconds));

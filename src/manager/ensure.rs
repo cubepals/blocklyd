@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-//! Makes a workload match the spec it was sent (`PUT`): creates it, or replaces it with a new
-//! generation. Starting and stopping on request are in `power.rs`; whether the host has room is
-//! asked of `room.rs`.
+//! Makes a workload match the spec it was sent (`PUT`): creates it, replaces it with a new
+//! generation, or, for a suspended workload whose spec names the `resumesOn` it was suspended on,
+//! defers the spec to its next boot. Starting and stopping on request are in `power.rs`; whether
+//! the host has room is asked of `room.rs`.
 
 use super::*;
 
@@ -63,17 +64,44 @@ impl Manager {
                     && info
                         .as_ref()
                         .is_some_and(|i| i.labels.get(LABEL_DIGEST) == Some(&digest) && secrets_match(i, &spec));
+                let suspend = self.suspension(id);
                 if same {
                     self.remember(id, info).await;
+                    // What it runs is what is wanted: a spec deferred before is no longer. The
+                    // `resumesOn` a workload was suspended on stays until it wakes.
+                    let resumes_on = if suspend.suspended() { suspend.resumes_on.clone() } else { spec.resumes_on };
+                    if suspend.pending.is_some() || resumes_on != suspend.resumes_on {
+                        self.save_suspension(id, SuspendRecord { resumes_on, pending: None, ..suspend }).await?;
+                    }
                     return Ok(EnsureResponse {
                         outcome: EnsureOutcome::Unchanged,
                         restarted: false,
                         workload: self.view(id)?,
                     });
                 }
+                let asleep = record.phase == Phase::Active
+                    && suspend.suspended()
+                    && info.as_ref().is_some_and(|i| i.status == ContainerStatus::Paused);
+                if asleep && !placed_anew && spec.resumes_on.is_some() && spec.resumes_on == suspend.resumes_on {
+                    return self.defer(id, suspend, spec, digest).await;
+                }
                 self.replace(record, info, spec, digest, epoch).await
             }
         }
+    }
+
+    /// Keeps a suspended workload asleep and holds `spec` for its next boot (`power.rs`, `boot`).
+    async fn defer(
+        &self,
+        id: &WorkloadId,
+        suspend: SuspendRecord,
+        spec: WorkloadSpec,
+        digest: String,
+    ) -> Result<EnsureResponse, NodeError> {
+        let pending = PendingSpec { spec_digest: digest, spec: spec.record() };
+        self.save_suspension(id, SuspendRecord { pending: Some(pending), ..suspend }).await?;
+        self.state.lock().unwrap().pending.insert(id.clone(), spec);
+        Ok(EnsureResponse { outcome: EnsureOutcome::Deferred, restarted: false, workload: self.view(id)? })
     }
 
     /// Ports for a spec. Those named in `keep` (a previous generation) keep their host port, so
@@ -215,6 +243,12 @@ impl Manager {
         epoch: Option<u64>,
     ) -> Result<EnsureResponse, NodeError> {
         self.check_disk()?;
+        // Nothing an earlier workload by this id kept for suspending carries over.
+        {
+            let mut state = self.state.lock().unwrap();
+            state.suspend.remove(id);
+            state.pending.remove(id);
+        }
         let ports = self.allocate_ports(id, &spec, &[])?;
         let at = now_str();
         let mut record = WorkloadRecord {
@@ -256,6 +290,10 @@ impl Manager {
                 record.phase = Phase::Active;
                 record.updated_at = now_str();
                 self.save_record(&record).await?;
+                if spec.resumes_on.is_some() {
+                    let suspend = SuspendRecord { resumes_on: spec.resumes_on.clone(), ..SuspendRecord::default() };
+                    self.save_suspension(id, suspend).await?;
+                }
                 self.observe(&record).await?;
                 Ok(EnsureResponse { outcome: EnsureOutcome::Created, restarted: false, workload: self.view(id)? })
             }
@@ -270,7 +308,7 @@ impl Manager {
     }
 
     /// A new generation: same data, same ports where the spec still names them, a new container.
-    async fn replace(
+    pub(super) async fn replace(
         self: &Arc<Self>,
         mut record: WorkloadRecord,
         info: Option<ContainerInfo>,
@@ -281,6 +319,9 @@ impl Manager {
         let id = record.id.clone();
         let was_running =
             info.as_ref().is_some_and(|i| matches!(i.status, ContainerStatus::Running | ContainerStatus::Restarting));
+        // A frozen workload is stopped as a running one is, so it saves, but isn't started again:
+        // what it kept in memory can't come over to the new generation.
+        let frozen = info.as_ref().is_some_and(|i| i.status == ContainerStatus::Paused);
         if record.phase == Phase::Retained {
             self.check_disk()?;
         }
@@ -294,7 +335,7 @@ impl Manager {
         let ports = self.allocate_ports(&id, &spec, &old_ports)?;
         self.persist_resting_ports().await;
         if info.is_some() {
-            if was_running {
+            if was_running || frozen {
                 let grace = Duration::from_secs(u64::from(record.spec.stop.timeout_seconds));
                 let stopping = self.mark_stopping(&id);
                 let stopped = self.runtime.stop(&record.container_name, record.spec.stop.signal.as_str(), grace).await;
@@ -323,6 +364,11 @@ impl Manager {
         let container_id = self.make_container(&record, &spec).await?;
         record.container_id = Some(container_id);
         self.save_record(&record).await?;
+        // The new generation neither sleeps nor waits on a deferred spec.
+        let resumes_on = spec.resumes_on.clone();
+        if self.suspension(&id) != (SuspendRecord { resumes_on: resumes_on.clone(), ..SuspendRecord::default() }) {
+            self.save_suspension(&id, SuspendRecord { resumes_on, ..SuspendRecord::default() }).await?;
+        }
         if was_running {
             self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(&id, e))?;
         }

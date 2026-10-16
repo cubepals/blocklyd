@@ -63,6 +63,9 @@ impl Manager {
                 drop(stopping);
                 self.note(result)?;
                 stopped = true;
+                if let Err(e) = self.end_suspension(id, false).await {
+                    unrecorded.get_or_insert(e);
+                }
             }
             self.observe(&record).await?;
         }

@@ -363,6 +363,14 @@ impl ContainerRuntime for DockerRuntime {
         }
     }
 
+    async fn pause(&self, name: &str) -> Result<(), RuntimeError> {
+        quick("pause", self.docker()?.pause_container(name)).await
+    }
+
+    async fn unpause(&self, name: &str) -> Result<(), RuntimeError> {
+        quick("unpause", self.docker()?.unpause_container(name)).await
+    }
+
     async fn disable_restart(&self, name: &str) -> Result<(), RuntimeError> {
         let body = ContainerUpdateBody {
             restart_policy: Some(DockerRestartPolicy {

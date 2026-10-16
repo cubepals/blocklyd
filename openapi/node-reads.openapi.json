@@ -591,6 +591,14 @@
               "policy": "on-failure"
             }
           },
+          "resumesOn": {
+            "default": null,
+            "description": "What a suspended workload may wake into without losing its memory: a `PUT` whose spec\ndiffers but names the same `resumesOn` as the spec it was suspended on keeps it suspended,\nand its spec is put in place at its next boot. Not part of the spec's digest.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "secrets": {
             "additionalProperties": {
               "$ref": "#/components/schemas/Secret"

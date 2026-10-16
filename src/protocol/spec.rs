@@ -62,6 +62,11 @@ pub struct WorkloadSpec {
     pub restart: RestartSpec,
     #[serde(default)]
     pub(crate) labels: BTreeMap<String, String>,
+    /// What a suspended workload may wake into without losing its memory: a `PUT` whose spec
+    /// differs but names the same `resumesOn` as the spec it was suspended on keeps it suspended,
+    /// and its spec is put in place at its next boot. Not part of the spec's digest.
+    #[serde(default)]
+    pub(crate) resumes_on: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -243,6 +248,34 @@ pub struct SpecRecord {
 }
 
 impl SpecRecord {
+    /// The spec again, with these secret values, and `resumes_on`: for a spec blocklyd kept
+    /// whose secrets it can take from the container they were given to. None if `secrets` lacks
+    /// one of the names the spec holds.
+    pub(crate) fn with_secrets(
+        &self,
+        secrets: &BTreeMap<String, String>,
+        resumes_on: Option<String>,
+    ) -> Option<WorkloadSpec> {
+        let secrets = self
+            .secret_names
+            .iter()
+            .map(|name| secrets.get(name).map(|value| (name.clone(), Secret(value.clone()))))
+            .collect::<Option<BTreeMap<_, _>>>()?;
+        Some(WorkloadSpec {
+            image: self.image.clone(),
+            entrypoint: self.entrypoint.clone(),
+            env: self.env.clone(),
+            secrets,
+            resources: self.resources.clone(),
+            storage: self.storage.clone(),
+            ports: self.ports.clone(),
+            stop: self.stop.clone(),
+            restart: self.restart.clone(),
+            labels: self.labels.clone(),
+            resumes_on,
+        })
+    }
+
     /// `sha256:` of the canonical JSON (maps are ordered). Secret values never enter it; a
     /// changed secret is caught by comparing the container's environment instead.
     pub fn digest(&self) -> String {
@@ -360,6 +393,20 @@ mod tests {
         v["env"]["VERSION"] = "1.21.9".into();
         assert_ne!(a, spec(v).record().digest());
         assert!(a.starts_with("sha256:") && a.len() == 7 + 64);
+        let mut v = blockly_like();
+        v["resumesOn"] = "1.21.8".into();
+        assert_eq!(a, spec(v).record().digest(), "resumesOn is not part of what the spec is");
+    }
+
+    #[test]
+    fn a_kept_spec_is_whole_again_only_with_every_secret_it_names() {
+        let s = spec(blockly_like());
+        let secrets = BTreeMap::from([("RCON_PASSWORD".to_owned(), "hunter2hunter2".to_owned())]);
+        let again = s.record().with_secrets(&secrets, Some("1.21.8".into())).expect("every secret is there");
+        assert_eq!(again.record(), s.record());
+        assert_eq!(again.secrets["RCON_PASSWORD"].expose(), "hunter2hunter2");
+        assert_eq!(again.resumes_on.as_deref(), Some("1.21.8"));
+        assert!(s.record().with_secrets(&BTreeMap::new(), None).is_none());
     }
 
     /// Nodes already running these specs stored these digests, in records and container labels.

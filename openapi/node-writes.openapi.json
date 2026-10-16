@@ -243,6 +243,11 @@
             "const": "replaced",
             "description": "Made again for the new spec, keeping data and ports; started again if it was running.",
             "type": "string"
+          },
+          {
+            "const": "deferred",
+            "description": "The workload is suspended and the spec names the `resumesOn` it was suspended on: it stays\nsuspended, and the spec (`pendingSpecDigest`) is put in place at its next boot.",
+            "type": "string"
           }
         ]
       },
@@ -1201,6 +1206,13 @@
             "description": "For stop: the workload didn't exit within the grace and was killed.",
             "type": "boolean"
           },
+          "resumed": {
+            "description": "For a start of a suspended workload: true when it came back from memory, false when the\nresume didn't come back in time and it was started afresh on its data. Absent otherwise.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "workload": {
             "$ref": "#/components/schemas/WorkloadView"
           }
@@ -1862,6 +1874,11 @@
             "const": "fenced",
             "description": "Superseded: the control plane placed this workload anew (a newer epoch, usually on another\nnode). This copy is stopped, never started again, and its data kept until deleted.",
             "type": "string"
+          },
+          {
+            "const": "suspended",
+            "description": "Frozen on request with its memory kept (`POST …/suspend`); a start resumes it. Only a\nworkload asked to suspend is ever in this state. In Blockly's terms: asleep, its memory\nkept.",
+            "type": "string"
           }
         ]
       },
@@ -1942,6 +1959,13 @@
           },
           "locate": {
             "$ref": "#/components/schemas/Locate"
+          },
+          "pendingSpecDigest": {
+            "description": "A spec a `PUT` deferred while the workload is suspended (`EnsureOutcome::Deferred`): put in\nplace at its next boot. Absent when there is none.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "ports": {
             "items": {

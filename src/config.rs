@@ -226,6 +226,9 @@ pub(crate) struct WorkloadPolicy {
     /// How long deleted data stays in the host's trash before it is purged.
     pub(crate) trash_retention_hours: u64,
     pub(crate) min_memory_mb: u32,
+    /// How long a start of a suspended workload waits for it to come back from memory before it
+    /// is killed and started afresh on its data.
+    pub(crate) resume_timeout_seconds: u64,
 }
 
 impl Default for WorkloadPolicy {
@@ -242,6 +245,7 @@ impl Default for WorkloadPolicy {
             oom_score_adj: 500,
             trash_retention_hours: 24,
             min_memory_mb: 256,
+            resume_timeout_seconds: 10,
         }
     }
 }
@@ -249,6 +253,10 @@ impl Default for WorkloadPolicy {
 impl WorkloadPolicy {
     pub(crate) fn trash_retention(&self) -> Duration {
         Duration::from_hours(self.trash_retention_hours)
+    }
+
+    pub(crate) fn resume_timeout(&self) -> Duration {
+        Duration::from_secs(self.resume_timeout_seconds)
     }
 }
 
@@ -465,6 +473,9 @@ impl Config {
         }
         if self.transfer.idle_seconds == 0 {
             return bad("transfer.idle_seconds is at least 1".into());
+        }
+        if self.workloads.resume_timeout_seconds == 0 {
+            return bad("workloads.resume_timeout_seconds is at least 1".into());
         }
         if self.fleet.is_none() && !id_ok(self.node_id.as_str()) {
             return bad("node_id is 1-63 of a-z, 0-9 and '-'".into());
