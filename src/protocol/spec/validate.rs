@@ -26,6 +26,7 @@ const MAX_ENTRYPOINT_ARGS: usize = 64;
 const MAX_ARG: usize = 64 * 1024;
 const MAX_PORTS: usize = 8;
 const MAX_LABELS: usize = 32;
+const MAX_RESUMES_ON: usize = 128;
 /// The weights Docker passes on as the container's cpu.shares: the kernel's bounds for it
 /// (`MIN_SHARES` and `MAX_SHARES`, kernel/sched/sched.h), which nothing exports.
 pub(crate) const CPU_WEIGHTS: std::ops::RangeInclusive<u32> = 2..=262_144;
@@ -111,6 +112,7 @@ impl WorkloadSpec {
         self.check_ports(&mut problems);
         self.check_stop_and_restart(&mut problems);
         self.check_labels(&mut problems);
+        self.check_resumes_on(&mut problems);
         if problems.0.is_empty() { Ok(()) } else { Err(problems.0) }
     }
 
@@ -243,6 +245,14 @@ impl WorkloadSpec {
             if value.len() > 256 || !no_nul(value) {
                 problems.add(format!("labels.{key}"), "values are at most 256 bytes, without NUL");
             }
+        }
+    }
+
+    fn check_resumes_on(&self, problems: &mut Problems) {
+        if let Some(on) = &self.resumes_on
+            && (on.chars().count() > MAX_RESUMES_ON || !no_nul(on))
+        {
+            problems.add("resumesOn", format!("at most {MAX_RESUMES_ON} characters, without NUL"));
         }
     }
 }

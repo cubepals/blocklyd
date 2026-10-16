@@ -56,6 +56,8 @@ pub struct FakeRuntime {
     /// while a container runs and prints nothing. Each one open holds a clone of `follows`.
     pub hold_follows: AtomicBool,
     pub follows: std::sync::Arc<()>,
+    /// When set, an unpause never returns, as one does whose cgroup freezer is stuck.
+    pub hang_unpause: AtomicBool,
 }
 
 impl Default for FakeRuntime {
@@ -78,6 +80,7 @@ impl FakeRuntime {
             exec_gate: tokio::sync::RwLock::new(()),
             hold_follows: AtomicBool::new(false),
             follows: std::sync::Arc::new(()),
+            hang_unpause: AtomicBool::new(false),
         }
     }
 
@@ -223,12 +226,15 @@ impl ContainerRuntime for FakeRuntime {
         let mut all = self.containers.lock().unwrap();
         let taken: Vec<(super::super::protocol::Proto, u16)> = all
             .values()
-            .filter(|c| c.spec.name != name && c.status == ContainerStatus::Running)
+            .filter(|c| c.spec.name != name && matches!(c.status, ContainerStatus::Running | ContainerStatus::Paused))
             .flat_map(|c| c.spec.ports.iter().map(|p| (p.protocol, p.host_port)))
             .collect();
         let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
         if c.status == ContainerStatus::Running {
             return Ok(());
+        }
+        if c.status == ContainerStatus::Paused {
+            return Err(RuntimeError::Conflict(format!("container {name} is paused; unpause it instead")));
         }
         if let Some(port) = c.spec.ports.iter().find(|p| taken.contains(&(p.protocol, p.host_port))) {
             return Err(RuntimeError::PortTaken {
@@ -253,7 +259,8 @@ impl ContainerRuntime for FakeRuntime {
         self.call(format!("stop {name}"));
         let mut all = self.containers.lock().unwrap();
         let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
-        if c.status != ContainerStatus::Running && c.status != ContainerStatus::Restarting {
+        // A frozen container gets the signal as it thaws.
+        if !matches!(c.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused) {
             return Ok(());
         }
         c.status = ContainerStatus::Exited;
@@ -270,11 +277,42 @@ impl ContainerRuntime for FakeRuntime {
         self.call(format!("kill {name}"));
         let mut all = self.containers.lock().unwrap();
         let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
-        if c.status == ContainerStatus::Running {
+        if matches!(c.status, ContainerStatus::Running | ContainerStatus::Paused) {
             c.status = ContainerStatus::Exited;
             c.exit_code = exit_by(libc::SIGKILL);
             c.finished_at = Some(OffsetDateTime::now_utc());
         }
+        Ok(())
+    }
+
+    async fn pause(&self, name: &str) -> Result<(), RuntimeError> {
+        self.up()?;
+        self.call(format!("pause {name}"));
+        let mut all = self.containers.lock().unwrap();
+        let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
+        match c.status {
+            ContainerStatus::Running => {
+                c.status = ContainerStatus::Paused;
+                Ok(())
+            }
+            ContainerStatus::Paused => Err(RuntimeError::Conflict(format!("container {name} is already paused"))),
+            _ => Err(RuntimeError::Conflict(format!("container {name} is not running"))),
+        }
+    }
+
+    async fn unpause(&self, name: &str) -> Result<(), RuntimeError> {
+        self.up()?;
+        self.call(format!("unpause {name}"));
+        if self.hang_unpause.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
+        let mut all = self.containers.lock().unwrap();
+        let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
+        if c.status != ContainerStatus::Paused {
+            return Err(RuntimeError::Conflict(format!("container {name} is not paused")));
+        }
+        // Thawed, not started again: the same process, from the same start.
+        c.status = ContainerStatus::Running;
         Ok(())
     }
 

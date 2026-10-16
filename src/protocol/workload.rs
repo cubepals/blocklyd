@@ -45,10 +45,14 @@ pub enum WorkloadState {
     /// Superseded: the control plane placed this workload anew (a newer epoch, usually on another
     /// node). This copy is stopped, never started again, and its data kept until deleted.
     Fenced,
+    /// Frozen on request with its memory kept (`POST …/suspend`); a start resumes it. Only a
+    /// workload asked to suspend is ever in this state. In Blockly's terms: asleep, its memory
+    /// kept.
+    Suspended,
 }
 
 impl WorkloadState {
-    pub(crate) const ALL: [Self; 11] = [
+    pub(crate) const ALL: [Self; 12] = [
         Self::Creating,
         Self::Created,
         Self::Running,
@@ -60,6 +64,7 @@ impl WorkloadState {
         Self::Retained,
         Self::Unknown,
         Self::Fenced,
+        Self::Suspended,
     ];
     pub(crate) fn as_str(self) -> &'static str {
         match self {
@@ -74,6 +79,7 @@ impl WorkloadState {
             Self::Retained => "retained",
             Self::Unknown => "unknown",
             Self::Fenced => "fenced",
+            Self::Suspended => "suspended",
         }
     }
 }
@@ -189,6 +195,10 @@ pub struct WorkloadView {
     /// Set once a newer placement exists: the epoch that superseded this copy.
     pub superseded_by: Option<u64>,
     pub spec_digest: String,
+    /// A spec a `PUT` deferred while the workload is suspended (`EnsureOutcome::Deferred`): put in
+    /// place at its next boot. Absent when there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_spec_digest: Option<String>,
     pub(crate) image: String,
     pub state: WorkloadState,
     pub(crate) health: Option<Health>,

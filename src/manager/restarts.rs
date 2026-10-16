@@ -70,7 +70,8 @@ impl Manager {
         }
         let Ok(Some(info)) = self.observe(&record).await else { return Restart::Done };
         // Still failed, and not a requested stop (which reads as stopped, not crashed).
-        if derive_state(&record, Some(&info), Stopping::NotAsked, Sight::Current) != WorkloadState::Crashed {
+        let suspend = self.state.lock().unwrap().suspend(id);
+        if derive_state(&record, Some(&info), Stopping::NotAsked, suspend, Sight::Current) != WorkloadState::Crashed {
             return Restart::Done;
         }
         match self.lease() {
@@ -121,7 +122,7 @@ impl Manager {
     // ─── resuming after the host restarts ──────────────────────────────────────────────────
 
     /// After the first full pass in a run, finds the workloads the host went down under: running
-    /// in an earlier boot, never asked to stop, and stopped now. Each is resumed as its restart
+    /// in an earlier boot, never asked to stop or to suspend, and stopped now. Each is resumed as its restart
     /// policy would restart a failure, and reads as restarting until then.
     pub(super) fn schedule_resumes(&self) {
         let Some(boot) = self.boot_id.clone() else { return };
@@ -132,7 +133,7 @@ impl Manager {
         let ids: Vec<WorkloadId> = state
             .records
             .values()
-            .filter(|r| resumable(r, &boot))
+            .filter(|r| resumable(r, &boot) && state.suspend(&r.id) == Suspend::NotAsked)
             .filter(|r| {
                 state.observed.get(&r.id).and_then(|o| o.info.as_ref()).is_some_and(|i| {
                     matches!(i.status, ContainerStatus::Exited | ContainerStatus::Dead | ContainerStatus::Created)
@@ -167,7 +168,8 @@ impl Manager {
             return Restart::Done;
         };
         let current = self.boot_id.clone().unwrap_or_default();
-        if !resumable(&record, &current) {
+        let suspended = self.state.lock().unwrap().suspend(id) == Suspend::Asked;
+        if !resumable(&record, &current) || suspended {
             self.state.lock().unwrap().resuming.remove(id);
             return Restart::Done;
         }

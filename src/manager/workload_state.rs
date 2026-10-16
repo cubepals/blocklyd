@@ -17,6 +17,14 @@ pub(crate) enum Stopping {
     NotAsked,
 }
 
+/// Whether the workload was asked to suspend: only then does a frozen container read as
+/// suspended, and its exit (the host went down under it) as a stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Suspend {
+    Asked,
+    NotAsked,
+}
+
 /// Whether what blocklyd last saw of the runtime is current (`Manager::trustworthy`), or history
 /// after an outage.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,9 +37,10 @@ pub(crate) fn derive_state(
     record: &WorkloadRecord,
     info: Option<&ContainerInfo>,
     stopping: Stopping,
+    suspend: Suspend,
     sight: Sight,
 ) -> WorkloadState {
-    let state = derive_power_state(record, info, stopping, sight);
+    let state = derive_power_state(record, info, stopping, suspend, sight);
     let at_rest = matches!(
         state,
         WorkloadState::Created | WorkloadState::Stopped | WorkloadState::Crashed | WorkloadState::Missing
@@ -43,6 +52,7 @@ pub(super) fn derive_power_state(
     record: &WorkloadRecord,
     info: Option<&ContainerInfo>,
     stopping: Stopping,
+    suspend: Suspend,
     sight: Sight,
 ) -> WorkloadState {
     match record.phase {
@@ -54,12 +64,16 @@ pub(super) fn derive_power_state(
             None => WorkloadState::Missing,
             Some(i) => match i.status {
                 ContainerStatus::Created => WorkloadState::Created,
-                ContainerStatus::Running | ContainerStatus::Paused => match stopping {
-                    Stopping::Underway => WorkloadState::Stopping,
-                    Stopping::NotAsked => WorkloadState::Running,
+                ContainerStatus::Running | ContainerStatus::Paused => match (stopping, suspend, i.status) {
+                    (Stopping::Underway, ..) => WorkloadState::Stopping,
+                    (Stopping::NotAsked, Suspend::Asked, ContainerStatus::Paused) => WorkloadState::Suspended,
+                    (Stopping::NotAsked, ..) => WorkloadState::Running,
                 },
                 ContainerStatus::Restarting => WorkloadState::Restarting,
                 ContainerStatus::Removing => WorkloadState::Stopping,
+                // A suspended workload's frozen process is gone with the host that held it: it
+                // reads as stopped, never as a crash.
+                ContainerStatus::Exited | ContainerStatus::Dead if suspend == Suspend::Asked => WorkloadState::Stopped,
                 ContainerStatus::Exited | ContainerStatus::Dead => {
                     let requested = parse_time(record.stop_requested_at.as_deref());
                     // A little slack: the runtime's clock and ours are the same host's, but its
@@ -119,15 +133,21 @@ mod tests {
         let later = "2026-09-28T10:00:05Z";
         let r = record(Phase::Active, None);
         assert_eq!(
-            derive_state(&r, Some(&exited(0, false, later)), Stopping::NotAsked, Sight::Current),
+            derive_state(&r, Some(&exited(0, false, later)), Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
             WorkloadState::Stopped
         );
         assert_eq!(
-            derive_state(&r, Some(&exited(1, false, later)), Stopping::NotAsked, Sight::Current),
+            derive_state(&r, Some(&exited(1, false, later)), Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
             WorkloadState::Crashed
         );
         assert_eq!(
-            derive_state(&r, Some(&exited(exit_by(libc::SIGKILL), true, later)), Stopping::NotAsked, Sight::Current),
+            derive_state(
+                &r,
+                Some(&exited(exit_by(libc::SIGKILL), true, later)),
+                Stopping::NotAsked,
+                Suspend::NotAsked,
+                Sight::Current
+            ),
             WorkloadState::Crashed
         );
         let asked = record(Phase::Active, Some(at));
@@ -136,6 +156,7 @@ mod tests {
                 &asked,
                 Some(&exited(exit_by(libc::SIGKILL), false, later)),
                 Stopping::NotAsked,
+                Suspend::NotAsked,
                 Sight::Current
             ),
             WorkloadState::Stopped
@@ -143,22 +164,46 @@ mod tests {
         // A crash before the stop request is still a crash.
         let long_before = "2026-09-28T09:00:00Z";
         assert_eq!(
-            derive_state(&asked, Some(&exited(1, false, long_before)), Stopping::NotAsked, Sight::Current),
+            derive_state(
+                &asked,
+                Some(&exited(1, false, long_before)),
+                Stopping::NotAsked,
+                Suspend::NotAsked,
+                Sight::Current
+            ),
             WorkloadState::Crashed
         );
     }
 
     #[test]
+    fn only_a_workload_asked_to_suspend_reads_as_suspended() {
+        let r = record(Phase::Active, None);
+        let mut paused = exited(0, false, "2026-09-28T10:00:00Z");
+        paused.status = ContainerStatus::Paused;
+        let state =
+            |info: &ContainerInfo, suspend| derive_state(&r, Some(info), Stopping::NotAsked, suspend, Sight::Current);
+        assert_eq!(state(&paused, Suspend::Asked), WorkloadState::Suspended);
+        assert_eq!(state(&paused, Suspend::NotAsked), WorkloadState::Running, "frozen by someone else");
+        // The host went down under it: whatever the exit, a stop.
+        let killed = exited(exit_by(libc::SIGKILL), false, "2026-09-28T10:00:00Z");
+        assert_eq!(state(&killed, Suspend::Asked), WorkloadState::Stopped);
+        assert_eq!(state(&killed, Suspend::NotAsked), WorkloadState::Crashed);
+    }
+
+    #[test]
     fn missing_vs_unknown_depends_on_whether_the_runtime_answered() {
         let r = record(Phase::Active, None);
-        assert_eq!(derive_state(&r, None, Stopping::NotAsked, Sight::Current), WorkloadState::Missing);
-        assert_eq!(derive_state(&r, None, Stopping::NotAsked, Sight::Stale), WorkloadState::Unknown);
         assert_eq!(
-            derive_state(&record(Phase::Retained, None), None, Stopping::NotAsked, Sight::Current),
+            derive_state(&r, None, Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
+            WorkloadState::Missing
+        );
+        assert_eq!(derive_state(&r, None, Stopping::NotAsked, Suspend::NotAsked, Sight::Stale), WorkloadState::Unknown);
+        assert_eq!(
+            derive_state(&record(Phase::Retained, None), None, Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
             WorkloadState::Retained
         );
         assert_eq!(
-            derive_state(&record(Phase::Creating, None), None, Stopping::NotAsked, Sight::Current),
+            derive_state(&record(Phase::Creating, None), None, Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
             WorkloadState::Creating
         );
     }
