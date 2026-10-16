@@ -48,6 +48,7 @@ protocol names Docker.
 |---|---|
 | `PUT /v1/workloads/{id}` | Same spec → `200 unchanged`, nothing touched. Keyed by id, so a retry never makes two workloads. |
 | `POST …/start` | Already running → `200 {changed: false}`. |
+| `POST …/suspend` | Already suspended → `200 {changed: false}`. |
 | `POST …/stop`, `POST …/kill` | Already stopped → `200 {changed: false}`. |
 | `DELETE …` | Already gone → `200 {existed: false}`. |
 | `POST …/exec` | Not idempotent by nature. Send `Idempotency-Key`: blocklyd runs the command once per key (10 minutes, in memory) and returns the first answer to repeats. The same key with a different request gets `422 idempotency_key_reused`. Failures aren't cached. |
@@ -67,7 +68,7 @@ the container label `blocklyd.epoch`). Each verb checks it against the copy's ow
 | Verb | Rule | Why |
 |---|---|---|
 | `PUT` (ensure) | Its epoch, or a newer one, which takes the copy over | A new placement may land on a node that already holds an older copy |
-| `POST …/start`, `…/exec`, `…/export`, `…/snapshots`, `…/restore` | Exactly its epoch | Running a copy, copying it out or filling it is only ever for the current placement (a restore for a new epoch PUTs it first) |
+| `POST …/start`, `…/suspend`, `…/exec`, `…/export`, `…/snapshots`, `…/restore` | Exactly its epoch | Running a copy, copying it out or filling it is only ever for the current placement (a restore for a new epoch PUTs it first) |
 | `POST …/stop`, `…/kill`, `DELETE` | Its epoch or any newer one | A newer placement may always tear an older copy down |
 | `…/snapshots/{snapshot}/upload`, `DELETE …/snapshots/{snapshot}` | None | A snapshot never changes, whichever placement made it |
 
@@ -95,7 +96,7 @@ the container label `blocklyd.epoch`). Each verb checks it against the copy's ow
   "features": ["exec-idempotency-key", "logs-follow-across-restarts", "conditional-put",
                "placement-epochs", "data-transfer", "local-snapshots", "export-exclude",
                "execution-lease", "certificate-renewal", "resume-after-reboot", "multipart-upload",
-               "self-upgrade"],
+               "self-upgrade", "suspend"],
   "nodeId": "fra-box-1",
   "deploymentId": "staging"
 }
@@ -171,6 +172,7 @@ Body: `WorkloadSpec`.
 | `stop.timeoutSeconds` | 1–600. The grace between the signal and the kill. |
 | `restart` | `no` or `on-failure`. `maxRetries` is 0–10, and 0 means never. blocklyd restarts a failed workload itself, after a short backoff: every container's Docker restart policy is `no`, because Docker's `on-failure` restarts containers after an unclean reboot. It never restarts one after a requested stop, once it is fenced, or, in fleet mode, without the execution lease: the last heartbeat answer's `leaseSeconds`, counted from when that beat was sent (`restart_requires_contact_seconds` if the answer names none). A restart is admitted against memory as a start is: one that doesn't fit isn't made, and the workload stays `crashed` with the issue `insufficient_capacity`. A restart it withholds is not tried later. The retries a run has used are kept in the workload's record, so a restart of blocklyd doesn't hand them out again; a requested start or a new spec begins a new run. After the host restarts, it resumes what was running when the host went down: in fleet mode only once it holds a lease, after applying the fences of the answer that granted it. After a restart of blocklyd alone, in the same boot, it resumes nothing (see "After the host restarts"). |
 | `labels` | ≤ 32. Keys `[a-z0-9._/-]`. The `blocklyd.` prefix is reserved. Values ≤ 256. |
+| `resumesOn` | Optional, ≤ 128 characters. What a suspended workload may wake into from memory: see "Semantics". Not part of the spec digest. Announced as the feature `suspend`. |
 
 Every validation problem comes back at once: `422 invalid_request`, with `details.fields` a
 list of `{field, problem}`.
@@ -186,6 +188,13 @@ list of `{field, problem}`.
   - It starts the new one if the old one was running.
   - `200`, `outcome: "replaced"`, `restarted: true|false`.
 - **A `retained` workload** (compute removed, data kept) gets compute again: `replaced`.
+- **A `suspended` workload with a different spec that names the same `resumesOn` as the spec it
+  was suspended on** stays suspended, its memory kept. `200`, `outcome: "deferred"`, and the view's
+  `pendingSpecDigest` names the spec. It is put in place at the workload's next boot: a cold start
+  after a resume that didn't come back, or a start after a stop, a kill, a fence or a restart of
+  the host. A resume wakes what is in memory and keeps the spec waiting. A `PUT` of the spec it
+  runs drops a deferred one (`unchanged`); any other `PUT` replaces it as above, stopping it
+  gracefully first, without starting it again.
 
 Conditional headers, standard HTTP:
 
@@ -208,7 +217,8 @@ Refusals:
 | `503 runtime_unavailable` | Docker is down. |
 | `504 timeout` | The image pull ran past its limit. |
 
-`EnsureResponse`: `{ "outcome", "restarted", "workload": WorkloadView }`.
+`EnsureResponse`: `{ "outcome", "restarted", "workload": WorkloadView }`. `outcome` is `created`,
+`unchanged`, `replaced` or `deferred`.
 
 ### `GET /v1/workloads/{id}`
 
@@ -260,6 +270,7 @@ Refusals:
 | `retained` | Compute removed on request, data kept. | `absent` |
 | `unknown` | The runtime can't be asked right now. | `unknown` |
 | `fenced` | Superseded by a newer placement: stopped, kept, never started again. | `stopped` (the fleet adapter never reports a stale copy as the server) |
+| `suspended` | Frozen on request (`…/suspend`), its memory kept; a start resumes it. Only a workload asked to suspend is ever in it. | asleep, its memory kept |
 
 A few fields need a word:
 - **`endpoints`** is Blockly's `endpoint(handle, port, audience)`: per audience, the host
@@ -272,11 +283,19 @@ A few fields need a word:
   `insufficient_capacity` (a restart after a failure didn't fit in memory; it stays until the
   workload is started or replaced), and `restore_finished` (a restore cut short by a crash after its
   data was complete was finished when blocklyd started: whoever asked for it may not have heard).
+- **`pendingSpecDigest`**, present only while one waits: the digest of a spec a `PUT` deferred
+  while the workload was suspended, put in place at its next boot.
 - **`locate`** is for operators. It is informational, never a contract.
 
 ### `POST /v1/workloads/{id}/start`
 
 `200 PowerResponse { changed, forced: false, workload }`.
+
+A start of a `suspended` workload resumes it: the same process, from the same start, with what it
+held in memory, and `resumed: true`. A resume that doesn't come back within
+`workloads.resume_timeout_seconds` (10 by default) is killed and the workload started afresh on its
+data, with `resumed: false`. `resumed` is absent on any other start. A start that boots the
+workload puts a deferred spec in place first.
 
 | Status and code | When |
 |---|---|
@@ -285,6 +304,18 @@ A few fields need a word:
 | `409 container_missing` | The runtime lost the container; PUT again. |
 | `409 insufficient_capacity` | Running memory would exceed the allocatable memory. This is Blockly's `RuntimeFull`. |
 | `409 port_conflict` | Something else holds its host port. |
+
+### `POST /v1/workloads/{id}/suspend`
+
+With the epoch header (exact). Freezes a running workload with Docker's cgroup freezer (pause): its
+processes stop where they are and its memory is kept, until a start resumes it. A suspended
+workload holds its memory on the node, as a running one does, and counts against what the node
+gives out.
+- `200 PowerResponse`; `changed: false` when it is already suspended.
+- `409 not_running` for a workload that isn't running.
+- Stop, kill, fence and delete reach a suspended workload as a running one: a stop's signal arrives
+  as it thaws, so it saves on the way out. Export answers it as it answers a running one. Exec needs
+  a running process, and a frozen one runs nothing: `409 not_running`.
 
 ### `POST /v1/workloads/{id}/stop`
 
@@ -691,6 +722,10 @@ workload still marked with an earlier boot, never asked to stop, not superseded,
 started again once blocklyd holds a lease (single-node: at once). A fence in the same answer wins;
 a node held `lost` gives the resume up, and forgets it. A restart of blocklyd alone, in the same
 boot, resumes nothing: what died while it was down is reported, not restarted.
+
+A `suspended` workload's frozen process is gone with the host: after the restart it reads
+`stopped`, is never resumed, and a start boots it afresh on its data, with a deferred spec put in
+place first. A restart of blocklyd alone leaves it suspended.
 
 ## How Blockly's `MinecraftRuntime` maps onto it
 

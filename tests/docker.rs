@@ -303,6 +303,80 @@ async fn a_short_exec_timeout_kills_the_exec_and_leaves_the_workload_running() {
     cleanup(&m, &["s"]).await;
 }
 
+/// Like a Minecraft server: it holds its world in memory (64 MB in its tmpfs, counted against its
+/// limit), and answers on the game port with a token it drew when it booted.
+fn memory_server() -> String {
+    format!(
+        "head -c {WORLD_BYTES} /dev/zero > /tmp/heap; \
+         head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \\n' > /tmp/token; \
+         nc -lk -p {} -e cat /tmp/token & trap 'exit 0' TERM; while true; do sleep 0.2; done",
+        blocklyd::minecraft::GAME_PORT
+    )
+}
+
+const WORLD_BYTES: u64 = 64 * 1024 * 1024;
+
+/// What the workload answers on the game port, read within `within`; None if it doesn't.
+async fn answer(port: u16, within: Duration) -> Option<String> {
+    use tokio::io::AsyncReadExt;
+    let deadline = Instant::now() + within;
+    while Instant::now() < deadline {
+        let read = async {
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.ok()?;
+            let mut token = String::new();
+            stream.read_to_string(&mut token).await.ok()?;
+            Some(token).filter(|t| !t.is_empty())
+        };
+        if let Ok(Some(token)) = tokio::time::timeout(deadline.saturating_duration_since(Instant::now()), read).await {
+            return Some(token);
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    None
+}
+
+async fn memory_bytes(m: &Arc<Manager>, w: &str) -> u64 {
+    let stats = serde_json::to_value(m.stats(&id(w)).await.unwrap()).unwrap();
+    stats["memoryBytes"].as_u64().unwrap_or_default()
+}
+
+#[tokio::test]
+#[ignore = "needs Docker"]
+async fn a_suspended_server_keeps_its_memory_and_answers_within_a_second_of_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let dep = deployment();
+    let _cleanup = Cleanup(dep.clone());
+    let m = daemon(dir.path(), &dep);
+    assert!(m.reconcile(Records::FromDisk).await.error.is_none());
+    m.ensure(id("z"), shell(&memory_server(), 256), Precondition::None, None).await.unwrap();
+    let before = m.start(id("z"), None).await.unwrap().workload;
+    let port = before.ports[0].host_port;
+    let token = answer(port, Duration::from_secs(20)).await.expect("the server answers once booted");
+    let held = memory_bytes(&m, "z").await;
+    assert!(held >= WORLD_BYTES, "the world is in memory: {held}");
+
+    let r = m.suspend(id("z"), None).await.unwrap();
+    assert_eq!(r.workload.state, WorkloadState::Suspended);
+    assert!(answer(port, Duration::from_millis(500)).await.is_none(), "frozen: it answers nothing");
+
+    let asked = Instant::now();
+    let r = m.start(id("z"), None).await.unwrap();
+    assert_eq!(r.resumed, Some(true));
+    let again = answer(port, Duration::from_secs(1)).await;
+    assert!(asked.elapsed() < Duration::from_secs(1), "answered {:?} after the start", asked.elapsed());
+    assert_eq!(again.as_deref(), Some(token.as_str()), "the same process, with what it held in memory");
+    assert_eq!(r.workload.started_at, before.started_at, "thawed, never started again");
+    assert_eq!(r.workload.locate.container_id, before.locate.container_id);
+    assert!(memory_bytes(&m, "z").await >= WORLD_BYTES, "its world still in memory");
+
+    // A stop still reaches it frozen, and it saves on the way out.
+    m.suspend(id("z"), None).await.unwrap();
+    let r = m.stop(id("z"), None, None).await.unwrap();
+    assert!(!r.forced, "it handled the stop signal: {r:?}");
+    assert_eq!(r.workload.state, WorkloadState::Stopped);
+    cleanup(&m, &["z"]).await;
+}
+
 #[tokio::test]
 #[ignore = "needs Docker"]
 async fn a_restarted_daemon_adopts_running_workloads_without_touching_them() {

@@ -255,7 +255,9 @@ impl Store {
         let path = self.suspend_path(id);
         if *suspend == SuspendRecord::default() {
             return match fs::remove_file(&path) {
-                Err(e) if e.kind() != io::ErrorKind::NotFound => Err(StoreError::Io { what: "removing", path, source: e }),
+                Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                    Err(StoreError::Io { what: "removing", path, source: e })
+                }
                 _ => Ok(()),
             };
         }

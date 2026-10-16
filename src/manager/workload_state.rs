@@ -141,7 +141,13 @@ mod tests {
             WorkloadState::Crashed
         );
         assert_eq!(
-            derive_state(&r, Some(&exited(exit_by(libc::SIGKILL), true, later)), Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
+            derive_state(
+                &r,
+                Some(&exited(exit_by(libc::SIGKILL), true, later)),
+                Stopping::NotAsked,
+                Suspend::NotAsked,
+                Sight::Current
+            ),
             WorkloadState::Crashed
         );
         let asked = record(Phase::Active, Some(at));
@@ -158,7 +164,13 @@ mod tests {
         // A crash before the stop request is still a crash.
         let long_before = "2026-09-28T09:00:00Z";
         assert_eq!(
-            derive_state(&asked, Some(&exited(1, false, long_before)), Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
+            derive_state(
+                &asked,
+                Some(&exited(1, false, long_before)),
+                Stopping::NotAsked,
+                Suspend::NotAsked,
+                Sight::Current
+            ),
             WorkloadState::Crashed
         );
     }
@@ -168,7 +180,8 @@ mod tests {
         let r = record(Phase::Active, None);
         let mut paused = exited(0, false, "2026-09-28T10:00:00Z");
         paused.status = ContainerStatus::Paused;
-        let state = |info: &ContainerInfo, suspend| derive_state(&r, Some(info), Stopping::NotAsked, suspend, Sight::Current);
+        let state =
+            |info: &ContainerInfo, suspend| derive_state(&r, Some(info), Stopping::NotAsked, suspend, Sight::Current);
         assert_eq!(state(&paused, Suspend::Asked), WorkloadState::Suspended);
         assert_eq!(state(&paused, Suspend::NotAsked), WorkloadState::Running, "frozen by someone else");
         // The host went down under it: whatever the exit, a stop.
@@ -180,7 +193,10 @@ mod tests {
     #[test]
     fn missing_vs_unknown_depends_on_whether_the_runtime_answered() {
         let r = record(Phase::Active, None);
-        assert_eq!(derive_state(&r, None, Stopping::NotAsked, Suspend::NotAsked, Sight::Current), WorkloadState::Missing);
+        assert_eq!(
+            derive_state(&r, None, Stopping::NotAsked, Suspend::NotAsked, Sight::Current),
+            WorkloadState::Missing
+        );
         assert_eq!(derive_state(&r, None, Stopping::NotAsked, Suspend::NotAsked, Sight::Stale), WorkloadState::Unknown);
         assert_eq!(
             derive_state(&record(Phase::Retained, None), None, Stopping::NotAsked, Suspend::NotAsked, Sight::Current),

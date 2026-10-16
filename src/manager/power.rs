@@ -232,7 +232,7 @@ impl Manager {
         result
     }
 
-    pub(crate) async fn kill(self: &Arc<Self>, id: WorkloadId, epoch: Option<u64>) -> Result<PowerResponse, NodeError> {
+    pub async fn kill(self: &Arc<Self>, id: WorkloadId, epoch: Option<u64>) -> Result<PowerResponse, NodeError> {
         let lock = self.lock_for(&id);
         let _guard = lock.lock().await;
         let started = Instant::now();
