@@ -25,10 +25,10 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
-use hyper::Method;
+use hyper::{Method, StatusCode};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -40,7 +40,7 @@ use crate::config::Config;
 use crate::doctor;
 use crate::fleet::identity::{Identity, write_atomic};
 use crate::fleet::token::JoinToken;
-use crate::http_client as client;
+use crate::http_client::{self as client, CONTROL_PLANE_CALL};
 use crate::infer::API_PORT;
 use crate::protocol::wire::FLEET_API;
 
@@ -54,6 +54,10 @@ const UNIT_FILE: &str = include_str!("../../deploy/blocklyd.service");
 /// How long a re-enrolling node has for its first heartbeat (reenroll.rs says what happens after):
 /// enrollment retries every 30 s at most, and a heartbeat follows within seconds.
 const FIRST_BEAT: Duration = Duration::from_secs(120);
+
+/// How long a join asks the token's endpoint for the fleet CA while it refuses connections or
+/// answers 5xx: an endpoint that is restarting, or a host that is up before its network is.
+const CA_WAIT: Duration = Duration::from_secs(30);
 
 pub struct Join {
     /// The token as pasted.
@@ -242,12 +246,31 @@ async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
         .with_custom_certificate_verifier(Arc::new(PinnedByHash(provider)))
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let response =
-        client::send(Method::GET, &url, &[], client::empty(), Some(Arc::new(tls)), client::CONTROL_PLANE_CALL)
+    let tls = Arc::new(tls);
+    let began = Instant::now();
+    let mut wait = Duration::from_secs(1);
+    let (status, body) = loop {
+        let failed = match client::send(Method::GET, &url, &[], client::empty(), Some(tls.clone()), CONTROL_PLANE_CALL)
             .await
-            .with_context(|| format!("fetching the fleet CA from {url}"))?;
-    let status = response.status();
-    let body = client::read_body(response, 64 * 1024).await.map_err(|e| anyhow!("fetching {url}: {e}"))?;
+        {
+            Ok(response) => {
+                let status = response.status();
+                let body = client::read_body(response, 64 * 1024).await.map_err(|e| anyhow!("fetching {url}: {e}"))?;
+                if !status.is_server_error() && status != StatusCode::TOO_MANY_REQUESTS {
+                    break (status, body);
+                }
+                anyhow!("{url} answered HTTP {status}")
+            }
+            Err(e) if e.is_transient() => anyhow::Error::new(e),
+            Err(e) => return Err(anyhow::Error::new(e).context(format!("fetching the fleet CA from {url}"))),
+        };
+        if began.elapsed() + wait >= CA_WAIT {
+            return Err(failed.context(format!("fetching the fleet CA from {url}")));
+        }
+        println!("The fleet CA's endpoint doesn't answer yet ({failed:#}): asking again in {} s.", wait.as_secs());
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(Duration::from_secs(5));
+    };
     if !status.is_success() {
         bail!("{url} answered HTTP {status}");
     }

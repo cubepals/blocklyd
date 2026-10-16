@@ -132,12 +132,25 @@ struct ControlPlane {
 
 impl ControlPlane {
     async fn start() -> Self {
+        Self::start_after(Duration::ZERO).await
+    }
+
+    /// One whose port refuses connections for `delay`, as an endpoint still coming up does.
+    async fn start_after(delay: Duration) -> Self {
         let shared = Arc::new(Shared { ca: Ca::new("test fleet CA"), state: Mutex::default() });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("https://{}", listener.local_addr().unwrap());
+        let address = listener.local_addr().unwrap();
+        let url = format!("https://{address}");
         let acceptor = tokio_rustls::TlsAcceptor::from(endpoint_tls(&shared.ca));
         let serving = shared.clone();
         tokio::spawn(async move {
+            let listener = if delay.is_zero() {
+                listener
+            } else {
+                drop(listener);
+                tokio::time::sleep(delay).await;
+                tokio::net::TcpListener::bind(address).await.unwrap()
+            };
             while let Ok((tcp, _)) = listener.accept().await {
                 let (acceptor, shared) = (acceptor.clone(), serving.clone());
                 tokio::spawn(async move {
@@ -752,6 +765,15 @@ async fn a_pasted_token_is_all_a_host_needs_to_join() {
     assert!(refused.to_string().contains("this host is node n1, and the token re-enrolls node n2"), "{refused}");
     let refused = join(root, pasted(&cp, "again", "production", cp.ca_pem(), Some("n1")), None).await.unwrap_err();
     assert!(refused.to_string().contains("without --no-start"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_join_waits_for_an_endpoint_that_is_still_coming_up() {
+    let cp = ControlPlane::start_after(Duration::from_secs(2)).await;
+    let root = tempfile::tempdir().unwrap();
+    host(root.path(), &[("enp7s0", [10, 0, 0, 5])]);
+    join(root.path(), pasted(&cp, "secret", "production", cp.ca_pem(), None), None).await.unwrap();
+    assert_eq!(std::fs::read_to_string(root.path().join("etc/blocklyd/fleet-ca.pem")).unwrap(), cp.ca_pem());
 }
 
 #[tokio::test]
