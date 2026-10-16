@@ -19,7 +19,7 @@ talk to each other). If the control plane goes away, servers keep running.
 
 ## Build and test
 
-Rust 1.94.1, as `rust-toolchain.toml` names it for rustup, CI and the Dockerfile; one Cargo package,
+Rust 1.99.1, as `rust-toolchain.toml` names it for rustup, CI and the Dockerfile; one Cargo package,
 `Cargo.lock` committed and every build `--locked`.
 
 ```sh

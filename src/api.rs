@@ -14,6 +14,9 @@
 //! - `error.rs`: errors as the protocol states them: an HTTP status and a stable code.
 //! - `tls.rs`: the API's side of mutual TLS: its certificate, and who a client certificate proves.
 
+// A handler's error is the answer itself, axum's `Response`, sent once and never passed along.
+#![expect(clippy::result_large_err, reason = "axum handlers answer Result<Response, Response>")]
+
 pub mod error;
 pub mod tls;
 

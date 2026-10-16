@@ -8,7 +8,7 @@
 # The Rust is rust-toolchain.toml's, which isn't copied in: the tag says the same version, and CI
 # fails if they differ. It comes from AWS's mirror of Docker's official images: Docker Hub caps
 # anonymous pulls per IP, and CI runners share IPs.
-FROM public.ecr.aws/docker/library/rust:1.94.1-alpine3.22 AS build
+FROM public.ecr.aws/docker/library/rust:1.99.1-alpine3.22 AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
