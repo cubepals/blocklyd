@@ -244,8 +244,6 @@ impl Manager {
         into: &std::path::Path,
         owner: (u32, u32),
     ) -> Result<RestoreResponse, NodeError> {
-        use http_body_util::BodyExt;
-        use std::io::Write;
         let tls = tls_for(url)?;
         // Admitted against the disk's floor, as snapshots and exports are: nothing is downloaded
         // onto a disk already below it, and an archive that says how large it is must fit above
@@ -273,39 +271,7 @@ impl Manager {
         std::fs::create_dir_all(&spool_dir).map_err(|source| NodeError::Io { what: "spool".into(), source })?;
         let spool = spool_dir.join(format!("{id}-{}.tar.gz", uuid::Uuid::new_v4()));
         let _cleanup = RemoveOnDrop(spool.clone());
-        let mut file = crate::tarball::Hashing::new(
-            std::fs::File::create(&spool).map_err(|source| NodeError::Io { what: "spool".into(), source })?,
-        );
-        let mut body = response.into_body();
-        let mut watch = self.floor_watch();
-        // A body that stops coming never ends by itself, and this holds the workload's lock: it
-        // fails once nothing arrives for a while, or once nobody is waiting for it any more.
-        let idle = self.config.transfer.idle();
-        let deadline = tokio::time::Instant::now() + crate::tarball::TRANSFER_LIMIT;
-        let stalled = |_| {
-            let why = if tokio::time::Instant::now() < deadline {
-                format!("nothing arrived for {idle:?}")
-            } else {
-                format!("not finished within {:?}", crate::tarball::TRANSFER_LIMIT)
-            };
-            NodeError::Transfer(format!("downloading the archive: {why}"))
-        };
-        while let Some(frame) = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + idle), body.frame())
-            .await
-            .map_err(stalled)?
-        {
-            let frame =
-                frame.map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
-            if let Ok(data) = frame.into_data() {
-                file.write_all(&data).map_err(|e| write_failed("spool", e))?;
-                watch.wrote(file.bytes())?;
-                if file.bytes() > crate::tarball::MAX_UNPACKED_BYTES {
-                    return Err(NodeError::InvalidArchive("the archive is larger than any world".into()));
-                }
-            }
-        }
-        let (spooled, sha256, size_bytes) = file.finish();
-        spooled.sync_all().map_err(|e| write_failed("spool", e))?;
+        let (sha256, size_bytes) = self.spool(response.into_body(), &spool).await?;
         if let Some(expected) = expected
             && !expected.eq_ignore_ascii_case(&sha256)
         {
@@ -339,6 +305,71 @@ impl Manager {
             previous_data: None,
             duration_ms: 0,
         })
+    }
+
+    /// Writes a downloaded archive to `spool` and gives its sha256 and size, keeping the disk above
+    /// its floor all the while.
+    async fn spool(
+        &self,
+        mut body: hyper::body::Incoming,
+        spool: &std::path::Path,
+    ) -> Result<(String, u64), NodeError> {
+        use http_body_util::BodyExt;
+        use std::io::Write;
+        // The network is read here; the spool is written on a blocking thread at idle priority, as
+        // the unpack after it is, so a download's disk writes wait behind a booting server's.
+        let (frames, mut landed) = tokio::sync::mpsc::channel::<bytes::Bytes>(SPOOL_FRAMES);
+        let spooling = {
+            let (spool, mut watch) = (spool.to_owned(), self.floor_watch());
+            blocking(move || {
+                let _idle = crate::priority::Idle::enter();
+                let mut file = crate::tarball::Hashing::new(
+                    std::fs::File::create(&spool).map_err(|source| NodeError::Io { what: "spool".into(), source })?,
+                );
+                while let Some(data) = landed.blocking_recv() {
+                    file.write_all(&data).map_err(|e| write_failed("spool", e))?;
+                    watch.wrote(file.bytes())?;
+                    if file.bytes() > crate::tarball::MAX_UNPACKED_BYTES {
+                        return Err(NodeError::InvalidArchive("the archive is larger than any world".into()));
+                    }
+                }
+                let (spooled, sha256, size_bytes) = file.finish();
+                spooled.sync_all().map_err(|e| write_failed("spool", e))?;
+                Ok((sha256, size_bytes))
+            })
+        };
+        // A body that stops coming never ends by itself, and this holds the workload's lock: it
+        // fails once nothing arrives for a while, or once nobody is waiting for it any more.
+        let idle = self.config.transfer.idle();
+        let deadline = tokio::time::Instant::now() + crate::tarball::TRANSFER_LIMIT;
+        let stalled = move |_| {
+            let why = if tokio::time::Instant::now() < deadline {
+                format!("nothing arrived for {idle:?}")
+            } else {
+                format!("not finished within {:?}", crate::tarball::TRANSFER_LIMIT)
+            };
+            NodeError::Transfer(format!("downloading the archive: {why}"))
+        };
+        let receiving = async move {
+            while let Some(frame) =
+                tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + idle), body.frame())
+                    .await
+                    .map_err(stalled)?
+            {
+                let frame = frame
+                    .map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
+                // A closed channel means the writer stopped, and says why below.
+                if let Ok(data) = frame.into_data()
+                    && frames.send(data).await.is_err()
+                {
+                    break;
+                }
+            }
+            Ok::<(), NodeError>(())
+        };
+        let (received, spooled) = tokio::join!(receiving, spooling);
+        received?;
+        spooled?
     }
 
     /// Copies one of the workload's snapshots into `into`, sharing blocks where it can.
@@ -386,6 +417,10 @@ fn one_put(size_bytes: u64, limit_bytes: u64) -> Result<(), NodeError> {
     }
     Ok(())
 }
+
+/// Downloaded frames waiting for the spool's writer: a few, so the network runs ahead of the disk
+/// only a little.
+const SPOOL_FRAMES: usize = 16;
 
 /// How many times one part is sent before the archive fails: the store's own hiccups pass.
 const PART_TRIES: u32 = 3;

@@ -32,6 +32,7 @@ use flate2::read::MultiGzDecoder;
 use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 
+use crate::priority::Idle;
 use crate::tree::{Kind, NoRoom};
 
 /// Unpacked bytes an archive may expand to. A world is a few GB; this stops a gzip bomb.
@@ -97,13 +98,14 @@ pub struct Packed {
 /// Writes `root` as a .tar.gz to `out`, leaving out the top-level names in `exclude`. Paths are
 /// `./`-relative, as `tar -C <root> .` writes them. After each file `room` is told the bytes read
 /// so far, more than the archive grew by, and an `Err` from it stops the pack (`tree::NoRoom`).
-/// Blocking.
+/// Blocking, at idle priority (`priority::Idle`).
 pub fn pack(
     root: &Path,
     out: &Path,
     exclude: &[String],
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> io::Result<Packed> {
+    let _idle = Idle::enter();
     let file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(out)?;
     let gz = GzEncoder::new(Hashing::new(io::BufWriter::with_capacity(256 * 1024, file)), Compression::fast());
     let mut builder = tar::Builder::new(gz);
@@ -191,13 +193,15 @@ fn clean(raw: &Path) -> Result<Option<PathBuf>, UnpackError> {
 
 /// Unpacks a .tar.gz into `dest`, which must not exist yet, and gives everything to `owner`.
 /// After each write `room` is told the bytes written so far, and an `Err` from it stops the
-/// unpack: the caller keeps the disk above its floor this way. Blocking.
+/// unpack: the caller keeps the disk above its floor this way. Blocking, at idle priority
+/// (`priority::Idle`).
 pub fn unpack(
     archive: &Path,
     dest: &Path,
     owner: (u32, u32),
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> Result<Unpacked, UnpackError> {
+    let _idle = Idle::enter();
     fs::DirBuilder::new().mode(0o750).create(dest)?;
     // Every gzip member, as gzip -d reads them: an archive written in several (BGZF, or files
     // concatenated) is one tarball, which a reader of the first member alone would cut short.

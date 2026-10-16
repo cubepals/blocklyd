@@ -329,7 +329,8 @@ impl NoRoom {
 /// Copies `src` to `dst`, which must not exist yet. Files share blocks with the source where the
 /// filesystem can (XFS with reflink, btrfs), and are copied where it can't (ext4). Symlinks are
 /// copied as symlinks; set-id bits and others' write are dropped, as an unpack drops them.
-/// Everything is given to `owner`, or keeps the source's owner without one. Blocking.
+/// Everything is given to `owner`, or keeps the source's owner without one. Blocking, at idle
+/// priority (`priority::Idle`).
 ///
 /// After each file `room` is told the bytes copied so far, shared or not, and an `Err` from it
 /// stops the copy (`NoRoom`): the caller keeps the disk above its floor this way. What was copied
@@ -344,6 +345,7 @@ pub fn copy_tree(
     exclude: &[String],
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> io::Result<Copied> {
+    let _idle = crate::priority::Idle::enter();
     let (mut reflink, mut cloned, mut copied, mut bytes) = (true, false, false, 0u64);
     let walked = walk(src, exclude, &mut |entry| {
         let target = dst.join(entry.path);
