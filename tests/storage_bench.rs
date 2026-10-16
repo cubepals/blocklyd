@@ -10,11 +10,22 @@
 //! BENCH_DIR (default: the system temp dir) picks the filesystem; BENCH_WORLD_MB (default 1024)
 //! the world's size. The world is shaped like a Minecraft one: region files of about 1 MB of
 //! incompressible bytes (chunks are compressed already), and a few thousand small files.
+//!
+//! Last, a server's boot beside exports that keep every CPU busy: once at the exports' own
+//! priority, as a transfer ran before it yielded, and once with the exports at idle priority
+//! (`priority::Idle`), as they run now. Where the process may not raise a thread's nice value
+//! back (no `CAP_SYS_NICE`), the exports keep their CPU priority and the two come out alike.
 
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Instant;
+
+use sha2::{Digest, Sha256};
+
+/// How many times a boot reads its files through: enough to take a second or so alone.
+const BOOT_ROUNDS: usize = 4;
 
 fn world(root: &Path, megabytes: usize) {
     let mut seed = 0x9e37_79b9_7f4a_7c15u64;
@@ -44,6 +55,58 @@ fn world(root: &Path, megabytes: usize) {
     fs::write(root.join("server.properties"), "level-name=world\n").unwrap();
     fs::create_dir_all(root.join("libraries")).unwrap();
     fs::write(root.join("libraries/server.jar"), noise(50 * 1024 * 1024)).unwrap();
+}
+
+/// What a server's boot asks of the node, without Docker: it reads its jar and its players'
+/// files and works through every byte. The seconds it took.
+fn boot(root: &Path) -> f64 {
+    let mut files = vec![root.join("libraries/server.jar")];
+    files.extend(fs::read_dir(root.join("world/playerdata")).unwrap().map(|entry| entry.unwrap().path()));
+    let started = Instant::now();
+    let mut hasher = Sha256::new();
+    for _ in 0..BOOT_ROUNDS {
+        for file in &files {
+            hasher.update(fs::read(file).unwrap());
+        }
+    }
+    std::hint::black_box(hasher.finalize());
+    started.elapsed().as_secs_f64()
+}
+
+/// A boot while one export per CPU packs `data` over and over, so the node has no CPU to spare.
+/// `level` says whether the boot runs at the exports' own idle priority.
+fn boot_beside_exports(data: &Path, spools: &Path, level: bool) -> f64 {
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let (done, started) = (AtomicBool::new(false), AtomicUsize::new(0));
+    std::thread::scope(|scope| {
+        for export in 0..cpus {
+            let (done, started) = (&done, &started);
+            scope.spawn(move || {
+                let mut round = 0;
+                while !done.load(Ordering::Relaxed) {
+                    let spool = spools.join(format!("{export}-{round}.tar.gz"));
+                    let mut first = round == 0;
+                    let _ = blocklyd::tarball::pack(data, &spool, &[], &mut |_| {
+                        if std::mem::take(&mut first) {
+                            started.fetch_add(1, Ordering::Relaxed);
+                        }
+                        if done.load(Ordering::Relaxed) { Err("the boot is over".into()) } else { Ok(()) }
+                    });
+                    let _ = fs::remove_file(&spool);
+                    round += 1;
+                }
+            });
+        }
+        while started.load(Ordering::Relaxed) < cpus {
+            std::thread::yield_now();
+        }
+        let took = {
+            let _idle = level.then(blocklyd::priority::Idle::enter);
+            boot(data)
+        };
+        done.store(true, Ordering::Relaxed);
+        took
+    })
 }
 
 fn used(path: &Path) -> u64 {
@@ -119,4 +182,15 @@ fn snapshot_archive_and_restore_costs() {
     .unwrap();
     let took = started.elapsed().as_secs_f64();
     println!("restore from a snapshot on the node: {:.2} s", took);
+
+    let spools = dir.path().join("spools");
+    fs::create_dir(&spools).unwrap();
+    boot(&data);
+    let alone = boot(&data);
+    let level = boot_beside_exports(&data, &spools, true);
+    let yielding = boot_beside_exports(&data, &spools, false);
+    println!(
+        "a boot: {alone:.2} s alone; beside exports on every CPU, {level:.2} s at their priority (before), \
+         {yielding:.2} s with them at idle priority (now)"
+    );
 }

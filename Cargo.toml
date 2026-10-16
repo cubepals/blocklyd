@@ -84,7 +84,8 @@ schemars = "=1.2.2"
 # The lint policy, here so a local `cargo clippy` holds what CI's does (`-D warnings` makes these
 # warnings errors there). Chosen lints, not clippy::pedantic wholesale.
 [lints.rust]
-# The one unsafe block (adjtimex, src/doctor/host.rs) says why with an `expect`.
+# Each unsafe block (adjtimex in src/doctor/host.rs, ioprio in src/priority.rs) says why with an
+# `expect`.
 unsafe_code = "deny"
 # Its only users are main.rs and tests/: what they use is `pub`, the rest `pub(crate)` (lib.rs).
 unreachable_pub = "warn"
