@@ -253,13 +253,27 @@ impl Manager {
         if record.phase != Phase::Active {
             return Ok(PowerResponse { changed: false, forced: false, resumed: None, workload: self.view(id)? });
         }
-        let Some(info) = self.observe(&record).await? else {
-            return Ok(PowerResponse { changed: false, forced: false, resumed: None, workload: self.view(id)? });
-        };
-        if !matches!(info.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused) {
+        // Whatever the container is doing, nothing blocklyd would start on its own (a restart
+        // after a failure, a resume after the host went down) comes after this. In memory first,
+        // so a record the disk can't take still keeps this run from starting it.
+        {
+            let mut state = self.state.lock().unwrap();
+            state.restart_due.remove(id);
+            state.resuming.remove(id);
+        }
+        let info = self.observe(&record).await?;
+        let running = info.as_ref().is_some_and(|i| {
+            matches!(i.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused)
+        });
+        if !running {
+            // Already down: the stop is recorded all the same, so it stays down.
+            if record.stop_requested_at.is_none() {
+                record.stop_requested_at = Some(now_str());
+                record.updated_at = now_str();
+                self.save_record(&record).await?;
+            }
             return Ok(PowerResponse { changed: false, forced: false, resumed: None, workload: self.view(id)? });
         }
-        self.state.lock().unwrap().restart_due.remove(id);
         // Persisted before the signal, so the exit reads as a stop even if blocklyd dies now.
         record.stop_requested_at = Some(now_str());
         record.updated_at = now_str();

@@ -63,6 +63,7 @@ impl Manager {
         let policy = &record.spec.restart;
         if record.phase != Phase::Active
             || record.superseded_by.is_some()
+            || record.stop_requested_at.is_some()
             || policy.policy != crate::protocol::RestartPolicy::OnFailure
             || policy.max_retries == 0
         {

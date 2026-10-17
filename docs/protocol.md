@@ -324,10 +324,13 @@ The body is optional: `{ "timeoutSeconds": 1–600 }` overrides the spec's grace
 - `200 PowerResponse`. `forced: true` means the grace ran out and the workload was killed
   without saving.
 - The request returns once the workload has exited, so it can take up to grace + 30 s.
+- A workload that isn't running (one waiting out a restart's backoff, or a resume after the host
+  went down) stays down: the stop is recorded and nothing starts it on its own. `changed: false`.
 
 ### `POST /v1/workloads/{id}/kill`
 
-SIGKILL now, with no grace: Blockly's `forceStop`. `200 PowerResponse`.
+SIGKILL now, with no grace: Blockly's `forceStop`. `200 PowerResponse`. Like a stop, it keeps a
+workload that isn't running from being restarted or resumed.
 
 ### `DELETE /v1/workloads/{id}[?data=keep|delete]`
 

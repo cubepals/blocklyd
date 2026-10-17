@@ -468,6 +468,37 @@ async fn a_crash_blocklyd_sees_is_restarted_within_the_policy_and_nothing_else_i
     assert_eq!(f.manager.view(&id("w")).unwrap().restart_count, 0);
 }
 
+/// A stop or kill asked for while a crash waits out its backoff: the restart never comes.
+async fn asked_down_during_a_restart_backoff(kill: bool) {
+    let f = fixture("").await;
+    tokio::spawn(f.manager.clone().restart_supervisor(CancellationToken::new()));
+    let two_retries = spec_with(|v| v["restart"] = serde_json::json!({ "policy": "on-failure", "maxRetries": 2 }));
+    f.manager.ensure(id("w"), two_retries, Precondition::None, None).await.unwrap();
+    f.manager.start(id("w"), None).await.unwrap();
+    f.fake.crash("blockly-test-w", 3, false);
+    f.manager.stats(&id("w")).await.unwrap();
+    assert_eq!(f.manager.view(&id("w")).unwrap().state, WorkloadState::Restarting);
+    if kill {
+        f.manager.kill(id("w"), None).await.unwrap();
+    } else {
+        f.manager.stop(id("w"), None, None).await.unwrap();
+    }
+    // Time let pass on purpose, for a restart that must not come: twice the backoff it had.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let view = f.manager.view(&id("w")).unwrap();
+    assert_eq!((view.state, f.fake.count_calls("start ")), (WorkloadState::Stopped, 1));
+}
+
+#[tokio::test]
+async fn a_stop_during_a_restart_backoff_keeps_the_workload_stopped() {
+    asked_down_during_a_restart_backoff(false).await;
+}
+
+#[tokio::test]
+async fn a_kill_during_a_restart_backoff_keeps_the_workload_stopped() {
+    asked_down_during_a_restart_backoff(true).await;
+}
+
 #[tokio::test]
 async fn a_workload_found_dead_at_startup_is_not_restarted() {
     // As after blocklyd itself restarted, in the same boot of the host: Docker says the container
