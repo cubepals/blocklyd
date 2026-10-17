@@ -668,7 +668,8 @@ With the node's clientAuth certificate, every `heartbeat_seconds` (5).
   ```
 
   blocklyd applies each fence as `POST …/fence` would, **then** takes the lease, so nothing the
-  lease allows can be a copy the same answer superseded.
+  lease allows can be a copy the same answer superseded. Each fence is marked at once and carried
+  out in the background: the next beats go out on time while a fenced copy's grace runs out.
 - **The execution lease** (`leaseSeconds`, counted from when the node sent the beat): while it
   lasts, blocklyd may act on its own: restart a workload that failed, per its spec's policy, and
   resume one the host went down under (below). Without one (no answer yet in this run, or none for
