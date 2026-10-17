@@ -38,7 +38,7 @@ use crate::manager::{Lifecycle, Manager};
 use crate::protocol::ProtocolVersions;
 use crate::protocol::WorkloadState;
 use crate::protocol::wire::FLEET_API;
-use crate::protocol::wire::{HeartbeatRequest, HeartbeatResponse, WorkloadReport};
+use crate::protocol::wire::{Fence, HeartbeatRequest, HeartbeatResponse, WorkloadReport};
 use crate::upgrade::Upgrader;
 
 /// The soonest a beat follows the one before when what it reports changed.
@@ -144,6 +144,16 @@ async fn next_beat(
     }
 }
 
+/// Applies an answer's fences without waiting for any copy to stop: the loop goes on beating for
+/// the node's other workloads meanwhile. Each is noted at once, before the lease is granted, and
+/// carried out in its own task.
+fn apply_fences(manager: &Arc<Manager>, fences: Vec<Fence>) {
+    for fence in fences {
+        let Ok(id) = WorkloadId::parse(&fence.workload) else { continue };
+        manager.fence_soon(id, fence.current_epoch);
+    }
+}
+
 pub async fn run(
     manager: Arc<Manager>,
     credentials: Arc<Credentials>,
@@ -177,16 +187,7 @@ pub async fn run(
                 manager.fleet_contact(Ok(Lifecycle::from(answer.lifecycle.as_str())), sent.elapsed());
                 // Fences first: the lease granted below lets waiting resumes go ahead at once,
                 // and none of them may be a copy this answer supersedes.
-                for fence in answer.fences {
-                    let Ok(id) = WorkloadId::parse(&fence.workload) else { continue };
-                    match manager.fence(id.clone(), fence.current_epoch).await {
-                        Ok(r) if r.changed => {
-                            warn!(workload = %id, current_epoch = fence.current_epoch, "heartbeat: fenced a superseded copy")
-                        }
-                        Ok(_) => {}
-                        Err(e) => warn!(workload = %id, error = %e, "heartbeat: couldn't fence"),
-                    }
-                }
+                apply_fences(&manager, answer.fences);
                 manager.grant_lease(answer.lease_seconds, sent);
                 if answer.renew {
                     credentials.renew_soon(&control_plane, manager.clone());
@@ -266,8 +267,8 @@ mod tests {
         assert!(took >= Duration::from_secs(2), "{took:?}");
     }
 
-    #[tokio::test]
-    async fn a_stop_is_reported_within_about_a_second() {
+    /// blocklyd over the in-memory runtime, with nothing on it yet.
+    async fn daemon() -> (tempfile::TempDir, Arc<FakeRuntime>, Arc<Manager>) {
         let dir = tempfile::tempdir().unwrap();
         let (uid, gid) = (rustix::process::getuid().as_raw(), rustix::process::getgid().as_raw());
         let config: Config = toml::from_str(&format!(
@@ -279,17 +280,30 @@ mod tests {
         .unwrap();
         let store = Store::open(&config.state_dir).unwrap();
         let fake = Arc::new(FakeRuntime::new());
-        let m = Manager::new(Arc::new(config), fake, store, Arc::new(Metrics::new()), Arc::new(|_, _| true));
+        let m = Manager::new(Arc::new(config), fake.clone(), store, Arc::new(Metrics::new()), Arc::new(|_, _| true));
         assert!(m.reconcile(Records::FromDisk).await.error.is_none());
+        (dir, fake, m)
+    }
+
+    /// `name` running at `epoch`, taking `grace` seconds to stop.
+    async fn running(m: &Arc<Manager>, name: &str, epoch: Option<u64>, grace: u32) -> WorkloadId {
         let spec = serde_json::from_value(serde_json::json!({
             "image": "alpine:3.22",
-            "resources": { "memoryMb": 1024 },
+            "resources": { "memoryMb": 256 },
             "storage": { "mountPath": "/data", "sizeGb": 1 },
+            "stop": { "timeoutSeconds": grace },
         }))
         .unwrap();
-        let w = WorkloadId::parse("w").unwrap();
-        m.ensure(w.clone(), spec, Precondition::None, None).await.unwrap();
-        m.start(w.clone(), None).await.unwrap();
+        let w = WorkloadId::parse(name).unwrap();
+        m.ensure(w.clone(), spec, Precondition::None, epoch).await.unwrap();
+        m.start(w.clone(), epoch).await.unwrap();
+        w
+    }
+
+    #[tokio::test]
+    async fn a_stop_is_reported_within_about_a_second() {
+        let (_dir, _fake, m) = daemon().await;
+        let w = running(&m, "w", None, 90).await;
 
         // A beat goes out with heartbeat_seconds = 5 just before the stop.
         let look = || Gist::of(&workload_reports(&m));
@@ -300,5 +314,32 @@ mod tests {
         assert!(sent.elapsed() < Duration::from_millis(1500), "{:?}", sent.elapsed());
         let next = workload_reports(&m);
         assert_eq!(next[0].state, WorkloadState::Stopped, "{:?}", next[0].state);
+    }
+
+    #[tokio::test]
+    async fn an_answers_fences_are_applied_without_holding_up_the_next_beat() {
+        let (_dir, fake, m) = daemon().await;
+        let mut fences = Vec::new();
+        for name in ["a", "b", "c"] {
+            let w = running(&m, name, Some(1), 2).await;
+            // Each copy takes its whole grace to stop.
+            fake.make_stubborn(&format!("blockly-test-{name}"));
+            fences.push(Fence { workload: w.to_string(), current_epoch: 2 });
+        }
+        let applying = Instant::now();
+        apply_fences(&m, fences);
+        assert!(applying.elapsed() < QUICKEST, "applying the fences took {:?}", applying.elapsed());
+        // Each copy is recorded superseded before its stop ends, and is then fenced.
+        let reports = |m: &Manager| workload_reports(m);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !reports(&m).iter().all(|r| r.superseded_by == Some(2)) {
+            assert!(Instant::now() < deadline, "not all recorded superseded: {:?}", reports(&m));
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !reports(&m).iter().all(|r| r.state == WorkloadState::Fenced) {
+            assert!(Instant::now() < deadline, "not all fenced: {:?}", reports(&m));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }

@@ -63,6 +63,8 @@ impl Manager {
         let policy = &record.spec.restart;
         if record.phase != Phase::Active
             || record.superseded_by.is_some()
+            || record.stop_requested_at.is_some()
+            || self.fencing(&record)
             || policy.policy != crate::protocol::RestartPolicy::OnFailure
             || policy.max_retries == 0
         {
@@ -169,7 +171,7 @@ impl Manager {
         };
         let current = self.boot_id.clone().unwrap_or_default();
         let suspended = self.state.lock().unwrap().suspend(id) == Suspend::Asked;
-        if !resumable(&record, &current) || suspended {
+        if !resumable(&record, &current) || suspended || self.fencing(&record) {
             self.state.lock().unwrap().resuming.remove(id);
             return Restart::Done;
         }

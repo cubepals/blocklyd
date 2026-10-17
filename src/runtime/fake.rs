@@ -34,7 +34,7 @@ pub struct FakeContainer {
     pub(crate) finished_at: Option<OffsetDateTime>,
     pub(crate) restart_count: u32,
     pub(crate) logs: Vec<(LogStream, String)>,
-    /// Ignores the stop signal, so a stop ends in a kill (SIGKILL's exit).
+    /// Ignores the stop signal, so a stop waits out its grace and ends in a kill (SIGKILL's exit).
     pub(crate) stubborn: bool,
 }
 
@@ -254,9 +254,19 @@ impl ContainerRuntime for FakeRuntime {
         Ok(())
     }
 
-    async fn stop(&self, name: &str, _signal: &str, _grace: Duration) -> Result<(), RuntimeError> {
+    async fn stop(&self, name: &str, _signal: &str, grace: Duration) -> Result<(), RuntimeError> {
         self.up()?;
         self.call(format!("stop {name}"));
+        let stubborn = {
+            let all = self.containers.lock().unwrap();
+            let c = all.get(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
+            c.stubborn
+                && matches!(c.status, ContainerStatus::Running | ContainerStatus::Restarting | ContainerStatus::Paused)
+        };
+        // As Docker does: one that ignores the signal is killed once the grace runs out.
+        if stubborn {
+            tokio::time::sleep(grace).await;
+        }
         let mut all = self.containers.lock().unwrap();
         let c = all.get_mut(name).ok_or_else(|| RuntimeError::NotFound(name.into()))?;
         // A frozen container gets the signal as it thaws.

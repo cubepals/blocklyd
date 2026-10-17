@@ -122,6 +122,33 @@ async fn a_fence_in_the_same_answer_wins_over_the_resume() {
 }
 
 #[tokio::test]
+async fn a_fence_the_heartbeat_hands_off_wins_over_the_resume_too() {
+    let (dir, fake) = running_then_host_down(true).await;
+    let second = after_restart(dir.path(), &fake, true).await;
+    // As the heartbeat applies an answer: its fences handed off, the lease granted before any of
+    // them has run.
+    second.fence_soon(id("w"), 2);
+    second.fleet_contact(Ok(Lifecycle::Active), Duration::from_millis(3));
+    second.grant_lease(Some(120), Instant::now());
+    tokio::time::sleep(QUIET).await;
+    assert_eq!(second.view(&id("w")).unwrap().state, WorkloadState::Fenced);
+    assert_eq!(fake.count_calls("start "), 1, "the copy placed elsewhere is the one that runs");
+}
+
+#[tokio::test]
+async fn a_stop_while_the_resume_waits_for_the_lease_keeps_the_workload_stopped() {
+    let (dir, fake) = running_then_host_down(true).await;
+    let second = after_restart(dir.path(), &fake, true).await;
+    // The control plane moves the server away before this node is heard from, and stops this copy.
+    second.stop(id("w"), None, Some(1)).await.unwrap();
+    second.fleet_contact(Ok(Lifecycle::Active), Duration::from_millis(3));
+    second.grant_lease(Some(120), Instant::now());
+    tokio::time::sleep(QUIET).await;
+    let view = second.view(&id("w")).unwrap();
+    assert_eq!((view.state, fake.count_calls("start ")), (WorkloadState::Stopped, 1));
+}
+
+#[tokio::test]
 async fn a_fence_the_disk_couldnt_record_still_keeps_the_copy_from_resuming() {
     let (dir, fake) = running_then_host_down(true).await;
     let second = after_restart(dir.path(), &fake, true).await;

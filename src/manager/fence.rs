@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
 //! Fences a workload a newer placement has superseded: restarts off, stopped, never started
-//! again, and stopped again should a recorded fence find it running. The epoch check every other
+//! again, and stopped again should a recorded fence find it running. The heartbeat hands its
+//! fences off with `fence_soon`, so a long stop never holds up its beats. The epoch check every other
 //! verb makes is `check_epoch` in `error.rs`; removing the copy is `delete.rs`.
 
 use super::*;
@@ -74,6 +75,43 @@ impl Manager {
             return Err(e);
         }
         Ok(FenceResponse { changed: !was_fenced, stopped, workload: self.view(id)? })
+    }
+
+    /// Fences a copy without waiting for it to stop, for the heartbeat, which keeps beating for
+    /// the node's other workloads while a superseded copy's grace runs out. Noted in memory at
+    /// once, so the lease granted in the same answer never restarts or resumes the copy; the fence
+    /// itself, which records it and stops it, runs in its own task, after whatever verb holds the
+    /// workload. A fence for the same epoch already under way isn't sent again.
+    pub fn fence_soon(self: &Arc<Self>, id: WorkloadId, current_epoch: u64) {
+        {
+            let mut state = self.state.lock().unwrap();
+            if state.fencing.get(&id).is_some_and(|by| *by >= current_epoch) {
+                return;
+            }
+            state.fencing.insert(id.clone(), current_epoch);
+        }
+        let this = self.clone();
+        tokio::spawn(async move {
+            match this.fence(id.clone(), current_epoch).await {
+                Ok(r) if r.changed => {
+                    tracing::warn!(workload = %id, current_epoch, "heartbeat: fenced a superseded copy")
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!(workload = %id, error = %e, "heartbeat: couldn't fence"),
+            }
+            // From here the record says it (in memory, even when the disk couldn't take it).
+            let mut state = this.state.lock().unwrap();
+            if state.fencing.get(&id) == Some(&current_epoch) {
+                state.fencing.remove(&id);
+            }
+        });
+    }
+
+    /// Whether a fence `fence_soon` handed off is still under way for this copy: one older than
+    /// the epoch it is for, which nothing may start meanwhile.
+    pub(super) fn fencing(&self, record: &WorkloadRecord) -> bool {
+        let state = self.state.lock().unwrap();
+        state.fencing.get(&record.id).is_some_and(|by| record.epoch.is_none_or(|e| e < *by))
     }
 
     /// Fences again each copy recorded as superseded that still runs: one whose fence was recorded

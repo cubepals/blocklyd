@@ -192,6 +192,9 @@ struct State {
     restart_due: HashMap<WorkloadId, Instant>,
     /// Workloads the host went down under, waiting to be resumed (see `resume`).
     resuming: HashSet<WorkloadId>,
+    /// Fences the heartbeat handed off and that haven't finished, with the epoch each is for
+    /// (see `fence_soon`).
+    fencing: HashMap<WorkloadId, u64>,
     /// Snapshots being uploaded, which a delete waits for.
     uploading: HashSet<(WorkloadId, SnapshotId)>,
     /// What local snapshots hold on disk, as last measured.
@@ -370,6 +373,7 @@ impl Manager {
                 last_failure: HashMap::new(),
                 restart_due: HashMap::new(),
                 resuming: HashSet::new(),
+                fencing: HashMap::new(),
                 uploading: HashSet::new(),
                 snapshot_bytes: None,
                 last_reconcile: None,
