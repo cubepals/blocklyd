@@ -209,9 +209,11 @@ jobs:
         run: >-
           docker run -d --name s3 -p 9000:9000 -e RUSTFS_ACCESS_KEY=blockly-test
           -e RUSTFS_SECRET_KEY=blockly-test-secret ghcr.io/rustfs/rustfs:1.0.0 /data
+      # Cubepals' own bun, from its packageManager field: its bun.lock is written by that version
+      # and an older one can't read it.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: 1.3.11
+          bun-version-file: cubepals/package.json
       # The node endpoint runs on Node, as in production.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
