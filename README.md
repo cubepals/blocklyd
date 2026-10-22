@@ -135,12 +135,25 @@ on it and publishes:
 - `ghcr.io/cubepals/blocklyd:<version>`, a `FROM scratch` image of the same files, attested.
 
 Cubepals pins one release by digest (`bun scripts/blocklyd.ts bump <version>` there) and serves
-that binary to the hosts that join its fleet. Check one:
+that binary to the hosts that join its fleet.
+
+### Verify a release
+
+Every file of a release and the image carry a signed build-provenance attestation that names this
+repository and `release.yml` as the build that made them. With the [GitHub CLI](https://cli.github.com),
+download a release's files and check one against it:
 
 ```sh
+gh release download v<version> -R cubepals/blocklyd
 gh attestation verify blocklyd -R cubepals/blocklyd
 gh attestation verify oci://ghcr.io/cubepals/blocklyd:<version> -R cubepals/blocklyd
 ```
+
+`--signer-workflow cubepals/blocklyd/.github/workflows/release.yml` pins the check to the release
+workflow, so a build from any other workflow of this repository fails it. The attestation is of the
+file's SHA-256: the check fails for a file that was changed after the build, and for one this
+workflow never built. `sha256sum -c SHA256SUMS` then checks the rest against the list the
+attestation covers.
 
 Within protocol v1 a release only adds (see [docs/protocol.md](docs/protocol.md)), so a node and
 a control plane one release apart always understand each other.

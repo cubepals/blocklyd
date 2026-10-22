@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A merge queue tests the pull request merged onto main's head, with the same jobs and names.
+  merge_group:
   # Weekly, so supply-chain sees a new RustSec advisory in a quiet week too, and contract sees a
   # control plane that moved; and on demand.
   schedule:
@@ -225,12 +227,12 @@ jobs:
         env:
           BLOCKLYD_BIN: ${{ github.workspace }}/blocklyd/target/debug/blocklyd
 
-  # The image a release publishes builds, and its binary is static. Pull requests only: on main,
+  # The image a release publishes builds, and its binary is static. Not on main's own push, where
   # release.yml builds it.
   image:
     name: Release image builds
     needs: changes
-    if: needs.changes.outputs.code == 'true' && github.event_name == 'pull_request'
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'pull_request' || github.event_name == 'merge_group')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
