@@ -79,7 +79,7 @@ blocklyd = { path = ".", features = ["fake"] }
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "crypto", "x509-parser"] }
 # The wire types' JSON Schema, which only the protocol's schema test reads (src/protocol/schema.rs):
 # the control plane's TypeScript types are generated from it.
-schemars = "=1.2.2"
+schemars = "=1.2.3"
 
 # The lint policy, here so a local `cargo clippy` holds what CI's does (`-D warnings` makes these
 # warnings errors there). Chosen lints, not clippy::pedantic wholesale.
