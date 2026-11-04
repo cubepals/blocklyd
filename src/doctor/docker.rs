@@ -101,7 +101,10 @@ fn live_restore(info: &RuntimeInfo) -> Check {
 
 fn isolation(network: &str, isolated: Result<Option<bool>, RuntimeError>) -> Check {
     match isolated {
-        Ok(Some(true)) => Check::pass("docker.network", format!("{network} keeps servers from reaching each other")),
+        Ok(Some(true)) => Check::pass(
+            "docker.network",
+            format!("{network} keeps servers from reaching each other by their own addresses"),
+        ),
         Ok(None) => Check::pass(
             "docker.network",
             format!("{network} doesn't exist yet; blocklyd makes it with inter-container traffic off"),

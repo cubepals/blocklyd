@@ -96,6 +96,12 @@ enum Command {
         #[arg(long)]
         fix: bool,
     },
+    /// Keep workloads off this host, and off the ports blocklyd serves on the private network: the
+    /// host's firewall rules (one nftables table), as root. The unit runs it before every start.
+    Isolate {
+        #[arg(long, default_value = blocklyd::config::PATH)]
+        config: PathBuf,
+    },
     /// Upgrade to the blocklyd the control plane serves, and restart into it. It puts this one back
     /// by itself if the new one doesn't come up.
     Upgrade {
@@ -179,6 +185,12 @@ fn main() -> ExitCode {
                 .and_then(|runtime| runtime.block_on(blocklyd::cli::join::join(join)))
                 .map(|said| print!("{said}"))
         }
+        Command::Isolate { config } => tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(anyhow::Error::from)
+            .and_then(|runtime| runtime.block_on(blocklyd::isolation::isolate(&config)))
+            .map(|said| print!("{said}")),
         Command::Upgrade { config, exited: true, .. } => {
             let state_dir = blocklyd::upgrade::stopped::state_dir(&config);
             let layout = blocklyd::upgrade::Layout::new(&state_dir, Path::new("/"));

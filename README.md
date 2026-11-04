@@ -56,6 +56,9 @@ blocklyd doctor --fix                                        # on a host with no
                                                              # the state directory; prints how to undo each
 blocklyd doctor --json                                       # {checks: [{name, status, detail, fix}]}
 blocklyd check-config --config /etc/blocklyd/blocklyd.toml   # the config check alone
+blocklyd isolate                                             # as root: the host's rules that keep workloads
+                                                             # off it and off other servers' ports (the unit
+                                                             # runs it before every start)
 blocklyd upgrade                                             # the control plane's blocklyd now, and a restart
                                                              # into it; puts this one back if it doesn't come up
 blocklyd serve --config /etc/blocklyd/blocklyd.toml          # as root, beside Docker; refuses to start
@@ -87,6 +90,14 @@ development uses.
   network. A request can't relax any of it; it only picks its sizes, within bounds. CPU is shared
   by weight, in proportion to memory by default; there is a ceiling only when a request sets
   `cpuMillis`, which the fleet control plane never sends.
+- **Only the edge and the control plane dial a workload.** Docker keeps workloads from reaching
+  each other's own addresses, but not each other's published ports. So before every start, the
+  unit runs `blocklyd isolate`, as root, which puts one nftables table in place
+  (`src/isolation.rs`). It drops every new connection a workload opens to the host itself, and to
+  blocklyd's port range and API port on private addresses (other nodes' servers and blocklyd), and
+  to the link-local metadata address. Without that, a server's own code could join another server
+  without passing the edge, which is what takes out identities and addresses only the edge may
+  forward. The unit doesn't start without the rules.
 - **A workload's data is untrusted.** Snapshots, exports and the measure of its disk use walk it
   relative to directories already open, with `O_NOFOLLOW` at every step (`src/tree.rs`). Restores
   from an archive accept regular files and directories only, with bounded size and entry count.
@@ -112,6 +123,7 @@ development uses.
 | `fleet.rs` | enrollment, heartbeats, identity and renewal |
 | `upgrade.rs` | upgrading itself to the control plane's blocklyd, and going back if it fails |
 | `runtime.rs` | the container runtime (Docker, and a fake for tests) |
+| `isolation.rs` | the host's rules that keep workloads off it and off other servers' ports |
 | `store.rs` | the state directory: records, snapshots, trash |
 | `tree.rs`, `tarball.rs` | the safe walk, copies (reflink), archives |
 | `reconcile.rs` | the Docker event stream and periodic passes |

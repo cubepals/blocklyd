@@ -22,6 +22,10 @@ Wants=network-online.target docker.service
 
 [Service]
 Type=exec
+# Before anything else: workloads kept off this host, and off the ports blocklyd serves on the
+# private network (src/isolation.rs). "+" runs it as root outside the sandbox below, which has no
+# netlink to set them with; it fails only where nftables can't take the rules, and then nothing starts.
+ExecStartPre=+/usr/local/bin/blocklyd isolate --config /etc/blocklyd/blocklyd.toml
 # Refuses to start only on what it always refused (an invalid config, a state directory it can't
 # own); everything else doctor finds goes to the journal as a warning.
 ExecStartPre=/usr/local/bin/blocklyd doctor --preflight --config /etc/blocklyd/blocklyd.toml

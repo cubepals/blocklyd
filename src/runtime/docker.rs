@@ -28,6 +28,7 @@ use bollard::query_parameters::{
 };
 use futures_util::stream::{BoxStream, StreamExt};
 use hyper::StatusCode;
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 
 use super::{
@@ -41,10 +42,27 @@ const CLIENT_TIMEOUT_SECS: u64 = MAX_STOP_TIMEOUT as u64 + 60;
 /// Quick calls get a much shorter leash of their own.
 const QUICK: Duration = Duration::from_secs(20);
 const ICC_OPTION: &str = "com.docker.network.bridge.enable_icc";
+/// The bridge driver's option naming the network's interface on the host (Docker's documentation,
+/// "Bridge network driver", options).
+const BRIDGE_NAME_OPTION: &str = "com.docker.network.bridge.name";
+/// What the bridge driver names an interface left unnamed: this, then the first 12 characters of
+/// the network's id (libnetwork's bridge driver).
+const DOCKER_BRIDGE_PREFIX: &str = "br-";
+/// Linux's longest interface name: IFNAMSIZ, 16, less the closing NUL.
+const IFNAME_MAX: usize = 15;
 /// How long a timed-out exec's process is looked for. Docker answers the start before the process
 /// exists, and reports pid 0 until it does.
 const EXEC_PID_WAIT: Duration = Duration::from_secs(2);
 const EXEC_PID_STEP: Duration = Duration::from_millis(50);
+
+/// The interface blocklyd names the bridge of the workloads' network `network`, named for the
+/// network so the host's rules (isolation.rs) can name it before it exists, and two networks on one
+/// host never share one.
+pub fn bridge_name(network: &str) -> String {
+    let prefix = "bly";
+    let digest = hex::encode(Sha256::digest(network.as_bytes()));
+    format!("{prefix}{}", &digest[..IFNAME_MAX - prefix.len()])
+}
 
 pub struct DockerRuntime {
     socket: String,
@@ -69,6 +87,20 @@ impl DockerRuntime {
             .map_err(map_err)?;
         *client = Some(docker.clone());
         Ok(docker)
+    }
+
+    /// The interface on the host of the network `name`: the one its options name, or else the one
+    /// Docker named for its id. None if there is no such network.
+    pub async fn bridge_of(&self, name: &str) -> Result<Option<String>, RuntimeError> {
+        match quick("inspect network", self.docker()?.inspect_network(name, None::<InspectNetworkOptions>)).await {
+            Ok(network) => Ok(network.options.unwrap_or_default().remove(BRIDGE_NAME_OPTION).or_else(|| {
+                network.id.map(|id| {
+                    format!("{DOCKER_BRIDGE_PREFIX}{}", &id[..id.len().min(IFNAME_MAX - DOCKER_BRIDGE_PREFIX.len())])
+                })
+            })),
+            Err(RuntimeError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     /// The host pid of an exec and its container's id. Pid 0 means not started yet, so it looks
@@ -277,8 +309,11 @@ impl ContainerRuntime for DockerRuntime {
             name: name.to_owned(),
             driver: Some("bridge".into()),
             // Workloads can't reach each other directly; each reaches the world and is reached
-            // through its published ports only.
-            options: Some(HashMap::from([(ICC_OPTION.to_owned(), "false".to_owned())])),
+            // through its published ports only, which the host's rules keep the others off.
+            options: Some(HashMap::from([
+                (ICC_OPTION.to_owned(), "false".to_owned()),
+                (BRIDGE_NAME_OPTION.to_owned(), bridge_name(name)),
+            ])),
             labels: Some(labels.clone().into_iter().collect()),
             ..Default::default()
         };
