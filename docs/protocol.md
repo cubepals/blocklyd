@@ -162,7 +162,7 @@ Body: `WorkloadSpec`.
 
 | Field | Rules |
 |---|---|
-| `image` | `[A-Za-z0-9._-/:@]`, ≤ 255. Must start with one of the host's `allowed_images` prefixes. |
+| `image` | `[A-Za-z0-9._-/:@]`, ≤ 255. Must start with one of the host's `allowed_images` prefixes, each of which ends in `/`, `:` or `@`. |
 | `entrypoint` | Optional argv, 1–64 arguments of ≤ 64 KiB, no NUL. |
 | `env`, `secrets` | Names `[A-Za-z_][A-Za-z0-9_]*` of ≤ 128. Values ≤ 64 KiB, no NUL. ≤ 256 variables and 512 KiB in all. A name is in one or the other. |
 | `resources.memoryMb` | Required. Hard limit with no swap, between `min_memory_mb` and what the host allocates. |

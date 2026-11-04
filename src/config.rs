@@ -212,7 +212,8 @@ impl Default for NetworkConfig {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct WorkloadPolicy {
-    /// Image reference prefixes this host runs. Everything else is refused.
+    /// Image reference prefixes this host runs, each ending in `/`, `:` or `@`. Everything else is
+    /// refused.
     pub(crate) allowed_images: Vec<String>,
     /// uid:gid every workload runs as. Numeric, never root.
     pub(crate) user: Ids,
@@ -569,6 +570,21 @@ mod tests {
         let fleet = config.fleet.expect("fleet mode");
         assert_eq!((fleet.heartbeat_seconds, fleet.restart_requires_contact_seconds), (5, 120));
         assert!(config.api.tls.is_none() && config.node_id.as_str().is_empty());
+    }
+
+    #[test]
+    fn an_image_prefix_ends_where_a_path_tag_or_digest_starts() {
+        let with = |prefixes: &str| {
+            let text = format!("{MINIMAL}\n[workloads]\nallowed_images = {prefixes}\n");
+            toml::from_str::<Config>(&text).unwrap().validate()
+        };
+        for fine in [r#"["ghcr.io/cubepals/"]"#, r#"["itzg/minecraft-server:"]"#, r#"["itzg/minecraft-server@"]"#] {
+            with(fine).unwrap();
+        }
+        for open in [r#"["ghcr.io/cubepals"]"#, r#"["registry.example.com"]"#, r#"["alpine:", ""]"#] {
+            let err = with(open).unwrap_err().to_string();
+            assert!(err.contains("workloads.allowed_images entry"), "{open}: {err}");
+        }
     }
 
     #[test]
