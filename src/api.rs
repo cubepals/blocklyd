@@ -12,13 +12,18 @@
 //!
 //! Parts (`api/`):
 //! - `error.rs`: errors as the protocol states them: an HTTP status and a stable code.
+//! - `handshake.rs`: the TLS handshake of each connection, bounded in number and time, and its
+//!   refusals reported without flooding the log.
 //! - `tls.rs`: the API's side of mutual TLS: its certificate, and who a client certificate proves.
 
 // A handler's error is the answer itself, axum's `Response`, sent once and never passed along.
 #![expect(clippy::result_large_err, reason = "axum handlers answer Result<Response, Response>")]
 
 pub mod error;
+mod handshake;
 pub mod tls;
+
+pub use self::handshake::HandshakeLimits;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -34,16 +39,17 @@ use axum::{Json, Router};
 use futures_util::StreamExt;
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioIo, TokioTimer};
-use hyper_util::server::graceful::GracefulShutdown;
+use hyper_util::server::graceful::{GracefulShutdown, Watcher};
 use hyper_util::service::TowerToHyperService;
 use serde::Deserialize;
-use tokio::net::TcpListener;
-use tokio_rustls::TlsAcceptor;
+use tokio::net::{TcpListener, TcpStream};
+use tokio_rustls::server::TlsStream;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tracing::{Instrument, info, info_span, warn};
 
 use self::error::{INVALID_REQUEST, INVALID_WORKLOAD_ID, error_response};
+use self::handshake::Handshakes;
 use self::tls::ClientIdentity;
 use crate::ids::{SnapshotId, WorkloadId};
 use crate::manager::{Manager, NodeError, Precondition};
@@ -505,7 +511,16 @@ pub fn router(state: AppState, max_body: usize) -> Router {
         .with_state(state)
 }
 
-/// Serves the API over mutual TLS until `cancel`, then drains connections for up to `grace`.
+/// What `serve_tls` holds its connections to.
+#[derive(Clone, Copy, Debug)]
+pub struct Bounds {
+    /// How long a shutdown waits for requests in flight.
+    pub grace: Duration,
+    /// How many TLS handshakes may be in progress at once.
+    pub handshakes: HandshakeLimits,
+}
+
+/// Serves the API over mutual TLS until `cancel`, then drains connections for up to the grace.
 pub async fn serve_tls(
     listener: TcpListener,
     tls: Arc<rustls::ServerConfig>,
@@ -513,9 +528,9 @@ pub async fn serve_tls(
     app: Router,
     manager: Arc<Manager>,
     cancel: CancellationToken,
-    grace: Duration,
+    bounds: Bounds,
 ) {
-    let acceptor = TlsAcceptor::from(tls);
+    let handshakes = Handshakes::new(tls, bounds.handshakes, manager.metrics.clone());
     let graceful = GracefulShutdown::new();
     let allowed = Arc::new(allowed);
     loop {
@@ -530,43 +545,47 @@ pub async fn serve_tls(
             },
             () = cancel.cancelled() => break,
         };
-        let acceptor = acceptor.clone();
+        let Some(place) = handshakes.admit(peer) else { continue };
+        let handshakes = handshakes.clone();
         let app = app.clone();
         let allowed = allowed.clone();
-        let manager = manager.clone();
         let watcher = graceful.watcher();
         tokio::spawn(async move {
-            let stream = match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
-                Ok(Ok(stream)) => stream,
-                Ok(Err(e)) => {
-                    manager.metrics.auth_failure("tls_handshake");
-                    warn!(%peer, error = %e, "TLS handshake refused");
-                    return;
-                }
-                Err(_) => {
-                    manager.metrics.auth_failure("tls_handshake_timeout");
-                    return;
-                }
-            };
-            let identity = tls::identify(stream.get_ref().1.peer_certificates(), &allowed);
-            let service = tower::service_fn(move |mut request: axum::http::Request<Incoming>| {
-                request.extensions_mut().insert(identity.clone());
-                request.extensions_mut().insert(PeerAddr(peer));
-                app.clone().oneshot(request.map(Body::new))
-            });
-            let mut builder = hyper::server::conn::http1::Builder::new();
-            // A slow client can't hold a connection open by trickling headers.
-            builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(10));
-            let connection = builder.serve_connection(TokioIo::new(stream), TowerToHyperService::new(service));
-            if let Err(e) = watcher.watch(connection).await {
-                tracing::debug!(%peer, error = %e, "connection ended");
+            if let Some(stream) = handshakes.accept(tcp, peer, place).await {
+                serve_connection(stream, peer, &allowed, app, watcher).await;
             }
         });
     }
     drop(listener);
     tokio::select! {
         () = graceful.shutdown() => info!("all API connections closed"),
-        () = tokio::time::sleep(grace) => warn!(seconds = grace.as_secs(), "shutdown grace ran out with requests in flight"),
+        () = tokio::time::sleep(bounds.grace) => warn!(seconds = bounds.grace.as_secs(), "shutdown grace ran out with requests in flight"),
+    }
+}
+
+/// HTTP on a connection whose handshake ended well, for the identity its certificate proves.
+async fn serve_connection(
+    stream: TlsStream<TcpStream>,
+    peer: SocketAddr,
+    allowed: &[String],
+    app: Router,
+    watcher: Watcher,
+) {
+    let identity = tls::identify(stream.get_ref().1.peer_certificates(), allowed);
+    // A client this node refuses gets its 403 (`envelope`), and then the connection closes, so it
+    // can't hold one open.
+    let keep_alive = identity.allowed.is_some();
+    let service = tower::service_fn(move |mut request: axum::http::Request<Incoming>| {
+        request.extensions_mut().insert(identity.clone());
+        request.extensions_mut().insert(PeerAddr(peer));
+        app.clone().oneshot(request.map(Body::new))
+    });
+    let mut builder = hyper::server::conn::http1::Builder::new();
+    // A slow client can't hold a connection open by trickling headers.
+    builder.timer(TokioTimer::new()).header_read_timeout(Duration::from_secs(10)).keep_alive(keep_alive);
+    let connection = builder.serve_connection(TokioIo::new(stream), TowerToHyperService::new(service));
+    if let Err(e) = watcher.watch(connection).await {
+        tracing::debug!(%peer, error = %e, "connection ended");
     }
 }
 

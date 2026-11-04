@@ -2,14 +2,21 @@
 //
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
-//! The protocol over real TLS: who gets in, what malformed requests get back, and a lifecycle
-//! driven only through HTTP.
+//! The protocol over real TLS: who gets in, how many may knock at once, what malformed requests
+//! get back, and a lifecycle driven only through HTTP.
 
 mod support;
 
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use blocklyd::api::HandshakeLimits;
 use hyper::StatusCode;
 use hyper::header::{CONTENT_TYPE, ETAG, IF_MATCH, IF_NONE_MATCH};
-use support::{CLIENT, client, fixture, pki, request, serve, server_cert_as_client, spec_json};
+use support::{CLIENT, client, fixture, pki, request, serve, serve_with, server_cert_as_client, spec_json, tls_over};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::{TcpSocket, TcpStream};
 
 struct Env {
     /// Owns the temporary directory; dropped last.
@@ -90,12 +97,130 @@ async fn a_server_certificate_cannot_be_used_as_a_client() {
 }
 
 #[tokio::test]
-async fn a_valid_certificate_for_another_name_is_forbidden() {
+async fn a_valid_certificate_for_another_name_is_forbidden_and_its_connection_closed() {
     let e = env().await;
     let edge = client(&e.pki.ca, "edge.test.blockly.internal");
     let r = request(e.server.addr, &e.pki.ca.pem, Some(&edge), "GET", "/v1/workloads", &[], None).await.unwrap();
     assert_eq!(r.status, StatusCode::FORBIDDEN);
     assert_eq!(r.code(), "forbidden");
+    // Its connection doesn't stay open for it, though it asked to keep it.
+    let tls = tls_over(TcpStream::connect(e.server.addr).await.unwrap(), &e.pki.ca.pem, Some(&edge)).await.unwrap();
+    let answer = until_closed(tls, KEEP_ALIVE, Duration::from_secs(2)).await.expect("the connection stayed open");
+    assert!(answer.starts_with("HTTP/1.1 403 "), "{answer}");
+    // The allowed client's does, as ever.
+    let tls = tls_over(TcpStream::connect(e.server.addr).await.unwrap(), &e.pki.ca.pem, Some(&e.me)).await.unwrap();
+    let answer = until_closed(tls, KEEP_ALIVE, Duration::from_millis(500)).await.expect_err("kept open");
+    assert!(answer.starts_with("HTTP/1.1 200 "), "{answer}");
+}
+
+/// A request for `/v1/health` that asks to keep its connection open.
+const KEEP_ALIVE: &str = "GET /v1/health HTTP/1.1\r\nhost: localhost\r\n\r\n";
+
+/// Sends `head` and reads what comes back until the server closes the connection, for up to
+/// `within`: Err with what it read if the connection is still open then.
+async fn until_closed(
+    mut io: impl AsyncRead + AsyncWrite + Unpin,
+    head: &str,
+    within: Duration,
+) -> Result<String, String> {
+    io.write_all(head.as_bytes()).await.unwrap();
+    let mut answer = Vec::new();
+    let read = tokio::time::timeout(within, io.read_to_end(&mut answer)).await;
+    let text = String::from_utf8_lossy(&answer).into_owned();
+    if read.is_ok() { Ok(text) } else { Err(text) }
+}
+
+/// A TCP connection to `addr` from `source`, one of the loopback addresses.
+async fn connect_from(source: &str, addr: SocketAddr) -> TcpStream {
+    let socket = TcpSocket::new_v4().unwrap();
+    socket.bind(format!("{source}:0").parse().unwrap()).unwrap();
+    socket.connect(addr).await.unwrap()
+}
+
+/// How many of `streams` the server closes within `within`, though none sent a byte.
+async fn closed_within(streams: &mut [TcpStream], within: Duration) -> usize {
+    let reads =
+        streams.iter_mut().map(|s| async move { tokio::time::timeout(within, s.read(&mut [0u8; 1])).await.is_ok() });
+    futures_util::future::join_all(reads).await.into_iter().filter(|closed| *closed).count()
+}
+
+#[tokio::test]
+async fn handshakes_in_progress_are_capped_per_address_and_overall() {
+    let f = fixture("").await;
+    let pki = pki(f.dir.path());
+    let server = serve_with(f.manager.clone(), HandshakeLimits { total: 6, per_peer: 4 }).await;
+    let me = client(&pki.ca, CLIENT);
+    // One address opens connections and says nothing: four wait in a handshake, the rest are
+    // closed at once.
+    let mut silent = Vec::new();
+    for _ in 0..9 {
+        silent.push(connect_from("127.0.0.2", server.addr).await);
+    }
+    assert_eq!(closed_within(&mut silent, Duration::from_secs(1)).await, 5);
+    // The allowed client, from another address, still gets in.
+    let r = request(server.addr, &pki.ca.pem, Some(&me), "GET", "/v1/health", &[], None).await.unwrap();
+    assert_eq!(r.status, StatusCode::OK);
+    // Six in all: a third address gets the two places left.
+    let mut third = Vec::new();
+    for _ in 0..3 {
+        third.push(connect_from("127.0.0.3", server.addr).await);
+    }
+    assert_eq!(closed_within(&mut third, Duration::from_secs(1)).await, 1);
+    let metrics = f.manager.metrics.render(&f.manager);
+    assert!(metrics.contains(r#"blocklyd_auth_failures_total{reason="tls_handshakes_full"} 6"#), "{metrics}");
+    // A handshake that ends, however it ends, gives its place back.
+    drop((silent, third));
+    let answer = support::eventually("a place for 127.0.0.2 again", async || {
+        let Ok(tls) = tls_over(connect_from("127.0.0.2", server.addr).await, &pki.ca.pem, Some(&me)).await else {
+            return (false, String::new());
+        };
+        let head = "GET /v1/health HTTP/1.1\r\nhost: localhost\r\nconnection: close\r\n\r\n";
+        let answer = until_closed(tls, head, Duration::from_secs(2)).await.unwrap_or_else(|open| open);
+        (answer.starts_with("HTTP/1.1 200 "), answer)
+    })
+    .await;
+    assert!(answer.contains("\"status\":\"ok\""), "{answer}");
+}
+
+/// What tracing writes, kept to be read.
+#[derive(Clone, Default)]
+struct Captured(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Captured {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn refused_handshakes_never_flood_the_log() {
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_max_level(tracing::Level::DEBUG)
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let e = env().await;
+    for _ in 0..100 {
+        let mut garbage = TcpStream::connect(e.server.addr).await.unwrap();
+        garbage.write_all(b"GET / HTTP/1.1\r\nhost: localhost\r\n\r\n").await.unwrap();
+        let closed = tokio::time::timeout(Duration::from_secs(5), garbage.read_to_end(&mut Vec::new())).await;
+        assert!(closed.is_ok(), "the server closes a connection that isn't TLS");
+    }
+    assert_eq!(e.call("GET", "/v1/health", None).await.status, StatusCode::OK);
+    let text = String::from_utf8(captured.0.lock().unwrap().clone()).unwrap();
+    let warnings: Vec<&str> = text.lines().filter(|l| l.contains("WARN") && l.contains("TLS handshake")).collect();
+    assert!(warnings.len() <= 1, "{warnings:#?}");
+    let debug = text.lines().filter(|l| l.contains("DEBUG") && l.contains("TLS handshake refused")).count();
+    assert_eq!(debug, 100, "each one is still logged, at debug");
+    let metrics = e._f.manager.metrics.render(&e._f.manager);
+    assert!(metrics.contains(r#"blocklyd_auth_failures_total{reason="tls_handshake"} 100"#), "and counted");
 }
 
 #[tokio::test]

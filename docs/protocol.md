@@ -18,7 +18,10 @@ protocol names Docker.
 - **Transport.** TLS 1.3 only, and a client certificate is required. The certificate must chain
   to the host's `client_ca`, carry extended key usage `clientAuth`, and name one of
   `allowed_clients`. A missing or foreign certificate is refused during the handshake. A valid
-  certificate for a name that isn't allowed gets `403 forbidden`. There is no 0-RTT.
+  certificate for a name that isn't allowed gets `403 forbidden`, and its connection is closed
+  after it. There is no 0-RTT. A handshake must finish within 5 s, and handshakes in progress are
+  capped per peer address and overall: a connection past either cap is closed at once. A
+  connection whose handshake finished is not counted.
   - **In fleet mode** (a `[fleet]` section, no `[api.tls]`), the node's server certificate, the CA
     and `allowed_clients` all come from enrollment (below), and its certificate names the node
     (`<nodeId>.nodes.<deployment>.fleet`), not an address. A client dials the node's address and

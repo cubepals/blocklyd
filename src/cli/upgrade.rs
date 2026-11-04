@@ -10,7 +10,6 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, bail};
-use hyper::Method;
 use sha2::{Digest, Sha256};
 
 use crate::config::Config;
@@ -37,12 +36,12 @@ pub async fn upgrade(config: &Path, restart: bool) -> anyhow::Result<String> {
     };
     let tls = identity.client_tls()?;
     let url = format!("{}{FLEET_API}/blocklyd.sha256", fleet.url.trim_end_matches('/'));
-    let response =
-        client::send(Method::GET, &url, &[], client::empty(), Some(tls.clone()), crate::upgrade::ANSWER_TIMEOUT)
-            .await
-            .with_context(|| format!("asking {url}"))?;
-    let status = response.status();
-    let body = client::read_body(response, 64 * 1024).await.map_err(anyhow::Error::msg)?;
+    let (status, body) =
+        match client::get_small(&url, Some(tls.clone()), 64 * 1024, crate::upgrade::ANSWER_TIMEOUT).await {
+            Ok(answer) => answer,
+            Err(client::ClientError::Body(_, e)) => return Err(anyhow::Error::msg(e)),
+            Err(e) => return Err(anyhow::Error::new(e).context(format!("asking {url}"))),
+        };
     let text = String::from_utf8_lossy(&body);
     anyhow::ensure!(status.is_success(), "{url}: HTTP {status}: {}", text.trim());
     let sha256 = text.split_whitespace().next().filter(|s| s.len() == 64).context("an answer with no sha256")?;

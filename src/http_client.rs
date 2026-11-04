@@ -47,13 +47,17 @@ pub(crate) enum ClientError {
     Http(String, String),
     #[error("{0}: https needs TLS settings")]
     NoTls(String),
+    /// The answer's body, after its head: cut short, or over the size limit.
+    #[error("{0}: {1}")]
+    Body(String, String),
 }
 
 impl ClientError {
     /// Worth retrying: the far side may simply not be up yet.
     pub(crate) fn is_transient(&self) -> bool {
         match self {
-            Self::Connect(..) | Self::Timeout(..) | Self::Http(..) => true,
+            // A body cut short is lost as any connection is (`json` asks again too).
+            Self::Connect(..) | Self::Timeout(..) | Self::Http(..) | Self::Body(..) => true,
             // What rustls refused (a certificate, the protocol) tokio-rustls reports as invalid
             // data, and rustls' own errors are what a retry would meet again. Anything else is the
             // connection failing mid-handshake (a reset, an early close), as it may at any time.
@@ -215,6 +219,23 @@ pub(crate) async fn read_body(response: Response<Incoming>, limit: usize) -> Res
     Limited::new(response.into_body(), limit).collect().await.map(Collected::to_bytes).map_err(|e| e.to_string())
 }
 
+/// A GET whose answer is small: its status, and its body, refusing more than `limit` bytes.
+/// `timeout` bounds the whole exchange, the body included, as in `json`.
+pub(crate) async fn get_small(
+    url: &str,
+    tls: Option<Arc<rustls::ClientConfig>>,
+    limit: usize,
+    timeout: Duration,
+) -> Result<(StatusCode, Bytes), ClientError> {
+    let exchange = async {
+        let response = send(Method::GET, url, &[], empty(), tls, timeout).await?;
+        let status = response.status();
+        let body = read_body(response, limit).await.map_err(|e| ClientError::Body(redact(url), e))?;
+        Ok((status, body))
+    };
+    tokio::time::timeout(timeout, exchange).await.map_err(|_| ClientError::Timeout(redact(url), timeout))?
+}
+
 /// A JSON request and its JSON answer, over mutual TLS. Non-2xx answers become an error that
 /// carries the status and body. `timeout` bounds the whole exchange, the answer's body included:
 /// a body that stops coming after its head would otherwise hold the caller (a heartbeat, an
@@ -318,6 +339,19 @@ mod tests {
         let err = ask(&answering(garbled, false).await, Duration::from_secs(5)).await.unwrap_err();
         assert!(matches!(err, JsonError::Local(_)), "{err}");
         assert!(!err.is_transient(), "the same answer would come again");
+    }
+
+    #[tokio::test]
+    async fn a_small_get_whose_body_stops_coming_ends_within_its_limit() {
+        let head = b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n9f86d081";
+        let url = answering(head, false).await;
+        let limit = Duration::from_millis(300);
+        let asked = tokio::time::timeout(limit + Duration::from_secs(5), get_small(&url, None, 64 * 1024, limit));
+        let err = asked.await.expect("waited past the caller's limit").unwrap_err();
+        assert!(matches!(err, ClientError::Timeout(..)), "{err}");
+        let big = b"HTTP/1.1 200 OK\r\ncontent-length: 9\r\n\r\nnot small";
+        let err = get_small(&answering(big, false).await, None, 4, limit).await.unwrap_err();
+        assert!(matches!(err, ClientError::Body(..)), "over the size limit: {err}");
     }
 
     #[test]

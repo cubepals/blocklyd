@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, anyhow, bail};
-use hyper::{Method, StatusCode};
+use hyper::StatusCode;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::CryptoProvider;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -250,17 +250,14 @@ async fn fetch_ca(token: &JoinToken) -> anyhow::Result<Vec<u8>> {
     let began = Instant::now();
     let mut wait = Duration::from_secs(1);
     let (status, body) = loop {
-        let failed = match client::send(Method::GET, &url, &[], client::empty(), Some(tls.clone()), CONTROL_PLANE_CALL)
-            .await
-        {
-            Ok(response) => {
-                let status = response.status();
-                let body = client::read_body(response, 64 * 1024).await.map_err(|e| anyhow!("fetching {url}: {e}"))?;
+        let failed = match client::get_small(&url, Some(tls.clone()), 64 * 1024, CONTROL_PLANE_CALL).await {
+            Ok((status, body)) => {
                 if !status.is_server_error() && status != StatusCode::TOO_MANY_REQUESTS {
                     break (status, body);
                 }
                 anyhow!("{url} answered HTTP {status}")
             }
+            Err(client::ClientError::Body(_, e)) => return Err(anyhow!("fetching {url}: {e}")),
             Err(e) if e.is_transient() => anyhow::Error::new(e),
             Err(e) => return Err(anyhow::Error::new(e).context(format!("fetching the fleet CA from {url}"))),
         };
