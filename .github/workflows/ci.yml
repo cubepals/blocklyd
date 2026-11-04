@@ -134,7 +134,7 @@ jobs:
       - name: Rust from rust-toolchain.toml
         run: rustup toolchain install
       # The release's own binary, not a build from source on every run.
-      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-deny@0.20.2
       # Advisories (RustSec), licenses, banned crates and sources: deny.toml.
@@ -217,7 +217,7 @@ jobs:
         with:
           bun-version-file: cubepals/package.json
       # The node endpoint runs on Node, as in production.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.23.2
       - run: bun install --frozen-lockfile
