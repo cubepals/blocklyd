@@ -124,7 +124,14 @@ impl Manager {
                 .map_err(|e| NodeError::TransferBroke { what: "uploading the archive", source: e.into() })?;
         if !response.status().is_success() {
             let status = response.status();
-            let text = crate::http_client::read_body(response, 4096).await.unwrap_or_default();
+            // A few bytes, but a store that stops sending them would hold the export, and the
+            // workload with it, forever: past the idle time the refusal is told without them.
+            let idle = self.config.transfer.idle();
+            let text = tokio::time::timeout(idle, crate::http_client::read_body(response, 4096))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
             return Err(NodeError::Transfer(format!(
                 "the store refused the upload: HTTP {status}: {}",
                 String::from_utf8_lossy(&text).chars().take(300).collect::<String>()

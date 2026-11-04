@@ -154,6 +154,41 @@ async fn a_download_that_stops_coming_fails_and_lets_go_of_the_workload() {
     left_nothing(&f.manager, "w");
 }
 
+/// A store that refuses an upload, by its headers, then sends a few bytes of the reason and
+/// nothing more, holding the connection open.
+async fn refusing_and_stalling() -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/a.tar.gz", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let _ = socket.read(&mut [0u8; 4096]).await;
+            let _ = socket.write_all(b"HTTP/1.1 403 Forbidden\r\ncontent-length: 100\r\n\r\nSignature").await;
+            held.push(socket);
+        }
+    });
+    url
+}
+
+#[tokio::test]
+async fn a_refusal_whose_reason_stops_coming_still_ends_the_export() {
+    let f = fixture("[transfer]\nidle_seconds = 1\n").await;
+    let made = f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
+    std::fs::write(std::path::Path::new(&made.workload.locate.data_dir).join("level.dat"), b"mine").unwrap();
+    let export = f.manager.export(id("w"), export_to(refusing_and_stalling().await), Some(1));
+    let err = tokio::time::timeout(std::time::Duration::from_secs(20), export)
+        .await
+        .expect("the stalled refusal held the export")
+        .unwrap_err();
+    assert!(matches!(&err, NodeError::Transfer(m) if m.contains("HTTP 403")), "{err:?}");
+    // The workload is free again: a stop goes ahead at once.
+    tokio::time::timeout(std::time::Duration::from_secs(5), f.manager.stop(id("w"), None, Some(1)))
+        .await
+        .expect("the export still held the workload")
+        .unwrap();
+}
+
 #[tokio::test]
 async fn a_restore_onto_a_disk_below_its_floor_is_refused_and_changes_nothing() {
     let f = fixture("").await;
