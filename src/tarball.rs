@@ -33,10 +33,10 @@ use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 
 use crate::priority::Idle;
-use crate::tree::{Kind, NoRoom};
+use crate::tree::{Kind, Progress};
 
 /// Unpacked bytes an archive may expand to. A world is a few GB; this stops a gzip bomb.
-pub(crate) const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+pub(crate) const MAX_UNPACKED_BYTES: u64 = crate::tree::MAX_BYTES;
 /// Entries an archive may hold. Worlds hold thousands; this bounds the work a bad one causes.
 pub(crate) const MAX_ENTRIES: u64 = crate::tree::MAX_ENTRIES;
 /// What a restore lets tar read of a member besides the data it unpacks: its long name, long link
@@ -96,8 +96,10 @@ pub struct Packed {
 }
 
 /// Writes `root` as a .tar.gz to `out`, leaving out the top-level names in `exclude`. Paths are
-/// `./`-relative, as `tar -C <root> .` writes them. After each file `room` is told the bytes read
-/// so far, more than the archive grew by, and an `Err` from it stops the pack (`tree::NoRoom`).
+/// `./`-relative, as `tar -C <root> .` writes them. After each file, and every so often within one
+/// (`tree::Progress`), `room` is told the bytes read so far, more than the archive grew by, and an
+/// `Err` from it stops the pack (`tree::NoRoom`). Data that states more than `MAX_UNPACKED_BYTES`
+/// is stopped the same way, before the file that takes it past is read: no restore would take it.
 /// Blocking, at idle priority (`priority::Idle`).
 pub fn pack(
     root: &Path,
@@ -109,7 +111,7 @@ pub fn pack(
     let file = OpenOptions::new().write(true).create_new(true).mode(0o600).open(out)?;
     let gz = GzEncoder::new(Hashing::new(io::BufWriter::with_capacity(256 * 1024, file)), Compression::fast());
     let mut builder = tar::Builder::new(gz);
-    let mut read = 0;
+    let mut progress = Progress::new(room);
     let walked = crate::tree::walk(root, exclude, &mut |entry| {
         let name = Path::new(".").join(entry.path);
         let mut header = tar::Header::new_gnu();
@@ -124,11 +126,11 @@ pub fn pack(
                 builder.append_data(&mut header, name, io::empty())
             }
             Kind::File(file) => {
+                progress.admit(entry.path, entry.meta.size)?;
                 header.set_entry_type(tar::EntryType::Regular);
                 header.set_size(entry.meta.size);
-                builder.append_data(&mut header, name, exactly(file, entry.meta.size))?;
-                read += entry.meta.size;
-                NoRoom::ask(room, read)
+                builder.append_data(&mut header, name, progress.reading(exactly(file, entry.meta.size)))?;
+                progress.ask()
             }
             Kind::Link(target) => {
                 header.set_entry_type(tar::EntryType::Symlink);
@@ -201,6 +203,17 @@ pub fn unpack(
     owner: (u32, u32),
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> Result<Unpacked, UnpackError> {
+    unpack_at_most(archive, dest, owner, MAX_UNPACKED_BYTES, room)
+}
+
+/// `unpack`, refusing an archive past `max_bytes` unpacked: `MAX_UNPACKED_BYTES`, but for tests.
+fn unpack_at_most(
+    archive: &Path,
+    dest: &Path,
+    owner: (u32, u32),
+    max_bytes: u64,
+    room: &mut dyn FnMut(u64) -> Result<(), String>,
+) -> Result<Unpacked, UnpackError> {
     let _idle = Idle::enter();
     fs::DirBuilder::new().mode(0o750).create(dest)?;
     // Every gzip member, as gzip -d reads them: an archive written in several (BGZF, or files
@@ -215,7 +228,7 @@ pub fn unpack(
     for entry in reader.entries().map_err(damaged)? {
         let mut entry = entry.map_err(damaged)?;
         // What tar may read before it hands over the next member: this one's data if it is one
-        // unpacked below (bounded by MAX_UNPACKED_BYTES there), and the next one's headers.
+        // unpacked below (bounded by `max_bytes` here), and the next one's headers.
         let unpacked = matches!(
             entry.header().entry_type(),
             tar::EntryType::Regular | tar::EntryType::Continuous | tar::EntryType::GNUSparse
@@ -226,6 +239,15 @@ pub fn unpack(
         if done.entries > MAX_ENTRIES {
             return Err(UnpackError::TooLarge(format!("more than {MAX_ENTRIES} entries")));
         }
+        if unpacked {
+            // Counted before the name is looked at: tar reads the data of an entry named for the
+            // archive's root all the same, though it isn't unpacked. Saturating: a PAX record can
+            // state any size, u64::MAX among them.
+            done.bytes = done.bytes.saturating_add(entry.size());
+            if done.bytes > max_bytes {
+                return Err(UnpackError::TooLarge(format!("more than {max_bytes} bytes unpacked")));
+            }
+        }
         let raw = entry.path().map_err(damaged)?.into_owned();
         let Some(relative) = clean(&raw)? else { continue };
         let target = dest.join(&relative);
@@ -235,11 +257,6 @@ pub fn unpack(
                 fs::DirBuilder::new().recursive(true).mode(0o755).create(&target)?;
             }
             tar::EntryType::Regular | tar::EntryType::Continuous | tar::EntryType::GNUSparse => {
-                // Saturating: a PAX record can state any size, u64::MAX among them.
-                done.bytes = done.bytes.saturating_add(entry.size());
-                if done.bytes > MAX_UNPACKED_BYTES {
-                    return Err(UnpackError::TooLarge(format!("more than {MAX_UNPACKED_BYTES} bytes unpacked")));
-                }
                 if let Some(parent) = target.parent() {
                     fs::DirBuilder::new().recursive(true).mode(0o755).create(parent)?;
                 }
@@ -339,6 +356,7 @@ pub(crate) fn tree_bytes(dir: &Path) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tree::{NoRoom, ROOM_STEP};
 
     fn archive_of(entries: &[(&str, tar::EntryType, &[u8])]) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();
@@ -418,6 +436,35 @@ mod tests {
         .unwrap_err();
         assert_eq!(NoRoom::of(&refused), Some("the disk is under its floor"), "{refused}");
         assert_eq!(told, [5, 100_005], "told after each file, and stopped at the refusal");
+    }
+
+    #[test]
+    fn data_stating_more_than_a_restore_takes_is_refused_before_it_is_packed() {
+        let src = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("level.dat"), b"level").unwrap();
+        // Sparse: the size is stated, with no blocks behind it for the disk's usage to count.
+        File::create(src.path().join("world.dat")).unwrap().set_len(MAX_UNPACKED_BYTES + 1).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let archive = out.path().join("w.tar.gz");
+        let refused = pack(src.path(), &archive, &[], &mut |_| Ok(())).unwrap_err();
+        assert!(NoRoom::of(&refused).is_some_and(|m| m.contains("more than a restore unpacks")), "{refused}");
+        assert!(fs::metadata(&archive).unwrap().len() < 4 << 20, "none of it was packed");
+    }
+
+    #[test]
+    fn a_long_file_is_stopped_at_the_floor_while_it_is_packed() {
+        let src = tempfile::tempdir().unwrap();
+        File::create(src.path().join("r.0.0.mca")).unwrap().set_len(1 << 30).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let mut told = Vec::new();
+        let refused = pack(src.path(), &out.path().join("w.tar.gz"), &[], &mut |read| {
+            told.push(read);
+            if read > 256 << 20 { Err("the disk is under its floor".into()) } else { Ok(()) }
+        })
+        .unwrap_err();
+        assert_eq!(NoRoom::of(&refused), Some("the disk is under its floor"), "{refused}");
+        // Within a step of the refusal, give or take one of tar's reads.
+        assert!(told.last() < Some(&((256 << 20) + 2 * ROOM_STEP)), "stopped partway: {told:?}");
     }
 
     #[test]
@@ -539,6 +586,16 @@ mod tests {
         ]);
         unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(())).unwrap();
         assert_eq!(fs::read(dir.path().join("out/from/pax.dat")).unwrap(), b"pax");
+    }
+
+    #[test]
+    fn entries_named_for_the_root_count_toward_what_unpacks() {
+        // Neither is unpacked, but tar reads through their data all the same.
+        let data = [7u8; 600];
+        let (dir, archive) =
+            archive_of(&[(".", tar::EntryType::Regular, &data), ("./", tar::EntryType::Regular, &data)]);
+        let err = unpack_at_most(&archive, &dir.path().join("out"), me(), 1000, &mut |_| Ok(())).unwrap_err();
+        assert!(matches!(&err, UnpackError::TooLarge(m) if m == "more than 1000 bytes unpacked"), "{err}");
     }
 
     #[test]

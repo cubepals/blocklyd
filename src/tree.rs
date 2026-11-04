@@ -12,6 +12,8 @@
 //!
 //! - a symlink is reported as a symlink and never followed;
 //! - a directory or file replaced while the walk looks at it is skipped;
+//! - a file under a lease (`F_SETLEASE`, which the file's owner may take) is skipped, not waited
+//!   for;
 //! - a FIFO, socket or device is never opened;
 //! - a file is read through the descriptor that was opened and checked.
 //!
@@ -21,7 +23,7 @@
 
 use std::ffi::{CString, OsStr};
 use std::fs::{self, File, OpenOptions};
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -37,6 +39,14 @@ pub use crate::protocol::Method;
 pub(crate) const MAX_DEPTH: usize = 128;
 /// Entries a walk visits before it gives up: worlds hold thousands.
 pub(crate) const MAX_ENTRIES: u64 = 2_000_000;
+/// Bytes a tree may come to: what a restore unpacks at most (`tarball::MAX_UNPACKED_BYTES`), and
+/// what `copy_tree` and `tarball::pack` take, by the sizes the files state. A world is a few GB.
+/// A sparse file states any size with no blocks behind it, which `disk_usage` doesn't see, and
+/// its holes come out as bytes.
+pub(crate) const MAX_BYTES: u64 = 256 * 1024 * 1024 * 1024;
+/// How often `room` is asked within one file, besides after each: a large file, or a sparse one,
+/// is stopped at the floor partway through.
+pub(crate) const ROOM_STEP: u64 = 1024 * 1024;
 
 /// What the walk saw of an entry, from the descriptor it opened (or, for a link, the link itself).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,7 +93,8 @@ pub struct Walked {
     pub(crate) dirs: u64,
     pub files: u64,
     pub(crate) links: u64,
-    /// FIFOs, sockets, devices, and entries that changed while the walk looked at them.
+    /// FIFOs, sockets, devices, files under a lease, and entries that changed while the walk
+    /// looked at them.
     pub(crate) skipped: u64,
     /// The regular files' sizes when they were opened.
     pub bytes: u64,
@@ -196,7 +207,7 @@ fn descend(
                         if FileType::from_raw_mode(stat.st_mode) == FileType::RegularFile {
                             let meta = Meta::from(&stat);
                             walked.files += 1;
-                            walked.bytes += meta.size;
+                            walked.bytes = walked.bytes.saturating_add(meta.size);
                             let mut file = File::from(fd);
                             visit(Entry { path, meta, kind: Kind::File(&mut file) })
                         } else {
@@ -204,7 +215,9 @@ fn descend(
                             Ok(())
                         }
                     }
-                    Err(e) if vanished(e) => {
+                    // WOULDBLOCK: a lease on the file holds the open off, and NONBLOCK fails it
+                    // rather than wait for the lease's holder.
+                    Err(e) if vanished(e) || e == Errno::WOULDBLOCK => {
                         walked.skipped += 1;
                         Ok(())
                     }
@@ -307,9 +320,10 @@ fn no_reflink(e: Errno) -> bool {
     matches!(e, Errno::OPNOTSUPP | Errno::XDEV | Errno::NOTTY | Errno::NOSYS | Errno::PERM)
 }
 
-/// A long write its caller's `room` stopped: the disk is under the floor the caller keeps. It comes
-/// back inside the `io::Error` that `copy_tree` and `tarball::pack` return, so the caller can tell
-/// it from the disk's own failures (`NoRoom::of`), as `tarball::UnpackError::NoRoom` is told apart.
+/// A long write stopped before the disk could fill: its caller's `room` refused, the disk being
+/// under the floor the caller keeps, or the tree states more than `MAX_BYTES`. It comes back inside
+/// the `io::Error` that `copy_tree` and `tarball::pack` return, so the caller can tell it from the
+/// disk's own failures (`NoRoom::of`), as `tarball::UnpackError::NoRoom` is told apart.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub(crate) struct NoRoom(pub(crate) String);
@@ -326,15 +340,87 @@ impl NoRoom {
     }
 }
 
+/// The bytes `copy_tree` or `tarball::pack` has taken so far, told to its caller's `room` after
+/// each file and every `ROOM_STEP` within one, and held to `MAX_BYTES`.
+pub(crate) struct Progress<'a> {
+    room: &'a mut dyn FnMut(u64) -> Result<(), String>,
+    bytes: u64,
+    next: u64,
+}
+
+impl<'a> Progress<'a> {
+    pub(crate) fn new(room: &'a mut dyn FnMut(u64) -> Result<(), String>) -> Self {
+        Self { room, bytes: 0, next: ROOM_STEP }
+    }
+
+    /// Refuses a file of `size` bytes that would take the tree past `MAX_BYTES`, before any of it
+    /// is read: a restore would refuse the tree anyway.
+    pub(crate) fn admit(&self, path: &Path, size: u64) -> io::Result<()> {
+        if self.bytes.saturating_add(size) > MAX_BYTES {
+            return Err(io::Error::other(NoRoom(format!(
+                "{} takes the data past {MAX_BYTES} bytes, more than a restore unpacks",
+                path.display()
+            ))));
+        }
+        Ok(())
+    }
+
+    /// Counts `n` more bytes, and asks `room` once another `ROOM_STEP` has gone by.
+    fn add(&mut self, n: u64) -> io::Result<()> {
+        self.bytes = self.bytes.saturating_add(n);
+        if self.bytes > MAX_BYTES {
+            return Err(io::Error::other(NoRoom(format!("the data grew past {MAX_BYTES} bytes as it was read"))));
+        }
+        if self.bytes >= self.next { self.ask() } else { Ok(()) }
+    }
+
+    /// Tells `room` the bytes so far; its refusal stops the write.
+    pub(crate) fn ask(&mut self) -> io::Result<()> {
+        self.next = self.bytes.saturating_add(ROOM_STEP);
+        NoRoom::ask(self.room, self.bytes)
+    }
+
+    /// `inner`, counted as it is read.
+    pub(crate) fn reading<R: Read>(&mut self, inner: R) -> impl Read {
+        Counted { inner, progress: self }
+    }
+
+    /// Copies what is left of `file` to `out`, counted, in steps: `room` is asked while a long
+    /// file is copied, not only after it.
+    fn copy(&mut self, file: &mut File, mut out: &File) -> io::Result<()> {
+        loop {
+            match io::copy(&mut (&mut *file).take(ROOM_STEP), &mut out)? {
+                0 => return Ok(()),
+                n => self.add(n)?,
+            }
+        }
+    }
+}
+
+struct Counted<'p, 'a, R> {
+    inner: R,
+    progress: &'p mut Progress<'a>,
+}
+
+impl<R: Read> Read for Counted<'_, '_, R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.progress.add(n as u64)?;
+        Ok(n)
+    }
+}
+
 /// Copies `src` to `dst`, which must not exist yet. Files share blocks with the source where the
 /// filesystem can (XFS with reflink, btrfs), and are copied where it can't (ext4). Symlinks are
 /// copied as symlinks; set-id bits and others' write are dropped, as an unpack drops them.
 /// Everything is given to `owner`, or keeps the source's owner without one. Blocking, at idle
 /// priority (`priority::Idle`).
 ///
-/// After each file `room` is told the bytes copied so far, shared or not, and an `Err` from it
-/// stops the copy (`NoRoom`): the caller keeps the disk above its floor this way. What was copied
-/// until then stays for the caller to remove.
+/// After each file, and every `ROOM_STEP` bytes within one, `room` is told the bytes copied so far,
+/// shared or not, and an `Err` from it stops the copy (`NoRoom`): the caller keeps the disk above
+/// its floor this way. A tree that states more than `MAX_BYTES` is stopped the same way, before
+/// the file that takes it past is copied. What was copied until then stays for the caller to
+/// remove.
 ///
 /// `dst` must lie where the workload can't reach (a snapshot, a restore's staging directory):
 /// it is written by path.
@@ -346,7 +432,8 @@ pub fn copy_tree(
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> io::Result<Copied> {
     let _idle = crate::priority::Idle::enter();
-    let (mut reflink, mut cloned, mut copied, mut bytes) = (true, false, false, 0u64);
+    let (mut reflink, mut cloned, mut copied) = (true, false, false);
+    let mut progress = Progress::new(room);
     let walked = walk(src, exclude, &mut |entry| {
         let target = dst.join(entry.path);
         let (uid, gid) = owner.unwrap_or((entry.meta.uid, entry.meta.gid));
@@ -357,6 +444,7 @@ pub fn copy_tree(
                 std::os::unix::fs::lchown(&target, Some(uid), Some(gid))
             }
             Kind::File(file) => {
+                progress.admit(entry.path, entry.meta.size)?;
                 let out = OpenOptions::new()
                     .write(true)
                     .create_new(true)
@@ -369,6 +457,7 @@ pub fn copy_tree(
                         Ok(()) => {
                             done = true;
                             cloned = true;
+                            progress.add(entry.meta.size)?;
                         }
                         Err(e) if no_reflink(e) => reflink = false,
                         // Some files can't be shared where others can (EINVAL); copy just this one.
@@ -376,16 +465,14 @@ pub fn copy_tree(
                     }
                 }
                 if !done {
-                    let mut out = &out;
-                    io::copy(file, &mut out)?;
+                    progress.copy(file, &out)?;
                     copied = true;
                 }
                 std::os::unix::fs::fchown(&out, Some(uid), Some(gid))?;
                 out.set_permissions(fs::Permissions::from_mode(entry.meta.mode & 0o755))?;
                 let at = Timespec { tv_sec: entry.meta.mtime, tv_nsec: entry.meta.mtime_nsec as _ };
                 rustix::fs::futimens(&out, &Timestamps { last_access: at, last_modification: at })?;
-                bytes += entry.meta.size;
-                NoRoom::ask(room, bytes)
+                progress.ask()
             }
             Kind::Link(to) => {
                 std::os::unix::fs::symlink(to, &target)?;
@@ -659,5 +746,40 @@ mod tests {
         assert_eq!(told, [3, 3 + 17, 3 + 17 + 5]);
         assert!(!dir.path().join("copy/world/region").exists(), "nothing after the refusal");
         assert_eq!(NoRoom::of(&io::Error::other("a disk's own failure")), None);
+    }
+
+    #[test]
+    fn a_tree_stating_more_than_a_restore_takes_is_refused_before_it_is_copied() {
+        let dir = tree();
+        let root = dir.path().join("data");
+        // Sparse: the size is stated, with no blocks behind it for the disk's usage to count.
+        File::create(root.join("world/huge")).unwrap().set_len(MAX_BYTES + 1).unwrap();
+        let dst = dir.path().join("copy");
+        let refused = copy_tree(&root, &dst, Some(me()), &[], &mut |_| Ok(())).unwrap_err();
+        assert!(NoRoom::of(&refused).is_some_and(|m| m.contains("more than a restore unpacks")), "{refused}");
+        assert!(disk_usage(&dst).unwrap() < 4 << 20, "none of it was copied");
+    }
+
+    #[test]
+    fn a_long_file_is_stopped_at_the_floor_while_it_is_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("data");
+        fs::create_dir_all(&root).unwrap();
+        File::create(root.join("huge")).unwrap().set_len(1 << 30).unwrap();
+        let mut told = Vec::new();
+        let refused = copy_tree(&root, &dir.path().join("copy"), Some(me()), &[], &mut |copied| {
+            told.push(copied);
+            if copied > 256 << 20 { Err("the disk is under its floor".into()) } else { Ok(()) }
+        })
+        .unwrap_err();
+        assert_eq!(NoRoom::of(&refused), Some("the disk is under its floor"), "{refused}");
+        if reflink_supported(dir.path()) {
+            // Shared, the file takes no space, and is told whole once cloned.
+            assert_eq!(told, [1 << 30]);
+        } else {
+            // Copied, its holes come out as bytes, and `room` is asked as they land.
+            assert_eq!(told.last(), Some(&((256 << 20) + ROOM_STEP)), "stopped partway: {told:?}");
+            assert!(fs::metadata(dir.path().join("copy/huge")).unwrap().len() <= (256 << 20) + ROOM_STEP);
+        }
     }
 }
