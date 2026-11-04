@@ -460,7 +460,9 @@ feature takes `parts`; an older one refuses the field as unknown.
 `200 ExportResponse { sizeBytes, sha256, format: "tar.gz", entries, durationMs, parts? }`. Upload
 failures are `502 transfer_failed`; too little disk for the spool is `507 insufficient_disk`, up
 front or once free disk falls under the floor while the spool is written (blocklyd looks every
-256 MiB).
+256 MiB, within a file too). Data whose files state more than 256 GiB in all, more than a restore
+unpacks, gets the same answer before the file that takes it past is read: a sparse file counts at
+the size it states.
 
 ### `POST /v1/workloads/{id}/restore`
 
@@ -500,7 +502,7 @@ caller's (Blockly's archive id, a UUID; the workload-id rules apply).
   one that can't (ext4), it is a full copy. Either way it needs the data's full size free above
   the floor (`507 insufficient_disk`): a copy that shares blocks takes as much as a plain one once
   the world moves on. It is stopped with the same answer, and removed, if free disk falls under the
-  floor while it copies.
+  floor while it copies, or if the data's files state more than 256 GiB, as an export is.
 - The same rules as an export: a running workload only with `quiesced: true`, only the current
   copy, and the same walk that never leaves the data directory.
 - Asking again with the same id answers `200` with the snapshot already made (`created: false`).
