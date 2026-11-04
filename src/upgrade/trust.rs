@@ -20,8 +20,10 @@
 //! <sha256, lowercase hex>
 //! ```
 //!
-//! The keys are the PEM blocks in `deploy/release-keys.pem`, compiled in. A new key is added there
-//! a release before release.yml signs with it, and the old one goes a release after.
+//! The keys are the PEM blocks in `deploy/release-keys.pem`, compiled in: the release key, which
+//! release.yml signs with, and a recovery key, which signs only the release that replaces a release
+//! key that is lost or leaks. A new key is added there a release before release.yml signs with it,
+//! and the old one goes a release after.
 
 use rustls_pki_types::SubjectPublicKeyInfoDer;
 use rustls_pki_types::pem::PemObject;

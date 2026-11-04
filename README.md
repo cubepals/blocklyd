@@ -157,7 +157,9 @@ and the binary's sha256. The key is the `release` environment's `BLOCKLYD_RELEAS
 `main` can use; its public half is in [`deploy/release-keys.pem`](deploy/release-keys.pem), and
 `release.yml` signs nothing with a key that isn't there. To change keys, a release adds the new
 public key to that file, the secret changes after nodes run it, and a later release drops the old
-key.
+key. The file also holds a recovery key, which signs nothing day to day. Nodes take only what a key
+they already hold signed, so if the release key is lost or leaks, the recovery key, set as the
+secret for that one release, signs the release that brings a new release key and drops the old.
 
 Cubepals pins one release by digest (`bun scripts/blocklyd.ts bump <version>` there) and serves
 that binary to the hosts that join its fleet.
@@ -180,8 +182,8 @@ file's SHA-256: the check fails for a file that was changed after the build, and
 workflow never built. `sha256sum -c SHA256SUMS` then checks the rest against the list the
 attestation covers.
 
-The signature checks with OpenSSL against this repository's `deploy/release-keys.pem` (OpenSSL
-takes the file's first key; while it holds two, try each):
+The signature checks with OpenSSL against this repository's `deploy/release-keys.pem`, whose first
+key, the one OpenSSL takes, is the release key:
 
 ```sh
 printf 'blocklyd release\n%s\n%s\n' <version> "$(sha256sum blocklyd | cut -d' ' -f1)" > statement
