@@ -108,6 +108,15 @@ impl Config {
         if self.workloads.allowed_images.is_empty() {
             return bad("workloads.allowed_images needs at least one prefix".into());
         }
+        // A prefix is matched as text, so one that stops inside a name admits more than it says:
+        // `ghcr.io/cubepals` admits `ghcr.io/cubepalsx/…`, and a registry's host admits a longer
+        // host that starts with it.
+        if let Some(prefix) = self.workloads.allowed_images.iter().find(|p| !p.ends_with(['/', ':', '@'])) {
+            return bad(format!(
+                "workloads.allowed_images entry {prefix:?} must end in '/', ':' or '@', where a path, a tag or a \
+                 digest starts"
+            ));
+        }
         if !(0.5..=4.0).contains(&self.capacity.memory_overcommit) {
             return bad("capacity.memory_overcommit is between 0.5 and 4.0".into());
         }
