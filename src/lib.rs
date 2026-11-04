@@ -21,6 +21,7 @@ pub mod host;
 pub(crate) mod http_client;
 pub mod ids;
 pub(crate) mod infer;
+pub mod isolation;
 pub mod labels;
 pub mod manager;
 pub mod metrics;

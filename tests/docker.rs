@@ -521,3 +521,75 @@ async fn with_docker_gone_the_daemon_answers_and_says_why() {
     assert!(matches!(err, NodeError::RuntimeUnavailable(_)), "{err:?}");
     assert!(started.elapsed() < Duration::from_secs(2), "fails fast, doesn't hang");
 }
+
+/// The host's address on its default route: where a node publishes its servers, and an address the
+/// workloads' bridge reaches, as it doesn't loopback.
+fn host_address() -> std::net::IpAddr {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    // TEST-NET-1 (RFC 5737). Connecting a UDP socket only chooses its route: nothing is sent.
+    socket.connect("192.0.2.1:9").unwrap();
+    socket.local_addr().unwrap().ip()
+}
+
+/// Removes a test's own nftables table when the test ends, passed or panicked.
+struct Rules(String);
+
+impl Drop for Rules {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("nft").args(["delete", "table", "inet", &self.0]).output();
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs Docker, and root for nftables"]
+async fn isolation_keeps_a_workload_off_another_s_published_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let dep = deployment();
+    let _cleanup = Cleanup(dep.clone());
+    let (host, network, table) = (host_address(), format!("blockly-{dep}"), format!("blocklyd_{dep}"));
+    let _rules = Rules(table.clone());
+    let low = 44000 + dep[1..4].parse::<u16>().unwrap() * 10;
+    let text = format!(
+        "deployment_id = \"{dep}\"\n[docker]\nnetwork = \"{network}\"\n[network]\nport_range = [{low}, {}]\n\
+         port_quarantine_seconds = 0\nedge_ips = [\"{host}\"]\ncontrol_ips = [\"{host}\"]\n{HOST_OWNERSHIP}",
+        low + 9
+    );
+    let m = manager_probed(dir.path(), docker(), &text, blocklyd::ports::bind_probe(vec![host]));
+    assert!(m.reconcile(Records::FromDisk).await.error.is_none());
+    let game = blocklyd::minecraft::GAME_PORT;
+    let listener = format!("nc -lk -p {game} -e echo server-answered & while true; do sleep 1; done");
+    m.ensure(id("server"), shell(&listener, 128), Precondition::None, None).await.unwrap();
+    m.ensure(id("neighbour"), shell(SERVER, 128), Precondition::None, None).await.unwrap();
+    m.start(id("server"), None).await.unwrap();
+    m.start(id("neighbour"), None).await.unwrap();
+    let port = m.view(&id("server")).unwrap().ports[0].host_port;
+    let dial = format!("for i in 1 2 3 4 5; do nc -w 2 {host} {port} </dev/null && break; sleep 1; done");
+    let from_neighbour = || {
+        let request = ExecRequest { command: vec!["sh".into(), "-c".into(), dial.clone()], timeout_seconds: 20 };
+        m.exec(id("neighbour"), request, None, None)
+    };
+    let before = from_neighbour().await.unwrap();
+    assert!(before.stdout.contains("server-answered"), "without the rules, Docker's proxy hands it on: {before:?}");
+
+    let bridge = DockerRuntime::new(&DockerConfig::default().socket).unwrap().bridge_of(&network).await.unwrap();
+    assert_eq!(bridge.as_deref(), Some(blocklyd::runtime::docker::bridge_name(&network).as_str()));
+    let rules = blocklyd::isolation::ruleset(&table, &bridge.unwrap(), &(low..=low + 9), 7443);
+    blocklyd::isolation::apply(&rules).unwrap();
+    let after = from_neighbour().await.unwrap();
+    assert!(!after.stdout.contains("server-answered"), "with them, the neighbour gets nothing: {after:?}");
+
+    // What the edge does, from outside the bridge, still reaches it.
+    let edge = tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let mut stream = std::net::TcpStream::connect_timeout(&(host, port).into(), Duration::from_secs(5)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut answer = String::new();
+        let _ = stream.read_to_string(&mut answer);
+        answer
+    })
+    .await
+    .unwrap();
+    assert!(edge.contains("server-answered"), "the edge's path is untouched: {edge:?}");
+    cleanup(&m, &["server", "neighbour"]).await;
+    let _ = std::process::Command::new("docker").args(["network", "rm", &network]).output();
+}
