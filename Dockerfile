@@ -8,7 +8,9 @@
 # The Rust is rust-toolchain.toml's, which isn't copied in: the tag says the same version, and CI
 # fails if they differ. It comes from Google's mirror of Docker's official images: Docker Hub caps
 # anonymous pulls per IP, CI runners share IPs, and AWS's mirror refuses them past a data limit.
-FROM mirror.gcr.io/library/rust:1.99.1-alpine3.22 AS build
+# Pinned by digest as well as tag, as Cubepals' images are, so a release is built from the image
+# that was reviewed and a tag moved upstream can't change it. A Rust bump updates both.
+FROM mirror.gcr.io/library/rust:1.99.1-alpine3.24@sha256:27cd9befd4a05d6f6eb407c3e28365f5092f008bfc5946207cca76ae5179ef23 AS build
 RUN apk add --no-cache musl-dev file
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
