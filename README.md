@@ -72,7 +72,7 @@ blocklyd --version
 blocklyd can't own, and logs the rest (Docker down, live-restore off, no reflink) as warnings,
 since blocklyd runs through all of them. With a `[fleet]` section the
 node enrolls and takes its identity from the control plane, and upgrades itself when a heartbeat's
-answer offers it a newer blocklyd ([fleet-operations.md
+answer offers it a newer blocklyd release, signed as every release is ([fleet-operations.md
 §9](https://github.com/cubepals/cubepals/blob/main/docs/fleet-operations.md#9-upgrading-blocklyd)); without one it is a standalone daemon
 with certificates you give it (`blocklyd dev-certs` makes throwaway ones), which local
 development uses.
@@ -105,6 +105,12 @@ development uses.
   never followed. Either way the new data is put together beside the old, within the disk's floor,
   and swapped in with one atomic exchange: a crash leaves the old world or the new, and what it cut
   short is settled at startup.
+- **Only a release upgrades it.** It installs a blocklyd the control plane offers only with that
+  release's signature: Ed25519, by a key only `release.yml` holds, of the version and the binary's
+  sha256, checked against the keys compiled into it ([`deploy/release-keys.pem`](deploy/release-keys.pem))
+  before anything is downloaded. It never goes back to an older version. Neither the control plane
+  nor its fleet CA can sign, so neither can have hosts run a blocklyd of its own
+  ([`src/upgrade/trust.rs`](src/upgrade/trust.rs)).
 - **Its key never leaves the host.** Enrollment and renewal send certificate requests; the files
   under `/var/lib/blocklyd/identity` are switched by one atomic rename. Until enrolled, every attempt
   asks for one key, kept on disk, so an answer lost on the way can be asked for again.
@@ -141,10 +147,19 @@ A pull request that raises `version` in `Cargo.toml` is a release. Once it has m
 passed on that commit of `main`, [`release.yml`](.github/workflows/release.yml) tags `v<version>`
 on it and publishes:
 
-- a GitHub Release, immutable, with the static `blocklyd` binary (x86_64, musl), `SHA256SUMS`,
-  `node-reads.openapi.json` and `node-writes.openapi.json`, `deploy/daemon.json`,
+- a GitHub Release, immutable, with the static `blocklyd` binary (x86_64, musl), `blocklyd.sig`,
+  `SHA256SUMS`, `node-reads.openapi.json` and `node-writes.openapi.json`, `deploy/daemon.json`,
   `deploy/blocklyd.service` and `LICENSE.md`, each with a build-provenance attestation;
 - `ghcr.io/cubepals/blocklyd:<version>`, a `FROM scratch` image of the same files, attested.
+
+`blocklyd.sig` is what nodes check before they upgrade: the release key's signature of the version
+and the binary's sha256. The key is the `release` environment's `BLOCKLYD_RELEASE_KEY`, which only
+`main` can use; its public half is in [`deploy/release-keys.pem`](deploy/release-keys.pem), and
+`release.yml` signs nothing with a key that isn't there. To change keys, a release adds the new
+public key to that file, the secret changes after nodes run it, and a later release drops the old
+key. The file also holds a recovery key, which signs nothing day to day. Nodes take only what a key
+they already hold signed, so if the release key is lost or leaks, the recovery key, set as the
+secret for that one release, signs the release that brings a new release key and drops the old.
 
 Cubepals pins one release by digest (`bun scripts/blocklyd.ts bump <version>` there) and serves
 that binary to the hosts that join its fleet.
@@ -166,6 +181,14 @@ workflow, so a build from any other workflow of this repository fails it. The at
 file's SHA-256: the check fails for a file that was changed after the build, and for one this
 workflow never built. `sha256sum -c SHA256SUMS` then checks the rest against the list the
 attestation covers.
+
+The signature checks with OpenSSL against this repository's `deploy/release-keys.pem`, whose first
+key, the one OpenSSL takes, is the release key:
+
+```sh
+printf 'blocklyd release\n%s\n%s\n' <version> "$(sha256sum blocklyd | cut -d' ' -f1)" > statement
+openssl pkeyutl -verify -pubin -inkey deploy/release-keys.pem -rawin -in statement -sigfile blocklyd.sig
+```
 
 Within protocol v1 a release only adds (see [docs/protocol.md](docs/protocol.md)), so a node and
 a control plane one release apart always understand each other.

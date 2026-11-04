@@ -164,6 +164,11 @@ pub struct UpgradeFailure {
 pub struct UpgradeOffer {
     pub(crate) version: String,
     pub(crate) sha256: String,
+    /// The release's Ed25519 signature of `version` and `sha256`, in hex: its `blocklyd.sig`,
+    /// which the control plane passes on (upgrade/trust.rs). A node that lists `signed-upgrade`
+    /// installs nothing without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) signature: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

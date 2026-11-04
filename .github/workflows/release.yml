@@ -1,8 +1,9 @@
 name: Release
 
 # A commit on main whose CI passed, and whose Cargo.toml version has no tag yet, is a release:
-# v<version> is tagged on that commit, and the binary, its specs, its deploy files and its licence
-# are published, attested, as an immutable GitHub Release and as ghcr.io/cubepals/blocklyd:<version>.
+# v<version> is tagged on that commit, and the binary, its signature by the release key, its specs,
+# its deploy files and its licence are published, attested, as an immutable GitHub Release and as
+# ghcr.io/cubepals/blocklyd:<version>.
 # Any other commit does nothing. Agents never push tags; this does.
 on:
   # Safe here: the job runs only for CI on a push to this repository's main, never a fork's run.
@@ -20,19 +21,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  version:
+    name: Is this version released?
     if: >-
       github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success'
       && github.event.workflow_run.event == 'push'
       && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
-    permissions:
-      contents: write
-      packages: write
-      id-token: write
-      attestations: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      new: ${{ steps.version.outputs.new }}
     env:
-      IMAGE: ghcr.io/cubepals/blocklyd
       GH_TOKEN: ${{ github.token }}
       # The commit CI passed on, or main's head when run by hand.
       SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -41,8 +40,7 @@ jobs:
         with:
           ref: ${{ env.SHA }}
           persist-credentials: false
-      - name: Is this version released?
-        id: version
+      - id: version
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -52,15 +50,32 @@ jobs:
           else
             echo "new=true" >> "$GITHUB_OUTPUT"
           fi
+
+  release:
+    needs: version
+    if: needs.version.outputs.new == 'true'
+    runs-on: ubuntu-24.04
+    # The release key is this environment's secret, which only main may use: a run of a workflow
+    # edited on a branch can't read it.
+    environment: release
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/cubepals/blocklyd
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      version: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
       - name: Build
-        if: steps.version.outputs.new == 'true'
-        env:
-          version: ${{ steps.version.outputs.version }}
         run: docker build -t "$IMAGE:$version" .
       - name: The binary says its version, and the files
-        if: steps.version.outputs.new == 'true'
-        env:
-          version: ${{ steps.version.outputs.version }}
         run: |
           [ "$(docker run --rm "$IMAGE:$version" --version)" = "blocklyd $version" ]
           mkdir -p dist
@@ -70,12 +85,26 @@ jobs:
             docker cp "$id:/$f" "dist/$(basename "$f")"
           done
           docker rm "$id" > /dev/null
-          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
-      - name: Push the image
-        if: steps.version.outputs.new == 'true'
-        id: push
+      # What a node checks before it upgrades (src/upgrade/trust.rs): the version and the binary's
+      # sha256, signed with a key whose public half is in deploy/release-keys.pem, or no node would
+      # take the release.
+      - name: Sign the version and the binary's sha256
         env:
-          version: ${{ steps.version.outputs.version }}
+          RELEASE_KEY: ${{ secrets.BLOCKLYD_RELEASE_KEY }}
+        run: |
+          [ -n "$RELEASE_KEY" ] || { echo "The release environment has no BLOCKLYD_RELEASE_KEY."; exit 1; }
+          printf 'blocklyd release\n%s\n%s\n' "$version" "$(sha256sum dist/blocklyd | cut -d' ' -f1)" > statement
+          printf '%s\n' "$RELEASE_KEY" | openssl pkey -pubout -out release-key.pub
+          grep -qxF "$(sed -n 2p release-key.pub)" deploy/release-keys.pem ||
+            { echo "BLOCKLYD_RELEASE_KEY's public half isn't in deploy/release-keys.pem."; exit 1; }
+          printf '%s\n' "$RELEASE_KEY" | openssl pkeyutl -sign -inkey /dev/stdin -rawin -in statement -out dist/blocklyd.sig
+          openssl pkeyutl -verify -pubin -inkey release-key.pub -rawin -in statement -sigfile dist/blocklyd.sig
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
+      # Beside the binary in the image too, for the control plane that carries it to pass on.
+      - name: Put the signature in the image
+        run: printf 'FROM %s\nCOPY blocklyd.sig /blocklyd.sig\n' "$IMAGE:$version" | docker build -q -t "$IMAGE:$version" -f - dist
+      - name: Push the image
+        id: push
         run: |
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push -q "$IMAGE:$version"
@@ -83,20 +112,16 @@ jobs:
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
           echo "$IMAGE:$version@$digest"
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: steps.version.outputs.new == 'true'
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        if: steps.version.outputs.new == 'true'
         with:
           subject-path: dist/*
       # Drafted with every file, then published: an immutable release can't take files after.
       - name: Publish the release
-        if: steps.version.outputs.new == 'true'
         env:
-          version: ${{ steps.version.outputs.version }}
           digest: ${{ steps.push.outputs.digest }}
         run: |
           cat > notes.md <<NOTES
@@ -109,6 +134,9 @@ jobs:
           gh attestation verify blocklyd -R $GITHUB_REPOSITORY
           gh attestation verify oci://$IMAGE:$version -R $GITHUB_REPOSITORY
           \`\`\`
+
+          \`blocklyd.sig\` is the release key's signature that nodes check before they upgrade
+          (the README's "Verify a release").
           NOTES
           gh release create "v$version" dist/* --draft --target "$SHA" \
             --title "blocklyd $version" --notes-file notes.md

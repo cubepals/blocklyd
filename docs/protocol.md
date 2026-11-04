@@ -99,7 +99,7 @@ the container label `blocklyd.epoch`). Each verb checks it against the copy's ow
   "features": ["exec-idempotency-key", "logs-follow-across-restarts", "conditional-put",
                "placement-epochs", "data-transfer", "local-snapshots", "export-exclude",
                "execution-lease", "certificate-renewal", "resume-after-reboot", "multipart-upload",
-               "self-upgrade", "suspend"],
+               "self-upgrade", "suspend", "signed-upgrade"],
   "nodeId": "fra-box-1",
   "deploymentId": "staging"
 }
@@ -591,6 +591,10 @@ checked before it is used:
   plane's image carries, and `<sha256 hex>  blocklyd`, which `sha256sum -c` reads. Without the
   binary both are `404`, in plain text saying why.
 
+An enrolled node's `blocklyd upgrade` also asks for `GET /fleet/v1/blocklyd.json`: the offer a
+heartbeat's answer makes (below), `{ "version": "…", "sha256": "…", "signature": "…" }`, which it
+checks the same way.
+
 **The join token.** `bk1.` and base64url (no padding) of
 `{"u": "<endpoint URL>", "h": "<sha256 hex of ca.pem as served>", "d": "<deployment>", "s": "<secret>"}`,
 and `"n": "<node id>"` in a token that re-enrolls a node. `blocklyd join` and enrollment read it
@@ -685,11 +689,16 @@ With the node's clientAuth certificate, every `heartbeat_seconds` (5).
   only stops what the node would do unasked.
 - `renew: true` says the node's certificates end within the control plane's renewal window. The
   answer leaves `renew` out otherwise.
-- `upgrade: { "version": "0.3.0", "sha256": "…" }` offers the node the blocklyd the endpoint serves
-  at `GET /fleet/v1/blocklyd`, to a node that lists `self-upgrade`; the answer leaves it out
-  otherwise, and a node without the feature ignores it. blocklyd downloads it over this same mutual
-  TLS and installs it only if its sha256 is the one offered and `--version` prints the version
-  offered. It keeps the binary it ran as `blocklyd.prev`, renames the new one into place under the
+- `upgrade: { "version": "0.3.0", "sha256": "…", "signature": "…" }` offers the node the blocklyd
+  the endpoint serves at `GET /fleet/v1/blocklyd`, to a node that lists `self-upgrade`; the answer
+  leaves it out otherwise, and a node without the feature ignores it. `signature` is the release's
+  `blocklyd.sig` in hex: release.yml's Ed25519 signature of the version and sha256, by a key only
+  that workflow holds ([`src/upgrade/trust.rs`](../src/upgrade/trust.rs) says what is signed). A
+  node that lists `signed-upgrade` takes an offer only with a signature a key compiled into it
+  made for that version and sha256, and only of a version no older than its own; it downloads
+  nothing otherwise, and reports the offer failed. A control plane with no signature for its
+  blocklyd offers it to none of them. blocklyd downloads it over this same mutual TLS and installs
+  it only if its sha256 is the one offered and `--version` prints the version offered. It keeps the binary it ran as `blocklyd.prev`, renames the new one into place under the
   state directory (`bin/blocklyd`, which `/usr/local/bin/blocklyd` links to), and exits cleanly
   so systemd starts it; workloads keep running. The new binary is on trial
   (`upgrade/trial.json`) until it has reconciled and a heartbeat is accepted, within 120 seconds;

@@ -71,6 +71,7 @@ pub(crate) const FEATURES: &[&str] = &[
     "multipart-upload",
     "self-upgrade",
     "suspend",
+    "signed-upgrade",
 ];
 
 impl ProtocolVersions {

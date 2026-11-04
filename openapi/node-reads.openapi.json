@@ -500,6 +500,13 @@
           "sha256": {
             "type": "string"
           },
+          "signature": {
+            "description": "The release's Ed25519 signature of `version` and `sha256`, in hex: its `blocklyd.sig`,\nwhich the control plane passes on (upgrade/trust.rs). A node that lists `signed-upgrade`\ninstalls nothing without it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "version": {
             "type": "string"
           }
