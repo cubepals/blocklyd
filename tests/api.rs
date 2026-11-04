@@ -207,6 +207,10 @@ async fn refused_handshakes_never_flood_the_log() {
         .finish();
     let _guard = tracing::subscriber::set_default(subscriber);
     let e = env().await;
+    // Each log line caches whether anyone listens, worked out by the first thread to reach it.
+    // Another test refusing a handshake on its own thread, with no subscriber, can reach it while
+    // this one is being set, and leave it cached as unheard: worked out again now, it is heard.
+    tracing::callsite::rebuild_interest_cache();
     for _ in 0..100 {
         let mut garbage = TcpStream::connect(e.server.addr).await.unwrap();
         garbage.write_all(b"GET / HTTP/1.1\r\nhost: localhost\r\n\r\n").await.unwrap();
