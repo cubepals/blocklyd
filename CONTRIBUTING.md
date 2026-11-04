@@ -12,6 +12,7 @@ APIs; on macOS, work in a Linux container or VM).
 ```sh
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked -- -D warnings                 # as the release builds, without the fake runtime
 cargo test --locked
 sudo cargo test --locked --test docker -- --ignored   # against a real Docker daemon
 cargo deny --locked check

@@ -78,6 +78,9 @@ jobs:
           restore-keys: test-${{ steps.rust.outputs.version }}-
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
+      # Again as the release builds it, without the fake runtime. The tests turn it on for every
+      # target above, so something only the fake runtime uses is caught only here.
+      - run: cargo clippy --locked -- -D warnings
       # One implementation of the structure rules for both repositories: Cubepals'
       # scripts/check-structure.ts, which reads a repository that is one crate as this one, against
       # structure-baseline.json here. --rust holds clippy's complexity lints to it too. Pinned to a
