@@ -151,7 +151,9 @@ pub struct RawStats {
 /// A container's process ended: Docker's event action for it (the Engine API's `/events`), which
 /// bollard passes on as a string.
 pub const DIED: &str = "die";
-/// A container started: Docker's event action for it.
+/// A container started: Docker's event action for it. Only the fake runtime names it: Docker's
+/// runtime passes Docker's own action on, and nothing compares an action with this one.
+#[cfg(any(test, feature = "fake"))]
 pub(crate) const STARTED: &str = "start";
 
 /// Something happened to a container. A hint to look again, never the truth itself.
