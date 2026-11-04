@@ -92,23 +92,37 @@ impl Manager {
     /// The spec a `PUT` deferred, whole, for its workload's next boot. Memory holds it with its
     /// secret values; after a restart of blocklyd they are taken from the container it replaces,
     /// which runs with them. A deferred spec naming a secret that container lacks can't be made
-    /// here and is dropped: the control plane, seeing the old digest, sends it again.
+    /// here and is dropped: the control plane, seeing the old digest, sends it again. So is one
+    /// the host's policy no longer admits (an image prefix taken out of `allowed_images` since its
+    /// `PUT`, say): it is checked again here, against the policy blocklyd runs with now.
     fn boot_spec(&self, record: &WorkloadRecord, info: &ContainerInfo) -> Option<WorkloadSpec> {
         let suspend = self.suspension(&record.id);
         let pending = suspend.pending?;
         let held = self.state.lock().unwrap().pending.get(&record.id).cloned();
-        if let Some(spec) = held.filter(|spec| spec.record().digest() == pending.spec_digest) {
-            return Some(spec);
-        }
-        let spec = pending.spec.with_secrets(&info.env, suspend.resumes_on);
-        if spec.is_none() {
+        let spec = match held.filter(|spec| spec.record().digest() == pending.spec_digest) {
+            Some(spec) => spec,
+            None => {
+                let Some(spec) = pending.spec.with_secrets(&info.env, suspend.resumes_on) else {
+                    tracing::warn!(
+                        workload = %record.id,
+                        deferred = %pending.spec_digest,
+                        "the deferred spec names a secret this node no longer holds; booting the current spec"
+                    );
+                    return None;
+                };
+                spec
+            }
+        };
+        if let Err(problems) = spec.validate(&self.spec_policy()) {
             tracing::warn!(
                 workload = %record.id,
                 deferred = %pending.spec_digest,
-                "the deferred spec names a secret this node no longer holds; booting the current spec"
+                ?problems,
+                "the deferred spec breaks this host's policy now; booting the current spec"
             );
+            return None;
         }
-        spec
+        Some(spec)
     }
 
     /// Ends what the workload kept for its suspension: that it was asked to, and, when it boots

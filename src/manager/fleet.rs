@@ -43,11 +43,13 @@ impl Manager {
     /// The control plane answered a heartbeat sent at `sent`, granting `seconds` of execution
     /// lease (or `restart_requires_contact_seconds` from a control plane that names none). The
     /// answer's fences must be applied before this: a resume waiting for the lease goes ahead at
-    /// once.
+    /// once. A lease longer than a `Duration` can count runs until the longest it can, rather than
+    /// overflow: a panic would stop blocklyd, and the next answer would stop it again.
     pub fn grant_lease(&self, seconds: Option<u64>, sent: Instant) {
         let fallback = self.config.fleet.as_ref().map_or(0, |f| f.restart_requires_contact_seconds);
         let sent = boottime().saturating_sub(sent.elapsed());
-        self.fleet.lock().unwrap().lease_until = Some(sent + Duration::from_secs(seconds.unwrap_or(fallback)));
+        let until = sent.saturating_add(Duration::from_secs(seconds.unwrap_or(fallback)));
+        self.fleet.lock().unwrap().lease_until = Some(until);
         let mut state = self.state.lock().unwrap();
         if !state.resuming.is_empty() {
             let now = Instant::now();

@@ -363,7 +363,10 @@ async fn serve(path: &Path) -> anyhow::Result<()> {
         app,
         manager.clone(),
         cancel.clone(),
-        Duration::from_secs(config.api.shutdown_grace_seconds),
+        api::Bounds {
+            grace: Duration::from_secs(config.api.shutdown_grace_seconds),
+            handshakes: api::HandshakeLimits::default(),
+        },
     ));
     info!(
         api = %config.api.listen,

@@ -247,6 +247,27 @@ async fn a_restart_of_the_host_ends_the_sleep_and_resumes_nothing() {
 }
 
 #[tokio::test]
+async fn a_deferred_spec_the_hosts_policy_no_longer_admits_never_boots() {
+    let f = suspended("").await;
+    let other_image = spec_with(|v| {
+        v["resumesOn"] = "1.21.8".into();
+        v["image"] = "itzg/minecraft-server:java21".into();
+    });
+    let r = f.manager.ensure(id("w"), other_image.clone(), Precondition::None, None).await.unwrap();
+    assert_eq!(r.outcome, EnsureOutcome::Deferred);
+    // blocklyd restarts with that image's prefix taken out of its allowed images.
+    let again = support::manager_on(f.dir.path(), f.fake.clone(), "[workloads]\nallowed_images = [\"alpine:\"]\n");
+    assert!(again.reconcile(Records::FromDisk).await.error.is_none());
+    assert_eq!(again.view(&id("w")).unwrap().pending_spec_digest, Some(digest(&other_image)));
+    again.stop(id("w"), None, None).await.unwrap();
+    let r = again.start(id("w"), None).await.unwrap();
+    assert_eq!(r.workload.state, WorkloadState::Running);
+    assert_eq!(r.workload.spec_digest, digest(&sleepy()), "what it had boots instead");
+    assert_eq!(r.workload.pending_spec_digest, None, "the deferred spec is dropped");
+    assert_eq!(f.fake.count_calls("create "), 1, "no container made from it: the old one starts again");
+}
+
+#[tokio::test]
 async fn over_http_suspend_takes_the_epoch_and_old_answers_stay_as_they_were() {
     let f = fixture("").await;
     let pki = pki(f.dir.path());

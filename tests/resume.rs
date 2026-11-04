@@ -95,6 +95,17 @@ async fn in_a_fleet_the_resume_waits_for_the_lease() {
 }
 
 #[tokio::test]
+async fn a_lease_too_long_to_count_is_held_rather_than_stopping_blocklyd() {
+    let (dir, fake) = running_then_host_down(true).await;
+    let second = after_restart(dir.path(), &fake, true).await;
+    second.fleet_contact(Ok(Lifecycle::Active), Duration::from_millis(3));
+    second.grant_lease(Some(u64::MAX), Instant::now());
+    until(&second, WorkloadState::Running).await;
+    let metrics = second.metrics.render(&second);
+    assert!(metrics.contains("blocklyd_fleet_lease_remaining_seconds "), "{metrics}");
+}
+
+#[tokio::test]
 async fn a_node_held_lost_resumes_nothing_now_or_after_the_next_restart() {
     let (dir, fake) = running_then_host_down(true).await;
     let second = after_restart(dir.path(), &fake, true).await;

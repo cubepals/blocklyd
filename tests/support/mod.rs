@@ -226,6 +226,11 @@ pub(crate) struct Server {
 }
 
 pub(crate) async fn serve(manager: Arc<Manager>) -> Server {
+    serve_with(manager, api::HandshakeLimits::default()).await
+}
+
+/// `serve`, with these caps on TLS handshakes in progress.
+pub(crate) async fn serve_with(manager: Arc<Manager>, handshakes: api::HandshakeLimits) -> Server {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let config = manager.config.clone();
     let tls_material = config.api.tls.clone().expect("tests run single-node");
@@ -241,7 +246,7 @@ pub(crate) async fn serve(manager: Arc<Manager>) -> Server {
         app,
         manager,
         cancel.clone(),
-        Duration::from_secs(2),
+        api::Bounds { grace: Duration::from_secs(2), handshakes },
     ));
     Server { addr, cancel, task }
 }
@@ -261,16 +266,12 @@ impl Response {
     }
 }
 
-/// One HTTPS request as `identity` (or anonymously). Err is a refused handshake.
-pub(crate) async fn request(
-    addr: SocketAddr,
+/// TLS over `tcp`, to the test server, as `identity` (or anonymously).
+pub(crate) async fn tls_over(
+    tcp: tokio::net::TcpStream,
     ca_pem: &str,
     identity: Option<&Identity>,
-    method: &str,
-    path: &str,
-    headers: &[(&str, &str)],
-    body: Option<Vec<u8>>,
-) -> Result<Response, String> {
+) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>, String> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = rustls::RootCertStore::empty();
     for cert in CertificateDer::pem_slice_iter(ca_pem.as_bytes()) {
@@ -289,8 +290,21 @@ pub(crate) async fn request(
         None => builder.with_no_client_auth(),
     };
     let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
+    connector.connect(ServerName::try_from("localhost").unwrap(), tcp).await.map_err(|e| e.to_string())
+}
+
+/// One HTTPS request as `identity` (or anonymously). Err is a refused handshake.
+pub(crate) async fn request(
+    addr: SocketAddr,
+    ca_pem: &str,
+    identity: Option<&Identity>,
+    method: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+    body: Option<Vec<u8>>,
+) -> Result<Response, String> {
     let tcp = tokio::net::TcpStream::connect(addr).await.map_err(|e| e.to_string())?;
-    let tls = connector.connect(ServerName::try_from("localhost").unwrap(), tcp).await.map_err(|e| e.to_string())?;
+    let tls = tls_over(tcp, ca_pem, identity).await?;
     let (mut sender, conn) =
         hyper::client::conn::http1::handshake(TokioIo::new(tls)).await.map_err(|e| e.to_string())?;
     tokio::spawn(conn);

@@ -15,7 +15,6 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use hyper::Method;
 
 use crate::http_client as client;
 
@@ -55,9 +54,8 @@ impl Service for Systemd {
         let url = format!("http://{}/metrics", SocketAddr::new(ip, ops.port()));
         let deadline = Instant::now() + within;
         while Instant::now() < deadline {
-            let answer = client::send(Method::GET, &url, &[], client::empty(), None, Duration::from_secs(2)).await;
-            if let Ok(response) = answer
-                && let Ok(metrics) = client::read_body(response, 4 << 20).await
+            let answer = client::get_small(&url, None, 4 << 20, Duration::from_secs(2)).await;
+            if let Ok((_, metrics)) = answer
                 && beat_accepted(&metrics)
             {
                 return true;
