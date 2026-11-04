@@ -27,3 +27,9 @@ gets a new fixture beside the old ones. Add its case to `tests/formats.rs` and r
 which writes only the fixtures that don't exist yet. Read the file before committing it.
 
 The bytes are serde_json's, so `biome.json` leaves this directory unformatted.
+
+`release-signature/` is not a file a node writes but what release.yml makes: `blocklyd.sig`,
+`openssl pkeyutl -sign -rawin` of blocklyd 9.9.9's statement (`src/upgrade/trust.rs`), and
+`key.pub`, the public half of the key that signed it, whose private half was thrown away.
+`trust.rs` checks a node takes it, so a change on either side that would refuse every release fails
+there.

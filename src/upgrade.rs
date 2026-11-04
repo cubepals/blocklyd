@@ -18,8 +18,10 @@
 //! `ReadWritePaths=` naming /usr/local/bin/blocklyd would bind-mount that one file, which a rename
 //! can't replace, and naming /usr/local/bin would open every binary there.
 //!
-//! 1. The offered binary is downloaded over the node's mutual TLS to `blocklyd.next`, and kept only
-//!    if its sha256 is the one offered and it runs here, saying it is the version offered.
+//! 1. An offer is taken only if a blocklyd release key signed its version and sha256, and its
+//!    version isn't older than this one (`trust.rs`). The binary is then downloaded over the node's
+//!    mutual TLS to `blocklyd.next`, and kept only if its sha256 is the one offered and it runs
+//!    here, saying it is the version offered.
 //! 2. The current binary is kept as `blocklyd.prev`, the trial is written down, and
 //!    `blocklyd.next` is renamed over `blocklyd`: one rename, so a crash leaves one or the other.
 //! 3. blocklyd exits cleanly and systemd (`Restart=always`) starts the new one. Servers keep
@@ -32,11 +34,13 @@
 //! 5. The blocklyd put back says why in its heartbeats, until the next upgrade is tried.
 //!
 //! Parts (`upgrade/`):
+//! - `trust.rs`: whether an offer is taken: a release's signature, and never an older version.
 //! - `stopped.rs`: what `--exited` goes by: systemd's word on the stop, and the state directory.
 //! - `backstop.rs`: ends a start still on trial long after it began, for `--exited` to put back.
 
 pub mod backstop;
 pub mod stopped;
+pub(crate) mod trust;
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -58,6 +62,7 @@ use crate::durable::write_atomic;
 use crate::http_client as client;
 use crate::protocol::wire::FLEET_API;
 use crate::protocol::wire::{UpgradeFailure, UpgradeOffer};
+use crate::upgrade::trust::ReleaseKeys;
 
 /// How long a new blocklyd has to reconcile and get a heartbeat accepted before it is put back.
 pub(crate) const TRIAL_SECONDS: u64 = 120;
@@ -142,32 +147,35 @@ fn failed(what: &str, path: &Path) -> impl FnOnce(std::io::Error) -> UpgradeErro
     move |e| UpgradeError::Failed(format!("{what}: {e}"))
 }
 
-/// Steps 1 and 2: the binary the control plane serves, checked against `sha256` (and `version`,
-/// when one was offered), put in place with the current one kept and the trial written down.
-/// `running` is the binary this process runs from, which must be the one it replaces. Returns
-/// the version installed.
+/// Steps 1 and 2: the binary the control plane serves, for an offer `keys` vouch for to a node
+/// that runs `from`, checked against the offer's sha256 and version, put in place with the current
+/// one kept and the trial written down. `running` is the binary this process runs from, which must
+/// be the one it replaces. Returns the version installed.
 pub(crate) async fn install(
     layout: &Layout,
     control_plane: &str,
     tls: Option<Arc<rustls::ClientConfig>>,
-    offer: (&str, Option<&str>),
+    offer: &UpgradeOffer,
+    keys: &ReleaseKeys,
+    from: &str,
     running: Option<&Path>,
 ) -> Result<String, UpgradeError> {
-    let (sha256, version) = offer;
     let _ = fs::remove_file(layout.failed());
+    trust::check(offer, from, keys).map_err(UpgradeError::Failed)?;
     settle(layout, running)?;
-    download(layout, control_plane, tls, sha256).await?;
+    download(layout, control_plane, tls, &offer.sha256).await?;
     let next = layout.next();
     let printed = tokio::task::spawn_blocking(move || version_of(&next))
         .await
         .map_err(|e| UpgradeError::Failed(e.to_string()))?
         .map_err(|e| UpgradeError::Failed(format!("the blocklyd downloaded doesn't run here: {e}")))?;
-    if let Some(offered) = version.filter(|v| *v != printed) {
+    if printed != offer.version {
         return Err(UpgradeError::Failed(format!(
-            "the blocklyd downloaded says it is {printed}, not the {offered} offered"
+            "the blocklyd downloaded says it is {printed}, not the {} offered",
+            offer.version
         )));
     }
-    let trial = Trial { from: daemon_version(), to: printed.clone(), sha256: sha256.to_owned() };
+    let trial = Trial { from: from.to_owned(), to: printed.clone(), sha256: offer.sha256.clone() };
     swap(layout, &trial)?;
     Ok(printed)
 }
@@ -387,6 +395,7 @@ pub struct Upgrader {
     control_plane: String,
     version: String,
     trial: Mutex<Option<Trial>>,
+    keys: ReleaseKeys,
     confirmed: tokio::sync::Notify,
     busy: AtomicBool,
     retry_at: Mutex<Option<Instant>>,
@@ -416,6 +425,7 @@ impl Upgrader {
             control_plane: control_plane.to_owned(),
             version,
             trial: Mutex::new(trial),
+            keys: ReleaseKeys::ours(),
             confirmed: tokio::sync::Notify::new(),
             busy: AtomicBool::new(false),
             retry_at: Mutex::new(None),
@@ -487,8 +497,10 @@ impl Upgrader {
         tokio::spawn(async move {
             info!(from = %this.version, to = %offer.version, "upgrading blocklyd, as the control plane offers");
             let running = std::env::current_exe().ok();
-            let offered = (offer.sha256.as_str(), Some(offer.version.as_str()));
-            match install(&this.layout, &this.control_plane, Some(tls), offered, running.as_deref()).await {
+            let (layout, keys) = (&this.layout, &this.keys);
+            let installed =
+                install(layout, &this.control_plane, Some(tls), &offer, keys, &this.version, running.as_deref());
+            match installed.await {
                 Ok(to) => {
                     info!(from = %this.version, to = %to, "installed; restarting into it, servers keep running");
                     this.cancel.cancel();
@@ -643,41 +655,97 @@ mod tests {
         format!("http://{address}")
     }
 
+    /// An offer of `version` and `sha256`, signed for them by `key`.
+    fn signed(key: &rcgen::KeyPair, version: &str, sha256: &str) -> UpgradeOffer {
+        UpgradeOffer {
+            version: version.into(),
+            sha256: sha256.into(),
+            signature: Some(trust::test_signature(key, version, sha256)),
+        }
+    }
+
     #[tokio::test]
     async fn an_offer_is_installed_only_when_its_sha256_and_version_match() {
         let root = tempfile::tempdir().unwrap();
         let layout = layout(root.path());
+        let (key, keys) = trust::test_key();
         let new = root.path().join("new");
         script(&new, "0.3.0");
         let bytes = fs::read(&new).unwrap();
         let sha = hex::encode(Sha256::digest(&bytes));
         let url = serving(Some(bytes)).await;
+        let install = |offer: UpgradeOffer| {
+            let (layout, url, keys) = (layout.clone(), url.clone(), keys.clone());
+            async move { install(&layout, &url, None, &offer, &keys, "0.2.0", None).await }
+        };
 
-        let wrong = install(&layout, &url, None, (&"0".repeat(64), Some("0.3.0")), None).await.unwrap_err();
+        let wrong = install(signed(&key, "0.3.0", &"0".repeat(64))).await.unwrap_err();
         assert!(matches!(wrong, UpgradeError::Failed(ref e) if e.contains("not the")), "{wrong}");
         assert!(!layout.next().exists());
-        let other = install(&layout, &url, None, (&sha, Some("0.4.0")), None).await.unwrap_err();
+        let other = install(signed(&key, "0.4.0", &sha)).await.unwrap_err();
         assert!(other.to_string().contains("not the 0.4.0 offered"), "{other}");
         assert_eq!(version_of(&layout.bin).unwrap(), "0.2.0");
         assert_eq!(on_trial(&layout, "0.3.0"), None);
 
-        assert_eq!(install(&layout, &url, None, (&sha, Some("0.3.0")), None).await.unwrap(), "0.3.0");
+        assert_eq!(install(signed(&key, "0.3.0", &sha)).await.unwrap(), "0.3.0");
         assert_eq!(version_of(&layout.bin).unwrap(), "0.3.0");
         assert_eq!(version_of(&layout.prev()).unwrap(), "0.2.0");
-        assert_eq!(on_trial(&layout, "0.3.0").unwrap().to, "0.3.0");
+        assert_eq!(
+            on_trial(&layout, "0.3.0").unwrap(),
+            Trial { from: "0.2.0".into(), to: "0.3.0".into(), sha256: sha }
+        );
+    }
+
+    #[tokio::test]
+    async fn an_offer_without_a_release_signature_for_it_is_never_downloaded_or_run() {
+        let root = tempfile::tempdir().unwrap();
+        let layout = layout(root.path());
+        let (key, keys) = trust::test_key();
+        let (stranger, _) = trust::test_key();
+        // A binary that leaves a mark if it is ever run, even for its --version.
+        let ran = root.path().join("ran");
+        let new = root.path().join("new");
+        fs::write(&new, format!("#!/bin/sh\ntouch '{}'\necho 'blocklyd 0.3.0'\n", ran.display())).unwrap();
+        let bytes = fs::read(&new).unwrap();
+        let sha = hex::encode(Sha256::digest(&bytes));
+        let url = serving(Some(bytes)).await;
+
+        let unsigned = UpgradeOffer { signature: None, ..signed(&key, "0.3.0", &sha) };
+        let by_a_stranger = signed(&stranger, "0.3.0", &sha);
+        let for_another_version = UpgradeOffer { version: "0.3.0".into(), ..signed(&key, "0.3.1", &sha) };
+        let garbled = UpgradeOffer { signature: Some("00".repeat(64)), ..signed(&key, "0.3.0", &sha) };
+        // Signed, but older than the 0.2.0 this node runs.
+        let older = signed(&key, "0.1.0", &sha);
+        for (offer, why) in [
+            (unsigned, "carries no release signature"),
+            (by_a_stranger, "isn't a blocklyd release key's"),
+            (for_another_version, "isn't a blocklyd release key's"),
+            (garbled, "isn't a blocklyd release key's"),
+            (older, "never goes back"),
+        ] {
+            let refused = install(&layout, &url, None, &offer, &keys, "0.2.0", None).await.unwrap_err();
+            assert!(matches!(refused, UpgradeError::Failed(ref e) if e.contains(why)), "{refused}");
+            assert_eq!(version_of(&layout.bin).unwrap(), "0.2.0");
+            assert!(!layout.next().exists(), "nothing was downloaded");
+            assert!(!layout.prev().exists());
+            assert!(!layout.trial().exists(), "no trial.json");
+            assert!(!ran.exists(), "the binary offered never ran");
+        }
     }
 
     #[tokio::test]
     async fn a_control_plane_without_a_binary_fails_the_upgrade_and_one_that_is_down_is_tried_again() {
         let root = tempfile::tempdir().unwrap();
         let layout = layout(root.path());
-        let missing = install(&layout, &serving(None).await, None, (&"0".repeat(64), None), None).await.unwrap_err();
+        let (key, keys) = trust::test_key();
+        let offer = signed(&key, "0.3.0", &"0".repeat(64));
+        let missing = install(&layout, &serving(None).await, None, &offer, &keys, "0.2.0", None).await.unwrap_err();
         assert!(
             matches!(missing, UpgradeError::Failed(ref e) if e.contains(axum::http::StatusCode::NOT_FOUND.as_str())),
             "{missing}"
         );
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap().local_addr().unwrap();
-        let down = install(&layout, &format!("http://{closed}"), None, (&"0".repeat(64), None), None).await;
+        let down = install(&layout, &format!("http://{closed}"), None, &offer, &keys, "0.2.0", None).await;
         assert!(matches!(down, Err(UpgradeError::Transient(_))));
     }
 

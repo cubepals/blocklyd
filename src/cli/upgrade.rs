@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: FSL-1.1-ALv2
 
 //! `blocklyd upgrade`: the control plane's blocklyd at once, as root on the host, rather than when
-//! a heartbeat's answer offers it. How an upgrade is installed, tried and put back is
-//! `crate::upgrade`.
+//! a heartbeat's answer offers it. It asks for the offer itself (`GET /fleet/v1/blocklyd.json`),
+//! which must carry the release's signature as a heartbeat's must. How an upgrade is checked,
+//! installed, tried and put back is `crate::upgrade`.
 
 use std::fs;
 use std::path::Path;
@@ -15,8 +16,9 @@ use sha2::{Digest, Sha256};
 use crate::config::Config;
 use crate::fleet::identity::Identity;
 use crate::http_client as client;
-use crate::protocol::wire::FLEET_API;
+use crate::protocol::wire::{FLEET_API, UpgradeOffer};
 pub use crate::upgrade::Trial;
+use crate::upgrade::trust::ReleaseKeys;
 use crate::upgrade::{Layout, TRIAL_SECONDS, install};
 
 /// `blocklyd upgrade`: the control plane's blocklyd now, then a restart into it, which goes back by
@@ -35,24 +37,23 @@ pub async fn upgrade(config: &Path, restart: bool) -> anyhow::Result<String> {
         bail!("this node hasn't enrolled yet: start blocklyd first, and upgrade once it has");
     };
     let tls = identity.client_tls()?;
-    let url = format!("{}{FLEET_API}/blocklyd.sha256", fleet.url.trim_end_matches('/'));
+    let url = format!("{}{FLEET_API}/blocklyd.json", fleet.url.trim_end_matches('/'));
     let (status, body) =
         match client::get_small(&url, Some(tls.clone()), 64 * 1024, crate::upgrade::ANSWER_TIMEOUT).await {
             Ok(answer) => answer,
             Err(client::ClientError::Body(_, e)) => return Err(anyhow::Error::msg(e)),
             Err(e) => return Err(anyhow::Error::new(e).context(format!("asking {url}"))),
         };
-    let text = String::from_utf8_lossy(&body);
-    anyhow::ensure!(status.is_success(), "{url}: HTTP {status}: {}", text.trim());
-    let sha256 = text.split_whitespace().next().filter(|s| s.len() == 64).context("an answer with no sha256")?;
+    anyhow::ensure!(status.is_success(), "{url}: HTTP {status}: {}", String::from_utf8_lossy(&body).trim());
+    let offer: UpgradeOffer = serde_json::from_slice(&body).with_context(|| format!("{url}: not an upgrade offer"))?;
 
     let layout = Layout::new(&config.state_dir, Path::new("/"));
     let current = crate::upgrade::daemon_version();
     let installed = if layout.bin.is_file() { &layout.bin } else { &layout.link };
-    if fs::read(installed).is_ok_and(|b| hex::encode(Sha256::digest(&b)).eq_ignore_ascii_case(sha256)) {
+    if fs::read(installed).is_ok_and(|b| hex::encode(Sha256::digest(&b)).eq_ignore_ascii_case(&offer.sha256)) {
         return Ok(format!("This is already the control plane's blocklyd ({current}): nothing changed.\n"));
     }
-    let to = install(&layout, &fleet.url, Some(tls), (sha256, None), None).await?;
+    let to = install(&layout, &fleet.url, Some(tls), &offer, &ReleaseKeys::ours(), &current, None).await?;
     let mut said = format!(
         "Installed blocklyd {to} (was {current}) at {}, and kept the one before as {}.\n",
         layout.bin.display(),
