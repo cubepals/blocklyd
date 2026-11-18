@@ -120,6 +120,7 @@ impl Config {
         if !(0.5..=4.0).contains(&self.capacity.memory_overcommit) {
             return bad("capacity.memory_overcommit is between 0.5 and 4.0".into());
         }
+        slice_ok(&self.workloads.cgroup_parent)?;
         if !OOM_SCORE_ADJ.contains(&self.workloads.oom_score_adj) {
             return bad(format!(
                 "workloads.oom_score_adj is between {} and {}",
@@ -129,6 +130,23 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// `workloads.cgroup_parent`: empty, or a slice's unit name as systemd takes it (systemd.slice(5)),
+/// where '-' separates the levels of the tree, so it neither starts nor ends a level, nor doubles.
+fn slice_ok(value: &str) -> Result<(), ConfigError> {
+    let named = value.strip_suffix(".slice").is_some_and(|name| {
+        !name.is_empty()
+            && name.split('-').all(|level| !level.is_empty())
+            && name.bytes().all(|c| c.is_ascii_alphanumeric() || b":_.-".contains(&c))
+    });
+    if value.is_empty() || named {
+        return Ok(());
+    }
+    Err(ConfigError::Invalid(format!(
+        "workloads.cgroup_parent {value:?} is a systemd slice's name: letters, digits, ':', '_', '.' and '-' (one \
+         between each level), ending in .slice"
+    )))
 }
 
 /// A node id: what the control plane issues (a UUID) or an operator picks.

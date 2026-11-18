@@ -1,0 +1,13 @@
+# Where blocklyd's workloads run (workloads.cgroup_parent; Docker's systemd cgroup driver puts each
+# container's scope here). Inside it, a workload's share of the CPU follows its memory, as its
+# cpu_weight says. Against the system's own units (blocklyd, Docker, the journal) the slice as a
+# whole takes 1000 to system.slice's 100: under full contention the host keeps about a tenth of the
+# CPU for blocklyd's heartbeats, snapshots and moves, however many workloads it runs.
+
+[Unit]
+Description=Blockly workloads
+Documentation=https://github.com/cubepals/blocklyd
+Before=slices.target
+
+[Slice]
+CPUWeight=1000

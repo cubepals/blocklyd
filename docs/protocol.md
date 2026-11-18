@@ -167,7 +167,7 @@ Body: `WorkloadSpec`.
 | `env`, `secrets` | Names `[A-Za-z_][A-Za-z0-9_]*` of ≤ 128. Values ≤ 64 KiB, no NUL. ≤ 256 variables and 512 KiB in all. A name is in one or the other. |
 | `resources.memoryMb` | Required. Hard limit with no swap, between `min_memory_mb` and what the host allocates. |
 | `resources.cpuMillis` | Optional CFS ceiling: 100 to cores × 1000. It is also what the JVM counts as its processors. |
-| `resources.cpuWeight` | Optional, 2–262144. Absent means proportional to memory: 1024 per 4 GB. |
+| `resources.cpuWeight` | Optional, 2–262144. Absent means proportional to memory: 1024 per 4 GB. It shares the CPU among workloads, inside the host's workloads slice (`workloads.cgroup_parent`, `deploy/blockly.slice`), which as a whole weighs 1000 against the host's own units. |
 | `resources.pidsLimit` | Optional, 64–65536. Absent means the host default (4096). |
 | `storage.mountPath` | Absolute path of plain components, not `/`. |
 | `storage.sizeGb` | 1–4096. Reported against measured use; **not enforced** in v1. |

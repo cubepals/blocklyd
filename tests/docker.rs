@@ -161,6 +161,17 @@ async fn lifecycle_hardening_and_graceful_stop() {
     assert!(out.stdout.contains("NoNewPrivs:\t1"));
     assert!(out.stdout.contains("rootfs-readonly"));
     assert!(out.stdout.contains("4096"), "pids limit");
+    // In the workloads' own slice (deploy/blockly.slice), as Docker records and the host places it.
+    let name = m.view(&id("w")).unwrap().locate.container_name;
+    let inspect = std::process::Command::new("docker")
+        .args(["inspect", "-f", "{{.HostConfig.CgroupParent}} {{.State.Pid}}", &name])
+        .output()
+        .unwrap();
+    let inspect = String::from_utf8_lossy(&inspect.stdout).trim().to_owned();
+    let (parent, pid) = inspect.split_once(' ').unwrap();
+    assert_eq!(parent, "blockly.slice");
+    let cgroups = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap();
+    assert!(cgroups.contains("blockly.slice"), "{cgroups}");
 
     let started = Instant::now();
     let stopped = m.stop(id("w"), None, None).await.unwrap();

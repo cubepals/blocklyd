@@ -235,6 +235,9 @@ pub(crate) struct WorkloadPolicy {
     /// How long a start of a suspended workload waits for it to come back from memory before it
     /// is killed and started afresh on its data.
     pub(crate) resume_timeout_seconds: u64,
+    /// The systemd slice workloads run in (`deploy/blockly.slice`), which sets their share of the
+    /// CPU against the host's own units. Empty: Docker's default, beside blocklyd in system.slice.
+    pub(crate) cgroup_parent: String,
 }
 
 impl Default for WorkloadPolicy {
@@ -252,6 +255,7 @@ impl Default for WorkloadPolicy {
             trash_retention_hours: 24,
             min_memory_mb: 256,
             resume_timeout_seconds: 10,
+            cgroup_parent: "blockly.slice".into(),
         }
     }
 }
@@ -584,6 +588,23 @@ mod tests {
         for open in [r#"["ghcr.io/cubepals"]"#, r#"["registry.example.com"]"#, r#"["alpine:", ""]"#] {
             let err = with(open).unwrap_err().to_string();
             assert!(err.contains("workloads.allowed_images entry"), "{open}: {err}");
+        }
+    }
+
+    #[test]
+    fn workloads_run_in_their_own_slice_unless_told_otherwise() {
+        let config: Config = toml::from_str(MINIMAL).unwrap();
+        assert_eq!(config.workloads.cgroup_parent, "blockly.slice");
+        let with = |slice: &str| {
+            let text = format!("{MINIMAL}\n[workloads]\ncgroup_parent = {slice:?}\n");
+            toml::from_str::<Config>(&text).unwrap().validate()
+        };
+        for fine in ["", "blockly.slice", "machine-blockly.slice", "a_b:c.slice"] {
+            with(fine).unwrap();
+        }
+        for bad in ["blockly", "-blockly.slice", "a--b.slice", "a-.slice", ".slice", "../x.slice", "a b.slice"] {
+            let err = with(bad).unwrap_err().to_string();
+            assert!(err.contains("workloads.cgroup_parent"), "{bad}: {err}");
         }
     }
 
