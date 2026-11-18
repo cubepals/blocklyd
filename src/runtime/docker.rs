@@ -242,7 +242,8 @@ fn body_of(spec: &ContainerSpec) -> ContainerCreateBody {
         readonly_rootfs: Some(spec.read_only_rootfs),
         tmpfs,
         cap_drop: Some(vec!["ALL".into()]),
-        security_opt: Some(vec!["no-new-privileges:true".into()]),
+        // Docker's default profile, less the ioctls that move data out of its quota.
+        security_opt: Some(vec!["no-new-privileges:true".into(), format!("seccomp={}", super::seccomp::profile())]),
         privileged: Some(false),
         ipc_mode: Some("private".into()),
         init: Some(false),

@@ -30,6 +30,7 @@ pub mod minecraft;
 pub mod ports;
 pub mod priority;
 pub mod protocol;
+pub(crate) mod quota;
 pub mod reconcile;
 pub mod runtime;
 pub mod store;

@@ -68,6 +68,8 @@ prometheus-client = "0.25"
 rustix = { version = "1", features = ["fs", "process", "param", "time"] }
 # adjtimex, which rustix doesn't wrap: whether the clock is synchronised (doctor).
 libc = "0.2.189"
+# The kernel's fsxattr and its ioctls, for project quotas (src/quota.rs); rustix already builds it.
+linux-raw-sys = { version = "0.12", default-features = false, features = ["general", "ioctl", "no_std"] }
 async-trait = "0.1"
 
 [features]

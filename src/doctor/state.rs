@@ -49,6 +49,7 @@ pub(crate) fn checks(config: &Config, config_path: &Path) -> Vec<Check> {
         ownable(&store, config.data_owner_ids()),
         lock(&store, config_path),
         reflink(dir),
+        quotas(dir, config.workloads.disk_quotas),
         disk(dir, config.capacity.min_free_disk_mb),
     ]
 }
@@ -131,6 +132,20 @@ fn reflink(dir: &Path) -> Check {
         "state_dir.reflink",
         "this filesystem can't share blocks (ext4 can't): snapshots and restores make full copies",
         "Nothing needed; XFS (reflink=1) or Btrfs under state_dir would make them cheap",
+    )
+}
+
+fn quotas(dir: &Path, wanted: bool) -> Check {
+    if !wanted {
+        return Check::pass("state_dir.quotas", "workloads.disk_quotas is off: data is measured by walking it");
+    }
+    if crate::quota::Quotas::open(dir).is_some() {
+        return Check::pass("state_dir.quotas", "project quotas hold each workload's data to its size");
+    }
+    Check::warn(
+        "state_dir.quotas",
+        "no project quotas here: a workload can write past its size until the disk is full",
+        "Put state_dir on XFS mounted with prjquota (or ext4 made with -O project, mounted prjquota)",
     )
 }
 

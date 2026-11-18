@@ -240,6 +240,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "libc",
+ "linux-raw-sys",
  "prometheus-client",
  "rcgen",
  "rustix",

@@ -13,6 +13,7 @@
 mod support;
 
 use std::net::TcpListener;
+use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
@@ -592,4 +593,183 @@ async fn isolation_keeps_a_workload_off_another_s_published_port() {
     assert!(edge.contains("server-answered"), "the edge's path is untouched: {edge:?}");
     cleanup(&m, &["server", "neighbour"]).await;
     let _ = std::process::Command::new("docker").args(["network", "rm", &network]).output();
+}
+
+/// An XFS filesystem with project quotas on a loop device, for one test's state: made with the
+/// host's mkfs.xfs, or inside a container where the host has none, and mounted on the host, as root.
+/// Memory for a workload that writes past its quota on a loop device: its dirty pages wait on the
+/// loop device's writeback and count against its cgroup, so a small limit kills the writer before
+/// the quota stops it.
+const LOOP_WRITER_MB: u32 = 2048;
+
+struct Xfs {
+    mount: std::path::PathBuf,
+    _dir: tempfile::TempDir,
+}
+
+impl Xfs {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let image = dir.path().join("fs.img");
+        std::fs::File::create(&image).unwrap().set_len(3 << 30).unwrap();
+        let host = std::process::Command::new("mkfs.xfs").arg("-q").arg(&image).status();
+        let made = host.unwrap_or_else(|_| {
+            std::process::Command::new("docker")
+                .args(["run", "--rm", "-v", &format!("{}:/x", dir.path().display()), "alpine:3.22", "sh", "-c"])
+                .arg("apk add -q --no-progress xfsprogs > /dev/null && mkfs.xfs -q /x/fs.img")
+                .status()
+                .unwrap()
+        });
+        assert!(made.success(), "mkfs.xfs, the host's or in a container");
+        let mount = dir.path().join("state");
+        std::fs::create_dir(&mount).unwrap();
+        let mounted =
+            std::process::Command::new("mount").args(["-o", "loop,prjquota"]).arg(&image).arg(&mount).status();
+        assert!(mounted.unwrap().success(), "mount -o loop,prjquota, as root: a kernel without XFS quotas refuses it");
+        let xfs = Self { mount, _dir: dir };
+        let options = std::fs::read_to_string("/proc/mounts").unwrap();
+        let line = options.lines().find(|l| l.contains(&*xfs.mount.to_string_lossy())).unwrap().to_owned();
+        assert!(line.contains("prjquota"), "this kernel keeps no XFS project quotas: {line}");
+        xfs
+    }
+}
+
+impl Drop for Xfs {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("umount").arg("-l").arg(&self.mount).status();
+    }
+}
+
+#[tokio::test]
+#[ignore = "needs Docker, root and a kernel with XFS quotas"]
+async fn data_is_held_to_its_size_by_the_filesystem() {
+    let xfs = Xfs::new();
+    let dep = deployment();
+    let _cleanup = Cleanup(dep.clone());
+    let m = daemon(&xfs.mount, &dep);
+    m.reconcile(Records::FromDisk).await;
+    // Writes past its 1 GB, and says what the disk looks like from inside.
+    // It tries to take its data out of the project first, as its owner may: refused.
+    // What it says is written over blocks taken before the fill (`<>` opens without truncating), and
+    // `done` holds no data: the full project takes nothing more.
+    let fill = "chattr -p 0 /data 2> /data/chattr.err; \
+                head -c 65536 /dev/zero > /data/dd.err; head -c 65536 /dev/zero > /data/df; \
+                dd if=/dev/zero of=/data/fill bs=1M count=1300 2<> /data/dd.err; df -k /data 1<> /data/df; \
+                touch /data/done; while true; do sleep 1; done";
+    m.ensure(id("q"), shell(fill, LOOP_WRITER_MB), Precondition::None, None).await.unwrap();
+    m.start(id("q"), None).await.unwrap();
+    let data = m.store.data_dir(&id("q"));
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !data.join("done").exists() {
+        assert!(Instant::now() < deadline, "the workload didn't finish writing");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    const GIB: u64 = 1 << 30;
+    let chattr = std::fs::read_to_string(data.join("chattr.err")).unwrap();
+    assert!(chattr.contains("setting project ID") && chattr.contains("Operation not permitted"), "{chattr}");
+    let dd = std::fs::read_to_string(data.join("dd.err")).unwrap();
+    assert!(dd.contains("quota exceeded"), "{dd}");
+    let written = std::fs::metadata(data.join("fill")).unwrap().len();
+    assert!(written <= GIB && written > GIB - (64 << 20), "stopped at its size: {written}");
+    // statfs inside reports the project's limit as the disk, which the control plane reads.
+    let df = std::fs::read_to_string(data.join("df")).unwrap();
+    let size_kb: u64 = df.lines().nth(1).unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
+    assert_eq!(size_kb, GIB / 1024, "{df}");
+    // Measured from the quota, and reported as full.
+    m.measure_disk().await;
+    let view = serde_json::to_value(m.view(&id("q")).unwrap()).unwrap();
+    let used = view["storage"]["usedBytes"].as_u64().unwrap();
+    assert!(used > GIB - (64 << 20) && used <= GIB, "{used}");
+    assert!(view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"), "{view}");
+    // A restore swaps in data made outside the project and moves what it replaced to the trash:
+    // started again, the new data is held to its size and the old copy isn't counted with it.
+    m.stop(id("q"), None, None).await.unwrap();
+    let meta = std::fs::metadata(&data).unwrap();
+    std::fs::rename(&data, m.store.trash_dir().join("q-replaced.1")).unwrap();
+    std::fs::create_dir(&data).unwrap();
+    std::os::unix::fs::chown(&data, Some(meta.uid()), Some(meta.gid())).unwrap();
+    std::fs::set_permissions(&data, meta.permissions()).unwrap();
+    m.start(id("q"), None).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !data.join("done").exists() {
+        assert!(Instant::now() < deadline, "the restored workload didn't finish writing");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let dd = std::fs::read_to_string(data.join("dd.err")).unwrap();
+    assert!(dd.contains("quota exceeded"), "{dd}");
+    let written = std::fs::metadata(data.join("fill")).unwrap().len();
+    assert!(written <= GIB && written > GIB - (64 << 20), "restored data stopped at its size: {written}");
+    // Deleted, its data waits in the trash outside any project, so no workload's limit counts it.
+    let deleted = m.delete(id("q"), DataDisposition::Delete, Some("q".to_owned()), None).await.unwrap();
+    m.measure_disk().await;
+    let fill = std::path::Path::new(&deleted.trash_path.unwrap()).join("data/fill");
+    let lsproj = std::process::Command::new("xfs_io").args(["-r", "-c", "lsproj"]).arg(&fill).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&lsproj.stdout).trim(), "projid = 0", "{lsproj:?}");
+}
+
+#[tokio::test]
+#[ignore = "needs Docker, root and a kernel with XFS quotas"]
+async fn data_already_past_its_size_when_quotas_arrive_keeps_running() {
+    const GIB: u64 = 1 << 30;
+    let xfs = Xfs::new();
+    let dep = deployment();
+    let _cleanup = Cleanup(dep.clone());
+    // A node from before quotas: 1.3 GB written into a workload sized 1 GB.
+    let before = format!("{}disk_quotas = false\n", extra(&dep));
+    let m =
+        manager_probed(&xfs.mount, docker(), &before, blocklyd::ports::bind_probe(vec!["127.0.0.1".parse().unwrap()]));
+    m.reconcile(Records::FromDisk).await;
+    let fill = "[ -f /data/fill ] || dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; \
+                dd if=/dev/zero of=/data/more bs=1M count=100 2> /data/more.err; echo $? > /data/more.exit; \
+                while true; do sleep 1; done";
+    m.ensure(id("o"), shell(fill, LOOP_WRITER_MB), Precondition::None, None).await.unwrap();
+    m.start(id("o"), None).await.unwrap();
+    let data = m.store.data_dir(&id("o"));
+    let waited = |path: std::path::PathBuf| async move {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !path.exists() {
+            assert!(Instant::now() < deadline, "{} never appeared", path.display());
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    waited(data.join("more.exit")).await;
+    let before_quotas = std::fs::metadata(data.join("fill")).unwrap().len();
+    let dd = std::fs::read_to_string(data.join("dd.err")).unwrap_or_default();
+    assert_eq!(before_quotas, 1300 << 20, "written whole before quotas: {dd}");
+    m.stop(id("o"), None, None).await.unwrap();
+    std::fs::remove_file(data.join("more.exit")).unwrap();
+    drop(m);
+
+    // The same node with quotas: nothing it holds is lost, it starts, and it can still write.
+    let m = daemon(&xfs.mount, &dep);
+    m.reconcile(Records::FromDisk).await;
+    m.measure_disk().await;
+    assert_eq!(std::fs::metadata(data.join("fill")).unwrap().len(), 1300 << 20, "nothing it held was touched");
+    m.start(id("o"), None).await.unwrap();
+    waited(data.join("more.exit")).await;
+    assert_eq!(std::fs::read_to_string(data.join("more.exit")).unwrap().trim(), "0", "it still writes");
+    m.measure_disk().await;
+    let view = serde_json::to_value(m.view(&id("o")).unwrap()).unwrap();
+    let used = view["storage"]["usedBytes"].as_u64().unwrap();
+    assert!(used > 1300 << 20 && used < 3 * GIB, "measured from the quota: {used}");
+    assert!(
+        view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"),
+        "the owner is told: {view}"
+    );
+    m.stop(id("o"), None, None).await.unwrap();
+    drop(m);
+
+    // Quotas turned off again: the data leaves its project, whose limit is lifted.
+    let m =
+        manager_probed(&xfs.mount, docker(), &before, blocklyd::ports::bind_probe(vec!["127.0.0.1".parse().unwrap()]));
+    m.reconcile(Records::FromDisk).await;
+    m.measure_disk().await;
+    let lsproj =
+        std::process::Command::new("xfs_io").args(["-r", "-c", "lsproj"]).arg(data.join("fill")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&lsproj.stdout).trim(), "projid = 0", "{lsproj:?}");
+    assert!(!m.store.workload_dir(&id("o")).join("quota-project").exists(), "nothing records a project");
+    cleanup(&m, &["o"]).await;
 }

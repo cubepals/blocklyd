@@ -50,6 +50,8 @@ log_max_files = 5
 oom_score_adj = 500
 trash_retention_hours = 24
 min_memory_mb = 256
+disk_quotas = true                             # each workload's data held to its size, where
+                                               # state_dir's filesystem keeps project quotas
 
 [capacity]
 reserved_memory_mb = 4096                      # default a sixteenth of the host's memory, at least

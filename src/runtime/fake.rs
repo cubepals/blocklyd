@@ -130,6 +130,13 @@ impl FakeRuntime {
         self.emit(&snapshot, DIED);
     }
 
+    /// Takes a label off a container, as one an older blocklyd made would lack it.
+    pub fn unlabel(&self, name: &str, key: &str) {
+        if let Some(c) = self.containers.lock().unwrap().get_mut(name) {
+            c.spec.labels.remove(key);
+        }
+    }
+
     /// Someone removed the container behind blocklyd's back.
     pub fn vanish(&self, name: &str) {
         self.containers.lock().unwrap().remove(name);

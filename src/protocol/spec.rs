@@ -93,8 +93,9 @@ pub(crate) struct Resources {
 pub(crate) struct Storage {
     /// Where the workload's persistent data appears inside it (Blockly: `/data`).
     pub(crate) mount_path: String,
-    /// The size the control plane promised. Reported against measured usage; not enforced in v1
-    /// (no per-directory quota on a plain filesystem).
+    /// The size the control plane promised. Enforced where the node's filesystem keeps project
+    /// quotas (writes past it fail, and the workload sees it as its disk's size); elsewhere
+    /// reported against measured usage.
     pub(crate) size_gb: u32,
 }
 

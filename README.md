@@ -87,7 +87,9 @@ development uses.
 - **Workloads get less than they ask for, never more.** Policy is the host's (`[workloads]`): a
   non-root user and data owner (uid 0 or gid 0 is refused), a read-only root filesystem (on by
   default), no capabilities, no privilege escalation, memory with no swap, a PID limit, an isolated
-  network. A request can't relax any of it; it only picks its sizes, within bounds. CPU is shared
+  network, and Docker's default seccomp profile less the ioctls that set a file's flags, so a
+  workload can't move its own data out of the project quota that holds it to its size
+  (`src/runtime/seccomp.rs`). A request can't relax any of it; it only picks its sizes, within bounds. CPU is shared
   by weight, in proportion to memory by default; there is a ceiling only when a request sets
   `cpuMillis`, which the fleet control plane never sends.
 - **Only the edge and the control plane dial a workload.** Docker keeps workloads from reaching

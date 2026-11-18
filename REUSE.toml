@@ -8,3 +8,11 @@ path = "**"
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 The Cubepals Authors"
 SPDX-License-Identifier = "FSL-1.1-ALv2"
+
+# Docker's default seccomp profile, moby/profiles at seccomp/v0.3.0, kept as published: workloads run
+# under it with the few ioctls that move data out of its quota taken away (src/runtime/seccomp.rs).
+[[annotations]]
+path = "src/runtime/seccomp/moby-default.json"
+precedence = "override"
+SPDX-FileCopyrightText = "Docker, Inc. and the Moby authors"
+SPDX-License-Identifier = "Apache-2.0"

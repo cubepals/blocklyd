@@ -235,6 +235,9 @@ pub(crate) struct WorkloadPolicy {
     /// How long a start of a suspended workload waits for it to come back from memory before it
     /// is killed and started afresh on its data.
     pub(crate) resume_timeout_seconds: u64,
+    /// Holds each workload's data to its spec's size with the filesystem's project quotas, where
+    /// it keeps them (src/quota.rs); elsewhere, and when false, data is measured by walking it.
+    pub(crate) disk_quotas: bool,
 }
 
 impl Default for WorkloadPolicy {
@@ -252,6 +255,7 @@ impl Default for WorkloadPolicy {
             trash_retention_hours: 24,
             min_memory_mb: 256,
             resume_timeout_seconds: 10,
+            disk_quotas: true,
         }
     }
 }
