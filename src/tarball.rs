@@ -68,11 +68,17 @@ impl<W> Hashing<W> {
         self.hasher.update(data);
         self.bytes += data.len() as u64;
     }
-    pub(crate) fn bytes(&self) -> u64 {
-        self.bytes
-    }
     pub(crate) fn finish(self) -> (W, String, u64) {
         (self.inner, hex::encode(self.hasher.finalize()), self.bytes)
+    }
+}
+
+/// Hashes what is read through it: a restore's download, as it is unpacked.
+impl<R: Read> Read for Hashing<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.update(&buf[..n]);
+        Ok(n)
     }
 }
 
@@ -203,12 +209,24 @@ pub fn unpack(
     owner: (u32, u32),
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> Result<Unpacked, UnpackError> {
+    unpack_at_most(File::open(archive)?, dest, owner, MAX_UNPACKED_BYTES, room)
+}
+
+/// `unpack`, reading the archive as it arrives: a restore's download, unpacked while it lands.
+/// It stops at the tarball's end, and what follows (padding, gzip's trailer) is left unread, for
+/// the caller to read through and count. Blocking, at idle priority.
+pub(crate) fn unpack_reading(
+    archive: impl Read,
+    dest: &Path,
+    owner: (u32, u32),
+    room: &mut dyn FnMut(u64) -> Result<(), String>,
+) -> Result<Unpacked, UnpackError> {
     unpack_at_most(archive, dest, owner, MAX_UNPACKED_BYTES, room)
 }
 
 /// `unpack`, refusing an archive past `max_bytes` unpacked: `MAX_UNPACKED_BYTES`, but for tests.
 fn unpack_at_most(
-    archive: &Path,
+    archive: impl Read,
     dest: &Path,
     owner: (u32, u32),
     max_bytes: u64,
@@ -218,7 +236,7 @@ fn unpack_at_most(
     fs::DirBuilder::new().mode(0o750).create(dest)?;
     // Every gzip member, as gzip -d reads them: an archive written in several (BGZF, or files
     // concatenated) is one tarball, which a reader of the first member alone would cut short.
-    let gzip = MultiGzDecoder::new(BufReader::new(File::open(archive)?));
+    let gzip = MultiGzDecoder::new(BufReader::new(archive));
     let budget = Rc::new(Budget::default());
     budget.allow(MAX_METADATA_BYTES);
     let mut reader = tar::Archive::new(Budgeted { inner: gzip, budget: budget.clone() });
@@ -594,7 +612,8 @@ mod tests {
         let data = [7u8; 600];
         let (dir, archive) =
             archive_of(&[(".", tar::EntryType::Regular, &data), ("./", tar::EntryType::Regular, &data)]);
-        let err = unpack_at_most(&archive, &dir.path().join("out"), me(), 1000, &mut |_| Ok(())).unwrap_err();
+        let err = unpack_at_most(File::open(&archive).unwrap(), &dir.path().join("out"), me(), 1000, &mut |_| Ok(()))
+            .unwrap_err();
         assert!(matches!(&err, UnpackError::TooLarge(m) if m == "more than 1000 bytes unpacked"), "{err}");
     }
 

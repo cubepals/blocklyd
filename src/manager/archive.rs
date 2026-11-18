@@ -241,8 +241,8 @@ impl Manager {
         }
     }
 
-    /// Downloads an archive to the spool, checks it, and unpacks it into `into`, keeping the disk
-    /// above its floor all the while.
+    /// Unpacks an archive into `into` as it downloads, and checks its sha256 once the whole
+    /// archive has arrived, keeping the disk above its floor all the while.
     async fn unpack_from(
         &self,
         id: &WorkloadId,
@@ -274,30 +274,58 @@ impl Manager {
         if let Some(length) = announced {
             self.admit_disk(length, "the archive's download")?;
         }
-        let spool_dir = self.store.spool_dir();
-        std::fs::create_dir_all(&spool_dir).map_err(|source| NodeError::Io { what: "spool".into(), source })?;
-        let spool = spool_dir.join(format!("{id}-{}.tar.gz", uuid::Uuid::new_v4()));
-        let _cleanup = RemoveOnDrop(spool.clone());
-        let (sha256, size_bytes) = self.spool(response.into_body(), &spool).await?;
+        // Unpacked as it lands, into `into` beside the data, and hashed on the way: the archive is
+        // never on disk whole, and the unpack doesn't wait for the download. Nothing replaces the
+        // data until the hash matches (`restore_locked` swaps only after this returns), so an
+        // archive that turns out wrong costs only what `into` holds, which is then discarded.
+        let (frames, landed) = tokio::sync::mpsc::channel::<bytes::Bytes>(DOWNLOAD_FRAMES);
+        let checked = expected.is_some();
+        let unpacking = {
+            let (into, beside, mut watch) = (into.to_owned(), self.store.workload_dir(id), self.floor_watch());
+            blocking(move || {
+                use crate::tarball::UnpackError;
+                let mut download =
+                    crate::tarball::Hashing::new(Landed { frames: landed, current: bytes::Bytes::new() });
+                let unpacked = (|| {
+                    // On disk before anything calls it complete (`Store::swap_in_restored`).
+                    let disk = crate::durable::FilesystemSync::begin(&beside)?;
+                    let unpacked = crate::tarball::unpack_reading(&mut download, &into, owner, &mut |written| {
+                        watch.wrote(written).map_err(|e| e.to_string())
+                    })?;
+                    disk.finish()?;
+                    Ok::<_, UnpackError>(unpacked)
+                })();
+                // The rest is read through too: what the tarball ends before (its padding, gzip's
+                // trailer), so the hash is the whole archive's as the store has it; and, when a
+                // checksum was given, what follows an unpack that failed, so an archive that isn't
+                // the one asked for is said to be that, as it was when the download was checked
+                // first.
+                if unpacked.is_ok() || checked {
+                    let most = crate::tarball::MAX_UNPACKED_BYTES;
+                    let rest = std::io::copy(&mut std::io::Read::take(&mut download, most), &mut std::io::sink())
+                        .map_err(|e| UnpackError::Damaged(e.to_string()));
+                    let rest = match rest {
+                        Ok(read) if read == most => {
+                            Err(UnpackError::TooLarge("the archive goes on past its tarball".into()))
+                        }
+                        other => other,
+                    };
+                    if let Err(e) = rest {
+                        return (unpacked.and(Err(e)), download.finish());
+                    }
+                }
+                (unpacked, download.finish())
+            })
+        };
+        let (received, unpacked) = tokio::join!(self.receive(response.into_body(), frames), unpacking);
+        // A download that broke says so, before the unpack it cut short says the archive was damaged.
+        received?;
+        let (unpacked, (_, sha256, size_bytes)) = unpacked?;
         if let Some(expected) = expected
             && !expected.eq_ignore_ascii_case(&sha256)
         {
             return Err(NodeError::ChecksumMismatch { expected: expected.to_owned(), actual: sha256 });
         }
-        let unpacked = {
-            let (spool, into, beside) = (spool.clone(), into.to_owned(), self.store.workload_dir(id));
-            let mut watch = self.floor_watch();
-            blocking(move || {
-                // On disk before anything calls it complete (`Store::swap_in_restored`).
-                let disk = crate::durable::FilesystemSync::begin(&beside)?;
-                let unpacked = crate::tarball::unpack(&spool, &into, owner, &mut |written| {
-                    watch.wrote(written).map_err(|e| e.to_string())
-                })?;
-                disk.finish()?;
-                Ok(unpacked)
-            })
-            .await?
-        };
         let unpacked = unpacked.map_err(|e| match e {
             crate::tarball::UnpackError::NoRoom(message) => NodeError::InsufficientDisk(message),
             crate::tarball::UnpackError::Io(io) => write_failed("unpacking", io),
@@ -314,39 +342,16 @@ impl Manager {
         })
     }
 
-    /// Writes a downloaded archive to `spool` and gives its sha256 and size, keeping the disk above
-    /// its floor all the while.
-    async fn spool(
+    /// Hands a download's frames to the unpack as they arrive. A body that stops coming never ends
+    /// by itself, and this holds the workload's lock: it fails once nothing arrives for a while,
+    /// or once nobody is waiting for it any more. A closed channel means the unpack stopped, which
+    /// says why itself.
+    async fn receive(
         &self,
         mut body: hyper::body::Incoming,
-        spool: &std::path::Path,
-    ) -> Result<(String, u64), NodeError> {
+        frames: tokio::sync::mpsc::Sender<bytes::Bytes>,
+    ) -> Result<(), NodeError> {
         use http_body_util::BodyExt;
-        use std::io::Write;
-        // The network is read here; the spool is written on a blocking thread at idle priority, as
-        // the unpack after it is, so a download's disk writes wait behind a booting server's.
-        let (frames, mut landed) = tokio::sync::mpsc::channel::<bytes::Bytes>(SPOOL_FRAMES);
-        let spooling = {
-            let (spool, mut watch) = (spool.to_owned(), self.floor_watch());
-            blocking(move || {
-                let _idle = crate::priority::Idle::enter();
-                let mut file = crate::tarball::Hashing::new(
-                    std::fs::File::create(&spool).map_err(|source| NodeError::Io { what: "spool".into(), source })?,
-                );
-                while let Some(data) = landed.blocking_recv() {
-                    file.write_all(&data).map_err(|e| write_failed("spool", e))?;
-                    watch.wrote(file.bytes())?;
-                    if file.bytes() > crate::tarball::MAX_UNPACKED_BYTES {
-                        return Err(NodeError::InvalidArchive("the archive is larger than any world".into()));
-                    }
-                }
-                let (spooled, sha256, size_bytes) = file.finish();
-                spooled.sync_all().map_err(|e| write_failed("spool", e))?;
-                Ok((sha256, size_bytes))
-            })
-        };
-        // A body that stops coming never ends by itself, and this holds the workload's lock: it
-        // fails once nothing arrives for a while, or once nobody is waiting for it any more.
         let idle = self.config.transfer.idle();
         let deadline = tokio::time::Instant::now() + crate::tarball::TRANSFER_LIMIT;
         let stalled = move |_| {
@@ -357,26 +362,19 @@ impl Manager {
             };
             NodeError::Transfer(format!("downloading the archive: {why}"))
         };
-        let receiving = async move {
-            while let Some(frame) =
-                tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + idle), body.frame())
-                    .await
-                    .map_err(stalled)?
+        while let Some(frame) = tokio::time::timeout_at(deadline.min(tokio::time::Instant::now() + idle), body.frame())
+            .await
+            .map_err(stalled)?
+        {
+            let frame =
+                frame.map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
+            if let Ok(data) = frame.into_data()
+                && frames.send(data).await.is_err()
             {
-                let frame = frame
-                    .map_err(|e| NodeError::TransferBroke { what: "downloading the archive", source: e.into() })?;
-                // A closed channel means the writer stopped, and says why below.
-                if let Ok(data) = frame.into_data()
-                    && frames.send(data).await.is_err()
-                {
-                    break;
-                }
+                break;
             }
-            Ok::<(), NodeError>(())
-        };
-        let (received, spooled) = tokio::join!(receiving, spooling);
-        received?;
-        spooled?
+        }
+        Ok(())
     }
 
     /// Copies one of the workload's snapshots into `into`, sharing blocks where it can.
@@ -425,9 +423,31 @@ fn one_put(size_bytes: u64, limit_bytes: u64) -> Result<(), NodeError> {
     Ok(())
 }
 
-/// Downloaded frames waiting for the spool's writer: a few, so the network runs ahead of the disk
-/// only a little.
-const SPOOL_FRAMES: usize = 16;
+/// Downloaded frames waiting for the unpack: a few, so the network runs ahead of the disk only a
+/// little.
+const DOWNLOAD_FRAMES: usize = 16;
+
+/// A download as the unpack reads it: its frames as they land, blocking until the next one comes,
+/// and its end once the receiver has handed over the last.
+struct Landed {
+    frames: tokio::sync::mpsc::Receiver<bytes::Bytes>,
+    current: bytes::Bytes,
+}
+
+impl std::io::Read for Landed {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        while self.current.is_empty() {
+            match self.frames.blocking_recv() {
+                Some(next) => self.current = next,
+                // Closed: the download ended, or broke, which the receiver says.
+                None => return Ok(0),
+            }
+        }
+        let n = buf.len().min(self.current.len());
+        buf[..n].copy_from_slice(&self.current.split_to(n));
+        Ok(n)
+    }
+}
 
 /// How many times one part is sent before the archive fails: the store's own hiccups pass.
 const PART_TRIES: u32 = 3;

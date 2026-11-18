@@ -137,9 +137,10 @@ async fn a_download_that_stops_coming_fails_and_lets_go_of_the_workload() {
     let url = announcing(1 << 20).await;
     let manager = f.manager.clone();
     let restore = tokio::spawn(async move { manager.restore(id("w"), restore_from(url, None), Some(1)).await });
+    // The unpack starts with the download, into the restore's own directory beside the data.
     support::eventually("the download to begin", async || {
-        let spooled = std::fs::read_dir(f.manager.store.spool_dir()).map_or(0, Iterator::count);
-        (spooled > 0, spooled)
+        let begun = f.manager.store.restoring_dir(&id("w")).exists();
+        (begun, begun)
     })
     .await;
     // A stop sent meanwhile waits for the restore, which holds the workload, and then goes ahead.
@@ -152,6 +153,81 @@ async fn a_download_that_stops_coming_fails_and_lets_go_of_the_workload() {
     assert!(matches!(&err, NodeError::Transfer(m) if m.contains("nothing arrived")), "{err:?}");
     assert_eq!(std::fs::read(data.join("level.dat")).unwrap(), b"mine", "nothing was replaced");
     left_nothing(&f.manager, "w");
+}
+
+/// A store that answers with `archive`, by its headers, but sends only its first `at` bytes until
+/// `go` is sent: a download still arriving.
+async fn halting(archive: Vec<u8>, at: usize) -> (String, tokio::sync::oneshot::Sender<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/halting.tar.gz", listener.local_addr().unwrap());
+    let (go, gone) = tokio::sync::oneshot::channel::<()>();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let _ = socket.read(&mut [0u8; 4096]).await;
+        let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", archive.len());
+        socket.write_all(head.as_bytes()).await.unwrap();
+        socket.write_all(&archive[..at]).await.unwrap();
+        let _ = gone.await;
+        socket.write_all(&archive[at..]).await.unwrap();
+        socket.flush().await.unwrap();
+    });
+    (url, go)
+}
+
+/// A world exported through the store, as a move's source sends it: its archive and sha256.
+async fn exported_world(f: &support::Fixture, mib: usize) -> (Vec<u8>, String) {
+    let (base, objects) = store().await;
+    let made = f.manager.ensure(id("src"), spec(), Precondition::None, Some(1)).await.unwrap();
+    big_world(std::path::Path::new(&made.workload.locate.data_dir), mib);
+    let exported = f.manager.export(id("src"), export_to(format!("{base}/w.tar.gz")), Some(1)).await.unwrap();
+    let archive = objects.lock().unwrap().get("w.tar.gz").cloned().expect("uploaded");
+    (archive, exported.sha256)
+}
+
+#[tokio::test]
+async fn a_restore_unpacks_while_its_download_is_still_coming() {
+    let f = fixture("").await;
+    let (archive, sha256) = exported_world(&f, 8).await;
+    let target = f.manager.ensure(id("dst"), spec(), Precondition::None, Some(2)).await.unwrap();
+    let data = std::path::PathBuf::from(&target.workload.locate.data_dir);
+    let (url, go) = halting(archive.clone(), archive.len() * 3 / 5).await;
+    let manager = f.manager.clone();
+    let restore =
+        tokio::spawn(async move { manager.restore(id("dst"), restore_from(url, Some(sha256)), Some(2)).await });
+    // Before the rest of the archive is sent, files have landed beside the data, and the archive
+    // itself was never written to disk.
+    let restoring = f.manager.store.restoring_dir(&id("dst"));
+    support::eventually("files unpacked while the download is still coming", async || {
+        let landed = std::fs::read_dir(&restoring).map_or(0, Iterator::count);
+        (landed > 0, landed)
+    })
+    .await;
+    let spooled = std::fs::read_dir(f.manager.store.spool_dir()).map_or(0, Iterator::count);
+    assert_eq!(spooled, 0, "the archive was spooled whole");
+    assert!(!data.join("world/level.dat").exists(), "nothing replaced the data before the download ended");
+    go.send(()).unwrap();
+    let restored = restore.await.unwrap().unwrap();
+    assert_eq!(restored.sha256, Some(hex::encode(sha2::Sha256::digest(&archive))));
+    assert_eq!(std::fs::read(data.join("world/level.dat")).unwrap(), b"the big world");
+    left_nothing(&f.manager, "dst");
+}
+
+#[tokio::test]
+async fn a_whole_archive_that_isnt_the_one_asked_for_replaces_nothing() {
+    let f = fixture("").await;
+    let (archive, _) = exported_world(&f, 1).await;
+    let target = f.manager.ensure(id("dst"), spec(), Precondition::None, Some(2)).await.unwrap();
+    let data = std::path::PathBuf::from(&target.workload.locate.data_dir);
+    std::fs::write(data.join("keep.txt"), b"mine").unwrap();
+    // A sound archive, unpacked to its end, and only then found not to be the one asked for.
+    let (url, go) = halting(archive.clone(), archive.len()).await;
+    go.send(()).unwrap();
+    let err = f.manager.restore(id("dst"), restore_from(url, Some("00".repeat(32))), Some(2)).await.unwrap_err();
+    assert!(matches!(err, NodeError::ChecksumMismatch { .. }), "{err:?}");
+    assert_eq!(std::fs::read(data.join("keep.txt")).unwrap(), b"mine");
+    assert!(!data.join("world/level.dat").exists());
+    left_nothing(&f.manager, "dst");
 }
 
 /// A store that refuses an upload, by its headers, then sends a few bytes of the reason and
