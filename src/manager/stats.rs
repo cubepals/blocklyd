@@ -8,6 +8,8 @@
 use super::*;
 
 const MIB: u64 = 1 << 20;
+/// Beside a workload's data: the project a finished walk put it in (`quota::assign`).
+const QUOTA_DONE: &str = "quota-project";
 const GIB: u64 = 1 << 30;
 
 impl Manager {
@@ -98,6 +100,7 @@ impl Manager {
         if let Ok(bytes) = snapshots {
             self.state.lock().unwrap().snapshot_bytes = Some(bytes);
         }
+        self.release_trash().await;
         for id in ids {
             let Some(size_gb) = self.state.lock().unwrap().records.get(&id).map(|r| r.spec.storage.size_gb) else {
                 continue;
@@ -147,7 +150,8 @@ impl Manager {
         let quotas = self.quotas.as_ref()?;
         let project = crate::quota::project_of(id);
         let dir = self.store.data_dir(id);
-        let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project)).await;
+        let done = self.store.workload_dir(id).join(QUOTA_DONE);
+        let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project, &done)).await;
         let held = match assigned {
             Ok(Ok(())) => self.hold(quotas, project, size_gb),
             Ok(Err(e)) => Err(e),
@@ -159,6 +163,28 @@ impl Manager {
                 tracing::warn!(workload = %id, project, error = %e, "couldn't hold the workload's data to its size");
                 None
             }
+        }
+    }
+
+    /// Takes what the trash keeps (data a restore replaced, deleted workloads) out of the projects
+    /// it was counted in, so a workload's limit holds only what it holds now.
+    async fn release_trash(self: &Arc<Self>) {
+        if self.quotas.is_none() {
+            return;
+        }
+        let trash = self.store.trash_dir();
+        let released = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            let Ok(entries) = std::fs::read_dir(&trash) else { return Ok(()) };
+            for entry in entries.flatten() {
+                if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    crate::quota::release(&entry.path())?;
+                }
+            }
+            Ok(())
+        })
+        .await;
+        if let Ok(Err(e)) = released {
+            tracing::warn!(error = %e, "couldn't take the trash out of its projects");
         }
     }
 }

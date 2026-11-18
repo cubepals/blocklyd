@@ -83,10 +83,14 @@ impl Quotas {
         quotas.get(FIRST_PROJECT).ok().map(|_| quotas)
     }
 
+    /// A project's quota; an empty one for a project the filesystem keeps no record of yet, which
+    /// it answers with ENOENT while quotas are on (ESRCH means they are off).
     fn get(&self, project: u32) -> io::Result<libc::dqblk> {
         let mut quota = no_quota();
-        self.quotactl(libc::Q_GETQUOTA, project, &mut quota)?;
-        Ok(quota)
+        match self.quotactl(libc::Q_GETQUOTA, project, &mut quota) {
+            Err(e) if e.raw_os_error() == Some(libc::ENOENT) => Ok(no_quota()),
+            done => done.map(|()| quota),
+        }
     }
 
     /// The bytes `project` holds now.
@@ -127,19 +131,38 @@ impl Quotas {
 }
 
 /// Puts `dir` and everything in it in `project`, new entries included (`FS_XFLAG_PROJINHERIT`).
-/// Does nothing where `dir` is in it already: what is created in it since inherits. Blocking.
-pub(crate) fn assign(dir: &Path, project: u32) -> io::Result<()> {
+/// `done` (beside `dir`, out of the workload's reach) records a walk that finished: until it names
+/// `project`, a walk cut short is taken up again. Does nothing where both say it is done: what is
+/// created since inherits. Blocking.
+pub(crate) fn assign(dir: &Path, project: u32, done: &Path) -> io::Result<()> {
     let root = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
     let attrs = get_attrs(root.as_fd())?;
-    if attrs.fsx_projid == project && attrs.fsx_xflags & FS_XFLAG_PROJINHERIT != 0 {
+    let finished = std::fs::read_to_string(done).ok().is_some_and(|d| d.trim() == project.to_string());
+    if finished && attrs.fsx_projid == project && attrs.fsx_xflags & FS_XFLAG_PROJINHERIT != 0 {
         return Ok(());
     }
     // The root first, so what is created during the walk inherits; the rest after.
     set_attrs(root.as_fd(), attrs, project, true)?;
-    assign_under(root, project, 0)
+    walk_setting(root, project, true, 0)?;
+    std::fs::write(done, project.to_string())
 }
 
-fn assign_under(dir: OwnedFd, project: u32, depth: usize) -> io::Result<()> {
+/// Takes `dir` and everything in it out of any project (back to 0, inheriting nothing): what a
+/// workload no longer holds, such as data a restore replaced, kept in the trash for a while, stops
+/// counting against its limit. The root last, so a walk cut short is taken up again. Blocking.
+pub(crate) fn release(dir: &Path) -> io::Result<()> {
+    let root = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
+    let attrs = get_attrs(root.as_fd())?;
+    if attrs.fsx_projid == 0 && attrs.fsx_xflags & FS_XFLAG_PROJINHERIT == 0 {
+        return Ok(());
+    }
+    let again = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
+    walk_setting(again, 0, false, 0)?;
+    set_attrs(root.as_fd(), attrs, 0, false)
+}
+
+/// Sets `project` on everything under `dir`; directories inherit it when `inherit` says so.
+fn walk_setting(dir: OwnedFd, project: u32, inherit: bool, depth: usize) -> io::Result<()> {
     if depth >= MAX_DEPTH {
         return Err(io::Error::other(format!("a tree nests deeper than {MAX_DEPTH} directories")));
     }
@@ -174,9 +197,9 @@ fn assign_under(dir: OwnedFd, project: u32, depth: usize) -> io::Result<()> {
             continue;
         }
         let attrs = get_attrs(opened.as_fd())?;
-        set_attrs(opened.as_fd(), attrs, project, kind == FileType::Directory)?;
+        set_attrs(opened.as_fd(), attrs, project, inherit && kind == FileType::Directory)?;
         if kind == FileType::Directory {
-            assign_under(opened, project, depth + 1)?;
+            walk_setting(opened, project, inherit, depth + 1)?;
         }
     }
     Ok(())
@@ -217,6 +240,8 @@ fn set_attrs(fd: BorrowedFd<'_>, mut attrs: fsxattr, project: u32, inherit: bool
     attrs.fsx_projid = project;
     if inherit {
         attrs.fsx_xflags |= FS_XFLAG_PROJINHERIT;
+    } else {
+        attrs.fsx_xflags &= !FS_XFLAG_PROJINHERIT;
     }
     fsxattr_ioctl(fd, FS_IOC_FSSETXATTR, &mut attrs)
 }

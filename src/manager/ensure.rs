@@ -280,6 +280,8 @@ impl Manager {
             undo(self);
             return Err(e);
         }
+        // Held to its size before its container can start.
+        self.hold_to_size(id, spec.storage.size_gb).await;
         if let Err(e) = self.save_record(&record).await {
             undo(self);
             return Err(e);
