@@ -236,6 +236,8 @@ pub struct Manager {
     reflink: bool,
     /// The data's filesystem's project quotas, where it keeps them and they are asked for.
     quotas: Option<crate::quota::Quotas>,
+    /// Held while a workload takes a project, so two never take the same one.
+    quota_projects: Mutex<()>,
     /// Workloads the host went down under have been looked for, once, after the first full pass.
     resume_checked: AtomicBool,
 }
@@ -398,6 +400,7 @@ impl Manager {
             boot_id,
             reflink: crate::tree::reflink_supported(&store.workloads_dir()),
             quotas: config.workloads.disk_quotas.then(|| crate::quota::Quotas::open(&store.workloads_dir())).flatten(),
+            quota_projects: Mutex::new(()),
             resume_checked: AtomicBool::new(false),
             config,
             runtime,

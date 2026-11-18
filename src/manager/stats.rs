@@ -134,6 +134,25 @@ impl Manager {
         }
     }
 
+    /// The project the workload's data is counted in: the one it took, or else the first free one
+    /// from what its key offers, reserved in `done` before its data is walked.
+    fn project_for(&self, id: &WorkloadId, done: &std::path::Path) -> std::io::Result<u32> {
+        let _taking = self.quota_projects.lock().unwrap();
+        if let Some(project) = std::fs::read_to_string(done).ok().and_then(|t| crate::quota::recorded(&t)) {
+            return Ok(project);
+        }
+        let others: Vec<WorkloadId> =
+            self.state.lock().unwrap().records.keys().filter(|other| *other != id).cloned().collect();
+        let taken: std::collections::HashSet<u32> = others
+            .iter()
+            .filter_map(|other| std::fs::read_to_string(self.store.workload_dir(other).join(QUOTA_DONE)).ok())
+            .filter_map(|text| crate::quota::recorded(&text))
+            .collect();
+        let project = crate::quota::first_free(id, &taken);
+        std::fs::write(done, format!("{} {project}", crate::quota::PENDING))?;
+        Ok(project)
+    }
+
     /// Sets `project`'s limit where it differs from what `quota::limit_for` says it should be.
     fn hold(&self, quotas: &crate::quota::Quotas, project: u32, size_gb: u32) -> std::io::Result<()> {
         let (used, current) = (quotas.used(project)?, quotas.limit_of(project)?);
@@ -148,9 +167,15 @@ impl Manager {
     /// which is logged and never refuses anything; the walk measures it then).
     pub(crate) async fn hold_to_size(self: &Arc<Self>, id: &WorkloadId, size_gb: u32) -> Option<u32> {
         let quotas = self.quotas.as_ref()?;
-        let project = crate::quota::project_of(id);
-        let dir = self.store.data_dir(id);
         let done = self.store.workload_dir(id).join(QUOTA_DONE);
+        let project = match self.project_for(id, &done) {
+            Ok(project) => project,
+            Err(e) => {
+                tracing::warn!(workload = %id, error = %e, "couldn't take a project for the workload's data");
+                return None;
+            }
+        };
+        let dir = self.store.data_dir(id);
         let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project, &done)).await;
         let held = match assigned {
             Ok(Ok(())) => self.hold(quotas, project, size_gb),

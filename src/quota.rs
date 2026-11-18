@@ -64,12 +64,36 @@ pub(crate) fn limit_for(size_gb: u32, used: u64, current: u64) -> Option<u64> {
     Some(if used > size { (used + GIB).next_multiple_of(GIB) } else { size })
 }
 
-/// The project a workload's data is counted in: from its key alone, so every node and every
-/// restart agrees, and no file of the host's can drift from it. FNV-1a, folded into the range.
+/// The project a workload's data is first offered: from its key, so the same workload is offered the
+/// same one anywhere. FNV-1a, folded into the range. Two keys can share one, so the manager takes
+/// the next free one where it is taken here (`next_project`), and keeps what it took.
 pub(crate) fn project_of(id: &WorkloadId) -> u32 {
     let hash = id.as_str().bytes().fold(0x811c_9dc5_u32, |h, b| (h ^ u32::from(b)).wrapping_mul(0x0100_0193));
     FIRST_PROJECT + hash % (LAST_PROJECT - FIRST_PROJECT)
 }
+
+/// The first project from what `id` is offered that isn't `taken`.
+pub(crate) fn first_free(id: &WorkloadId, taken: &std::collections::HashSet<u32>) -> u32 {
+    let mut project = project_of(id);
+    while taken.contains(&project) {
+        project = next_project(project);
+    }
+    project
+}
+
+/// The project after `project`, within the range.
+fn next_project(project: u32) -> u32 {
+    if project + 1 >= LAST_PROJECT { FIRST_PROJECT } else { project + 1 }
+}
+
+/// What a workload's record of its project (`assign`'s `done`) says: the project, whether the
+/// walk that puts its data in it finished or is only reserved (`pending <project>`).
+pub(crate) fn recorded(text: &str) -> Option<u32> {
+    text.trim().trim_start_matches(PENDING).trim().parse().ok()
+}
+
+/// How a project taken but not yet walked is recorded.
+pub(crate) const PENDING: &str = "pending";
 
 /// The project quotas of the filesystem holding the workloads.
 pub(crate) struct Quotas {
@@ -291,6 +315,24 @@ mod tests {
         let spec = serde_json::json!({ "image": "alpine:3.22", "resources": { "memoryMb": 256 },
             "storage": { "mountPath": "/data" } });
         assert!(serde_json::from_value::<crate::protocol::WorkloadSpec>(spec).is_err());
+    }
+
+    #[test]
+    fn two_workloads_whose_keys_share_a_project_get_two() {
+        let a = WorkloadId::parse("a1b2c3d4-0000-4000-8000-0000000145af").unwrap();
+        let b = WorkloadId::parse("a1b2c3d4-0000-4000-8000-00000002a720").unwrap();
+        assert_eq!(project_of(&a), project_of(&b), "the pair found in review");
+        let taken = std::collections::HashSet::from([first_free(&a, &Default::default())]);
+        assert_ne!(first_free(&b, &taken), project_of(&a));
+    }
+
+    #[test]
+    fn a_taken_project_is_passed_over_within_the_range() {
+        assert_eq!(next_project(FIRST_PROJECT), FIRST_PROJECT + 1);
+        assert_eq!(next_project(LAST_PROJECT - 1), FIRST_PROJECT);
+        assert_eq!(recorded("1234567"), Some(1_234_567));
+        assert_eq!(recorded("pending 1234567\n"), Some(1_234_567));
+        assert_eq!(recorded("garbage"), None);
     }
 
     #[test]
