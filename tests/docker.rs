@@ -13,6 +13,7 @@
 mod support;
 
 use std::net::TcpListener;
+use std::os::unix::fs::MetadataExt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::{Duration, Instant};
@@ -668,6 +669,24 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     let used = view["storage"]["usedBytes"].as_u64().unwrap();
     assert!(used > GIB - (64 << 20) && used <= GIB, "{used}");
     assert!(view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"), "{view}");
+    // A restore swaps in data made outside the project and moves what it replaced to the trash:
+    // started again, the new data is held to its size and the old copy isn't counted with it.
+    m.stop(id("q"), None, None).await.unwrap();
+    let meta = std::fs::metadata(&data).unwrap();
+    std::fs::rename(&data, m.store.trash_dir().join("q-replaced.1")).unwrap();
+    std::fs::create_dir(&data).unwrap();
+    std::os::unix::fs::chown(&data, Some(meta.uid()), Some(meta.gid())).unwrap();
+    std::fs::set_permissions(&data, meta.permissions()).unwrap();
+    m.start(id("q"), None).await.unwrap();
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while !data.join("df").exists() {
+        assert!(Instant::now() < deadline, "the restored workload didn't finish writing");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(std::fs::read_to_string(data.join("dd.err")).unwrap().contains("quota exceeded"));
+    let written = std::fs::metadata(data.join("fill")).unwrap().len();
+    assert!(written <= GIB && written > GIB - (64 << 20), "restored data stopped at its size: {written}");
     // Deleted, its data waits in the trash outside any project, so no workload's limit counts it.
     let deleted = m.delete(id("q"), DataDisposition::Delete, Some("q".to_owned()), None).await.unwrap();
     m.measure_disk().await;

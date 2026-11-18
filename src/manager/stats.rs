@@ -165,7 +165,7 @@ impl Manager {
     /// Puts the workload's data in its project and holds that to `size_gb`, where this host keeps
     /// project quotas: its project, or None when it isn't held (no quotas, or they couldn't be set,
     /// which is logged and never refuses anything; the walk measures it then).
-    pub(crate) async fn hold_to_size(self: &Arc<Self>, id: &WorkloadId, size_gb: u32) -> Option<u32> {
+    pub(crate) async fn hold_to_size(&self, id: &WorkloadId, size_gb: u32) -> Option<u32> {
         let quotas = self.quotas.as_ref()?;
         let done = self.store.workload_dir(id).join(QUOTA_DONE);
         let project = match self.project_for(id, &done) {
@@ -191,9 +191,19 @@ impl Manager {
         }
     }
 
+    /// Holds a workload about to start: what the trash keeps leaves its project first, so data a
+    /// restore swapped in since the last pass is held to its size, and not counted with the copy
+    /// it replaced.
+    pub(crate) async fn hold_for_start(&self, id: &WorkloadId, size_gb: u32) {
+        if self.quotas.is_some() {
+            self.release_trash().await;
+            self.hold_to_size(id, size_gb).await;
+        }
+    }
+
     /// Takes what the trash keeps (data a restore replaced, deleted workloads) out of the projects
     /// it was counted in, so a workload's limit holds only what it holds now.
-    async fn release_trash(self: &Arc<Self>) {
+    async fn release_trash(&self) {
         if self.quotas.is_none() {
             return;
         }

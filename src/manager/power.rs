@@ -82,6 +82,7 @@ impl Manager {
         record.stop_requested_at = None;
         record.updated_at = now_str();
         self.save_record(&record).await?;
+        self.hold_for_start(&id, record.spec.storage.size_gb).await;
         self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(&id, e))?;
         self.state.lock().unwrap().last_failure.remove(&id);
         self.clear_issue(&id, IssueCode::InsufficientCapacity);
