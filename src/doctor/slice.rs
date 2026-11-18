@@ -9,9 +9,18 @@
 
 use super::check::Check;
 
+/// The check for this host: its installed unit, and the driver Docker reported (None when Docker
+/// didn't answer).
+pub(crate) fn installed(slice: &str, driver: Option<&str>) -> Check {
+    let unit = (!slice.is_empty())
+        .then(|| std::fs::read_to_string(std::path::Path::new("/etc/systemd/system").join(slice)).ok())
+        .flatten();
+    check(slice, driver, unit.as_deref())
+}
+
 /// `slice` is the configured name (empty: none asked for), `driver` Docker's cgroup driver,
 /// `unit` the installed unit's text, None when there is none.
-pub(crate) fn check(slice: &str, driver: Option<&str>, unit: Option<&str>) -> Check {
+fn check(slice: &str, driver: Option<&str>, unit: Option<&str>) -> Check {
     if slice.is_empty() {
         return Check::pass("workloads.slice", "workloads run in Docker's default cgroup, as configured");
     }

@@ -136,13 +136,10 @@ pub async fn run(options: &Options) -> Report {
     };
     let mut checks = vec![config_check];
     match &runtime {
-        Some(runtime) => {
-            checks.extend(docker::checks(runtime.as_ref(), &config.docker.network, daemon_json).await);
-            let driver = runtime.info().await.ok().and_then(|info| info.cgroup_driver);
-            let slice = &config.workloads.cgroup_parent;
-            let unit = std::fs::read_to_string(Path::new("/etc/systemd/system").join(slice)).ok();
-            checks.push(slice::check(slice, driver.as_deref(), unit.as_deref()));
-        }
+        Some(runtime) => checks.extend(
+            docker::checks(runtime.as_ref(), &config.docker.network, daemon_json, &config.workloads.cgroup_parent)
+                .await,
+        ),
         None => checks.push(Check::warn(
             "docker",
             format!("docker.socket {} isn't a path blocklyd can use", config.docker.socket.display()),
