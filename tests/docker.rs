@@ -597,6 +597,11 @@ async fn isolation_keeps_a_workload_off_another_s_published_port() {
 
 /// An XFS filesystem with project quotas on a loop device, for one test's state: made with the
 /// host's mkfs.xfs, or inside a container where the host has none, and mounted on the host, as root.
+/// Memory for a workload that writes past its quota on a loop device: its dirty pages wait on the
+/// loop device's writeback and count against its cgroup, so a small limit kills the writer before
+/// the quota stops it.
+const LOOP_WRITER_MB: u32 = 2048;
+
 struct Xfs {
     mount: std::path::PathBuf,
     _dir: tempfile::TempDir,
@@ -648,7 +653,7 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     let fill = "chattr -p 0 /data 2> /data/chattr.err; \
                 dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; df -k /data > /data/df; \
                 while true; do sleep 1; done";
-    m.ensure(id("q"), shell(fill, 256), Precondition::None, None).await.unwrap();
+    m.ensure(id("q"), shell(fill, LOOP_WRITER_MB), Precondition::None, None).await.unwrap();
     m.start(id("q"), None).await.unwrap();
     let data = m.store.data_dir(&id("q"));
     let deadline = Instant::now() + Duration::from_secs(120);
@@ -660,7 +665,8 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     const GIB: u64 = 1 << 30;
     let chattr = std::fs::read_to_string(data.join("chattr.err")).unwrap();
     assert!(chattr.contains("setting project ID") && chattr.contains("Operation not permitted"), "{chattr}");
-    assert!(std::fs::read_to_string(data.join("dd.err")).unwrap().contains("quota exceeded"));
+    let dd = std::fs::read_to_string(data.join("dd.err")).unwrap();
+    assert!(dd.contains("quota exceeded"), "{dd}");
     let written = std::fs::metadata(data.join("fill")).unwrap().len();
     assert!(written <= GIB && written > GIB - (64 << 20), "stopped at its size: {written}");
     // statfs inside reports the project's limit as the disk, which the control plane reads.
@@ -688,7 +694,8 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     tokio::time::sleep(Duration::from_millis(250)).await;
-    assert!(std::fs::read_to_string(data.join("dd.err")).unwrap().contains("quota exceeded"));
+    let dd = std::fs::read_to_string(data.join("dd.err")).unwrap();
+    assert!(dd.contains("quota exceeded"), "{dd}");
     let written = std::fs::metadata(data.join("fill")).unwrap().len();
     assert!(written <= GIB && written > GIB - (64 << 20), "restored data stopped at its size: {written}");
     // Deleted, its data waits in the trash outside any project, so no workload's limit counts it.
@@ -714,7 +721,7 @@ async fn data_already_past_its_size_when_quotas_arrive_keeps_running() {
     let fill = "[ -f /data/fill ] || dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; \
                 dd if=/dev/zero of=/data/more bs=1M count=100 2> /data/more.err; echo $? > /data/more.exit; \
                 while true; do sleep 1; done";
-    m.ensure(id("o"), shell(fill, 256), Precondition::None, None).await.unwrap();
+    m.ensure(id("o"), shell(fill, LOOP_WRITER_MB), Precondition::None, None).await.unwrap();
     m.start(id("o"), None).await.unwrap();
     let data = m.store.data_dir(&id("o"));
     let waited = |path: std::path::PathBuf| async move {
@@ -726,6 +733,9 @@ async fn data_already_past_its_size_when_quotas_arrive_keeps_running() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     };
     waited(data.join("more.exit")).await;
+    let before_quotas = std::fs::metadata(data.join("fill")).unwrap().len();
+    let dd = std::fs::read_to_string(data.join("dd.err")).unwrap_or_default();
+    assert_eq!(before_quotas, 1300 << 20, "written whole before quotas: {dd}");
     m.stop(id("o"), None, None).await.unwrap();
     std::fs::remove_file(data.join("more.exit")).unwrap();
     drop(m);
