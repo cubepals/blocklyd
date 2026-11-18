@@ -4,7 +4,7 @@
 
 //! `blocklyd doctor`: looks at this host the way blocklyd will use it, and says what is wrong and
 //! what to do about it. `check-config` only reads the file; doctor also asks Docker, the state
-//! directory, the ports, the machine id and the clock.
+//! directory, the ports, the workloads' slice, the machine id and the clock.
 //!
 //! Every check passes, warns or fails, and anything short of a pass carries one instruction. A
 //! failure is something blocklyd can't work without; a warning is something it survives. Doctor
@@ -16,6 +16,7 @@
 //! - `check.rs`: one verdict: pass, warn or fail, with what to do.
 //! - `config.rs`: whether the configuration file (and its certificates) is valid.
 //! - `docker.rs`: whether Docker is reachable and configured the way blocklyd expects.
+//! - `slice.rs`: whether workloads run in their own slice, with its CPU weight.
 //! - `state.rs`: whether the state directory can be owned, locked, cloned into and has room.
 //! - `network.rs`: whether the game ports are free and the listeners stay off public addresses.
 //! - `host.rs`: whether the host has a machine id and a synchronised clock.
@@ -30,6 +31,7 @@ mod docker;
 mod fix;
 mod host;
 mod network;
+mod slice;
 mod state;
 
 use std::path::{Path, PathBuf};
@@ -134,7 +136,13 @@ pub async fn run(options: &Options) -> Report {
     };
     let mut checks = vec![config_check];
     match &runtime {
-        Some(runtime) => checks.extend(docker::checks(runtime.as_ref(), &config.docker.network, daemon_json).await),
+        Some(runtime) => {
+            checks.extend(docker::checks(runtime.as_ref(), &config.docker.network, daemon_json).await);
+            let driver = runtime.info().await.ok().and_then(|info| info.cgroup_driver);
+            let slice = &config.workloads.cgroup_parent;
+            let unit = std::fs::read_to_string(Path::new("/etc/systemd/system").join(slice)).ok();
+            checks.push(slice::check(slice, driver.as_deref(), unit.as_deref()));
+        }
         None => checks.push(Check::warn(
             "docker",
             format!("docker.socket {} isn't a path blocklyd can use", config.docker.socket.display()),

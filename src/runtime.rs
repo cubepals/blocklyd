@@ -52,6 +52,8 @@ pub struct ContainerSpec {
     pub(crate) log_max_size_mb: u32,
     pub(crate) log_max_files: u32,
     pub(crate) oom_score_adj: i32,
+    /// The slice the container runs in; None for Docker's default.
+    pub(crate) cgroup_parent: Option<String>,
 }
 
 /// Names only for the environment: values may be secrets.

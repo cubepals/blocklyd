@@ -205,6 +205,7 @@ impl Manager {
             log_max_size_mb: self.config.workloads.log_max_size_mb,
             log_max_files: self.config.workloads.log_max_files,
             oom_score_adj: self.config.workloads.oom_score_adj,
+            cgroup_parent: Some(self.config.workloads.cgroup_parent.clone()).filter(|p| !p.is_empty()),
         }
     }
 

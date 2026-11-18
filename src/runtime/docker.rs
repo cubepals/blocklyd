@@ -238,6 +238,9 @@ fn body_of(spec: &ContainerSpec) -> ContainerCreateBody {
         memory_swap: Some(spec.memory_bytes),
         nano_cpus: spec.nano_cpus,
         cpu_shares: Some(spec.cpu_shares),
+        // In the workloads' own slice, whose weight against the host's units holds however many
+        // there are (deploy/blockly.slice).
+        cgroup_parent: spec.cgroup_parent.clone(),
         pids_limit: Some(spec.pids_limit),
         readonly_rootfs: Some(spec.read_only_rootfs),
         tmpfs,
@@ -701,7 +704,15 @@ mod tests {
             log_max_size_mb: 10,
             log_max_files: 3,
             oom_score_adj: 500,
+            cgroup_parent: Some("blockly.slice".into()),
         }
+    }
+
+    #[test]
+    fn a_workload_runs_in_the_slice_it_is_given() {
+        assert_eq!(body_of(&spec()).host_config.unwrap().cgroup_parent.as_deref(), Some("blockly.slice"));
+        let none = ContainerSpec { cgroup_parent: None, ..spec() };
+        assert_eq!(body_of(&none).host_config.unwrap().cgroup_parent, None);
     }
 
     #[test]

@@ -10,7 +10,8 @@
 //!    the only thing that vouches for it: nothing is written if it doesn't match.
 //! 2. It writes `/etc/blocklyd/blocklyd.toml` with only what the host can't work out (the
 //!    deployment and the endpoint), `/etc/blocklyd/fleet-ca.pem`, the token as
-//!    `/var/lib/blocklyd/enrollment-token` (0600) and the systemd unit, each whole or not at all.
+//!    `/var/lib/blocklyd/enrollment-token` (0600), the systemd unit and the workloads' slice, each
+//!    whole or not at all.
 //!    A configuration already there is kept: what an operator set wins.
 //! 3. It runs `blocklyd doctor --preflight`, shows what it found and stops on a failure, then
 //!    enables and starts the unit. blocklyd enrolls on its first start, as it always has.
@@ -50,6 +51,11 @@ const TOKEN: &str = "/var/lib/blocklyd/enrollment-token";
 pub const UNIT: &str = "/etc/systemd/system/blocklyd.service";
 
 const UNIT_FILE: &str = include_str!("../../deploy/blocklyd.service");
+
+/// Where the workloads' slice (`workloads.cgroup_parent`) is installed, beside the unit.
+pub const SLICE: &str = "/etc/systemd/system/blockly.slice";
+
+pub(crate) const SLICE_FILE: &str = include_str!("../../deploy/blockly.slice");
 
 /// How long a re-enrolling node has for its first heartbeat (reenroll.rs says what happens after):
 /// enrollment retries every 30 s at most, and a heartbeat follows within seconds.
@@ -154,20 +160,16 @@ pub async fn join(options: Join) -> anyhow::Result<String> {
         return reenroll(swap, &service).await;
     }
 
-    let mut written = Vec::new();
-    for (path, contents, mode) in [
-        (config_file, existing.is_none().then_some(text.as_bytes()), 0o644),
-        (fleet.ca.as_path(), Some(ca.as_slice()), 0o644),
-        (token_file, Some(options.token.trim().as_bytes()), 0o600),
-        (Path::new(UNIT), Some(UNIT_FILE.as_bytes()), 0o644),
-    ] {
-        let Some(contents) = contents else { continue };
-        let target = under(root, path);
-        let dir = target.parent().context("a path with a directory")?;
-        std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
-        write_atomic(&target, contents, mode)?;
-        written.push(path.display().to_string());
-    }
+    let written = write_all(
+        root,
+        [
+            (config_file, existing.is_none().then_some(text.as_bytes()), 0o644),
+            (fleet.ca.as_path(), Some(ca.as_slice()), 0o644),
+            (token_file, Some(options.token.trim().as_bytes()), 0o600),
+            (Path::new(UNIT), Some(UNIT_FILE.as_bytes()), 0o644),
+            (Path::new(SLICE), Some(SLICE_FILE.as_bytes()), 0o644),
+        ],
+    )?;
     if options.start {
         preflight(root, config_file)
             .await
@@ -190,6 +192,20 @@ async fn preflight(root: &Path, config_file: &Path) -> anyhow::Result<()> {
         "doctor found what keeps blocklyd from starting (above): fix it, and run the line again"
     );
     Ok(())
+}
+
+/// Writes each file that has contents under `root`, each whole or not at all, and says which.
+fn write_all<const N: usize>(root: &Path, files: [(&Path, Option<&[u8]>, u32); N]) -> anyhow::Result<Vec<String>> {
+    let mut written = Vec::new();
+    for (path, contents, mode) in files {
+        let Some(contents) = contents else { continue };
+        let target = under(root, path);
+        let dir = target.parent().context("a path with a directory")?;
+        std::fs::create_dir_all(dir).with_context(|| format!("making {}", dir.display()))?;
+        write_atomic(&target, contents, mode)?;
+        written.push(path.display().to_string());
+    }
+    Ok(written)
 }
 
 fn under(root: &Path, path: &Path) -> PathBuf {
