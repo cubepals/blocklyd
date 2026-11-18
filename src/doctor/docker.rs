@@ -42,10 +42,19 @@ async fn waited<T>(call: impl Future<Output = Result<T, RuntimeError>>) -> Resul
         .unwrap_or_else(|_| Err(RuntimeError::Timeout(format!("Docker didn't answer in {}s", DOCKER_WAIT.as_secs()))))
 }
 
-pub(crate) async fn checks(runtime: &dyn ContainerRuntime, network: &str, daemon_json: &Path) -> Vec<Check> {
+/// Docker's checks, and the workloads' slice (`slice.rs`), which hangs on what Docker says of its
+/// cgroup driver: one call, under `DOCKER_WAIT`, for both.
+pub(crate) async fn checks(
+    runtime: &dyn ContainerRuntime,
+    network: &str,
+    daemon_json: &Path,
+    slice: &str,
+) -> Vec<Check> {
     let on_disk = read_daemon_json(daemon_json);
     let mut checks = Vec::new();
-    match waited(runtime.info()).await {
+    let info = waited(runtime.info()).await;
+    let driver = info.as_ref().ok().and_then(|info| info.cgroup_driver.clone());
+    match info {
         Err(e) => checks.push(Check::warn(
             "docker",
             format!("can't reach Docker ({e}); blocklyd starts anyway and reports Docker as down"),
@@ -67,6 +76,7 @@ pub(crate) async fn checks(runtime: &dyn ContainerRuntime, network: &str, daemon
         }
     }
     checks.push(compare(daemon_json, &on_disk));
+    checks.push(super::slice::installed(slice, driver.as_deref()));
     checks
 }
 
@@ -201,9 +211,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("daemon.json");
         std::fs::write(&path, DEPLOY_DAEMON_JSON).unwrap();
-        let checks = checks(&healthy(), "blockly-workloads", &path).await;
+        let checks = checks(&healthy(), "blockly-workloads", &path, "").await;
         assert!(checks.iter().all(|c| c.status == Status::Pass), "{checks:?}");
-        assert_eq!(checks.len(), 6);
+        assert_eq!(checks.len(), 7);
+    }
+
+    #[tokio::test]
+    async fn docker_on_cgroupfs_gets_the_slices_warning_and_nothing_fails() {
+        let fake = healthy();
+        fake.runtime_info.lock().unwrap().cgroup_driver = Some("cgroupfs".into());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("daemon.json");
+        std::fs::write(&path, DEPLOY_DAEMON_JSON).unwrap();
+        let checks = checks(&fake, "blockly-workloads", &path, "blockly.slice").await;
+        let slice = by_name(&checks, "workloads.slice");
+        assert_eq!(slice.status, Status::Warn);
+        assert!(slice.detail.contains("cgroupfs"), "{slice:?}");
+        assert!(checks.iter().all(|c| c.status != Status::Fail), "{checks:?}");
     }
 
     #[tokio::test]
@@ -211,10 +235,13 @@ mod tests {
         let fake = healthy();
         fake.set_available(false);
         let dir = tempfile::tempdir().unwrap();
-        let checks = checks(&fake, "blockly-workloads", &dir.path().join("daemon.json")).await;
+        let checks = checks(&fake, "blockly-workloads", &dir.path().join("daemon.json"), "").await;
         let names: Vec<_> = checks.iter().map(|c| (c.name, c.status)).collect();
-        assert_eq!(names, [("docker", Status::Warn), ("docker.daemon_json", Status::Warn)]);
-        assert!(checks.iter().all(|c| c.fix.is_some()));
+        assert_eq!(
+            names,
+            [("docker", Status::Warn), ("docker.daemon_json", Status::Warn), ("workloads.slice", Status::Pass)]
+        );
+        assert!(checks.iter().filter(|c| c.status != Status::Pass).all(|c| c.fix.is_some()));
     }
 
     #[tokio::test]
@@ -230,7 +257,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("daemon.json");
         std::fs::write(&path, r#"{"live-restore": false, "log-driver": "json-file"}"#).unwrap();
-        let checks = checks(&fake, "blockly-workloads", &path).await;
+        let checks = checks(&fake, "blockly-workloads", &path, "").await;
         for name in
             ["docker.live_restore", "docker.cgroup", "docker.network", "docker.log_driver", "docker.daemon_json"]
         {
@@ -250,7 +277,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("daemon.json");
         std::fs::write(&path, r#"{"log-opts": {"max-size": "10m"}}"#).unwrap();
-        let checks = checks(&fake, "blockly-workloads", &path).await;
+        let checks = checks(&fake, "blockly-workloads", &path, "").await;
         assert_eq!(by_name(&checks, "docker.network").status, Status::Pass);
         assert_eq!(by_name(&checks, "docker.log_driver").status, Status::Pass);
     }

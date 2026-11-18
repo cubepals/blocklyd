@@ -50,6 +50,8 @@ log_max_files = 5
 oom_score_adj = 500
 trash_retention_hours = 24
 min_memory_mb = 256
+cgroup_parent = "blockly.slice"                # deploy/blockly.slice: workloads' CPU share against
+                                               # blocklyd's holds however many run; "" for Docker's own
 
 [capacity]
 reserved_memory_mb = 4096                      # default a sixteenth of the host's memory, at least

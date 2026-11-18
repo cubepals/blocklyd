@@ -22,7 +22,7 @@
 
 use std::cell::Cell;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
@@ -73,11 +73,17 @@ impl<W> Hashing<W> {
         self.hasher.update(data);
         self.bytes += data.len() as u64;
     }
-    pub(crate) fn bytes(&self) -> u64 {
-        self.bytes
-    }
     pub(crate) fn finish(self) -> (W, String, u64) {
         (self.inner, hex::encode(self.hasher.finalize()), self.bytes)
+    }
+}
+
+/// Hashes what is read through it: a restore's download, as it is unpacked.
+impl<R: Read> Read for Hashing<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.update(&buf[..n]);
+        Ok(n)
     }
 }
 
@@ -202,13 +208,16 @@ fn clean(raw: &Path) -> Result<Option<PathBuf>, UnpackError> {
 /// gzip -d reads them, since an archive written in several (BGZF, or files concatenated) is one
 /// tarball a reader of the first alone would cut short; or zstd, every frame as zstd -d reads
 /// them, within libzstd's default window limit. Either checks its own checksum as it reaches it.
-fn decompressed(archive: &Path) -> Result<Box<dyn Read>, UnpackError> {
-    let mut file = BufReader::new(File::open(archive)?);
-    let head = file.fill_buf()?;
+fn decompressed<'a>(mut archive: impl Read + 'a) -> Result<Box<dyn Read + 'a>, UnpackError> {
+    // The first bytes are read whole, however the archive arrives (a download's first frame can
+    // be shorter than zstd's magic), and put back in front of the rest.
+    let mut head = Vec::with_capacity(ZSTD_MAGIC.len());
+    (&mut archive).take(ZSTD_MAGIC.len() as u64).read_to_end(&mut head)?;
+    let whole = BufReader::new(io::Cursor::new(head.clone()).chain(archive));
     if head.starts_with(&GZIP_MAGIC) {
-        Ok(Box::new(MultiGzDecoder::new(file)))
+        Ok(Box::new(MultiGzDecoder::new(whole)))
     } else if head.starts_with(&ZSTD_MAGIC) {
-        Ok(Box::new(zstd::stream::read::Decoder::with_buffer(file)?))
+        Ok(Box::new(zstd::stream::read::Decoder::with_buffer(whole)?))
     } else {
         Err(UnpackError::Damaged("its first bytes are neither gzip's nor zstd's".into()))
     }
@@ -225,12 +234,25 @@ pub fn unpack(
     owner: (u32, u32),
     room: &mut dyn FnMut(u64) -> Result<(), String>,
 ) -> Result<Unpacked, UnpackError> {
+    unpack_at_most(File::open(archive)?, dest, owner, MAX_UNPACKED_BYTES, room)
+}
+
+/// `unpack`, reading the archive as it arrives: a restore's download, unpacked while it lands.
+/// It reads the compressed stream through to its end, so the codec's own checksum is checked;
+/// any bytes after that are left unread, for the caller to read through and count. Blocking, at
+/// idle priority.
+pub(crate) fn unpack_reading(
+    archive: impl Read,
+    dest: &Path,
+    owner: (u32, u32),
+    room: &mut dyn FnMut(u64) -> Result<(), String>,
+) -> Result<Unpacked, UnpackError> {
     unpack_at_most(archive, dest, owner, MAX_UNPACKED_BYTES, room)
 }
 
 /// `unpack`, refusing an archive past `max_bytes` unpacked: `MAX_UNPACKED_BYTES`, but for tests.
 fn unpack_at_most(
-    archive: &Path,
+    archive: impl Read,
     dest: &Path,
     owner: (u32, u32),
     max_bytes: u64,
@@ -764,7 +786,8 @@ mod tests {
         let data = [7u8; 600];
         let (dir, archive) =
             archive_of(&[(".", tar::EntryType::Regular, &data), ("./", tar::EntryType::Regular, &data)]);
-        let err = unpack_at_most(&archive, &dir.path().join("out"), me(), 1000, &mut |_| Ok(())).unwrap_err();
+        let err = unpack_at_most(File::open(&archive).unwrap(), &dir.path().join("out"), me(), 1000, &mut |_| Ok(()))
+            .unwrap_err();
         assert!(matches!(&err, UnpackError::TooLarge(m) if m == "more than 1000 bytes unpacked"), "{err}");
     }
 
