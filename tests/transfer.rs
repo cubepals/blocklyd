@@ -165,7 +165,13 @@ async fn halting(archive: Vec<u8>, at: usize) -> (String, tokio::sync::oneshot::
     tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
         let _ = socket.read(&mut [0u8; 4096]).await;
-        let head = format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n", archive.len());
+        let ok = StatusCode::OK;
+        let head = format!(
+            "HTTP/1.1 {} {}\r\ncontent-length: {}\r\n\r\n",
+            ok.as_u16(),
+            ok.canonical_reason().unwrap_or_default(),
+            archive.len()
+        );
         socket.write_all(head.as_bytes()).await.unwrap();
         socket.write_all(&archive[..at]).await.unwrap();
         let _ = gone.await;
