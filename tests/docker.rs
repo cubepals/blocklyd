@@ -650,14 +650,17 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     m.reconcile(Records::FromDisk).await;
     // Writes past its 1 GB, and says what the disk looks like from inside.
     // It tries to take its data out of the project first, as its owner may: refused.
+    // What it says is written over blocks taken before the fill (`<>` opens without truncating), and
+    // `done` holds no data: the full project takes nothing more.
     let fill = "chattr -p 0 /data 2> /data/chattr.err; \
-                dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; df -k /data > /data/df; \
-                while true; do sleep 1; done";
+                head -c 65536 /dev/zero > /data/dd.err; head -c 65536 /dev/zero > /data/df; \
+                dd if=/dev/zero of=/data/fill bs=1M count=1300 2<> /data/dd.err; df -k /data 1<> /data/df; \
+                touch /data/done; while true; do sleep 1; done";
     m.ensure(id("q"), shell(fill, LOOP_WRITER_MB), Precondition::None, None).await.unwrap();
     m.start(id("q"), None).await.unwrap();
     let data = m.store.data_dir(&id("q"));
     let deadline = Instant::now() + Duration::from_secs(120);
-    while !data.join("df").exists() {
+    while !data.join("done").exists() {
         assert!(Instant::now() < deadline, "the workload didn't finish writing");
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
@@ -689,7 +692,7 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     std::fs::set_permissions(&data, meta.permissions()).unwrap();
     m.start(id("q"), None).await.unwrap();
     let deadline = Instant::now() + Duration::from_secs(120);
-    while !data.join("df").exists() {
+    while !data.join("done").exists() {
         assert!(Instant::now() < deadline, "the restored workload didn't finish writing");
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
