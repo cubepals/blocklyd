@@ -5,7 +5,8 @@
 //! World archives: a gzip tarball of a workload's data directory. It is the format Blockly's
 //! backups, downloads and uploads already use: paths relative to the data root, with
 //! `server.properties` at the top. So an archive blocklyd writes is one Blockly can already read,
-//! and the other way round.
+//! and the other way round. A restore also reads a zstd tarball, told from gzip by its first
+//! bytes, so that a writer may pack zstd once every node reads it (the feature `restore-zstd`).
 //!
 //! Export writes the archive to a spool file first, hashing as it goes: a presigned PUT needs its
 //! length up front, and the sha256 is what a later restore checks against. It reads the data
@@ -21,7 +22,7 @@
 
 use std::cell::Cell;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
@@ -46,6 +47,10 @@ const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 /// The longest one transfer's body may take, either way, however steadily it comes: the control
 /// plane gives up on a transfer after 3 hours (its TRANSFER_MS), and nobody waits for it after that.
 pub(crate) const TRANSFER_LIMIT: Duration = Duration::from_hours(3);
+/// A gzip member's first two bytes, ID1 and ID2 (RFC 1952, 2.3.1); flate2 exports no name for them.
+const GZIP_MAGIC: [u8; 2] = [0x1f, 0x8b];
+/// A zstd frame's first four bytes: libzstd's magic number, little-endian (RFC 8878, 3.1.1).
+const ZSTD_MAGIC: [u8; 4] = zstd::zstd_safe::MAGICNUMBER.to_le_bytes();
 
 /// The parts an archive of `size` bytes fills, `part_size` each but the last: one at least, so
 /// an empty archive is still an object.
@@ -167,7 +172,7 @@ pub enum UnpackError {
     Unsafe(String),
     #[error("the archive is too large: {0}")]
     TooLarge(String),
-    #[error("the archive is damaged or not a gzip tarball: {0}")]
+    #[error("the archive is damaged or not a gzip or zstd tarball: {0}")]
     Damaged(String),
     /// The caller said the disk can't take more.
     #[error("{0}")]
@@ -193,7 +198,24 @@ fn clean(raw: &Path) -> Result<Option<PathBuf>, UnpackError> {
     Ok((!out.as_os_str().is_empty()).then_some(out))
 }
 
-/// Unpacks a .tar.gz into `dest`, which must not exist yet, and gives everything to `owner`.
+/// The tarball inside `archive`, decompressed as its first bytes say: gzip, every member as
+/// gzip -d reads them, since an archive written in several (BGZF, or files concatenated) is one
+/// tarball a reader of the first alone would cut short; or zstd, every frame as zstd -d reads
+/// them, within libzstd's default window limit. Either checks its own checksum as it reaches it.
+fn decompressed(archive: &Path) -> Result<Box<dyn Read>, UnpackError> {
+    let mut file = BufReader::new(File::open(archive)?);
+    let head = file.fill_buf()?;
+    if head.starts_with(&GZIP_MAGIC) {
+        Ok(Box::new(MultiGzDecoder::new(file)))
+    } else if head.starts_with(&ZSTD_MAGIC) {
+        Ok(Box::new(zstd::stream::read::Decoder::with_buffer(file)?))
+    } else {
+        Err(UnpackError::Damaged("its first bytes are neither gzip's nor zstd's".into()))
+    }
+}
+
+/// Unpacks a .tar.gz or .tar.zst into `dest`, which must not exist yet, and gives everything to
+/// `owner`.
 /// After each write `room` is told the bytes written so far, and an `Err` from it stops the
 /// unpack: the caller keeps the disk above its floor this way. Blocking, at idle priority
 /// (`priority::Idle`).
@@ -216,12 +238,10 @@ fn unpack_at_most(
 ) -> Result<Unpacked, UnpackError> {
     let _idle = Idle::enter();
     fs::DirBuilder::new().mode(0o750).create(dest)?;
-    // Every gzip member, as gzip -d reads them: an archive written in several (BGZF, or files
-    // concatenated) is one tarball, which a reader of the first member alone would cut short.
-    let gzip = MultiGzDecoder::new(BufReader::new(File::open(archive)?));
+    let tarball = decompressed(archive)?;
     let budget = Rc::new(Budget::default());
     budget.allow(MAX_METADATA_BYTES);
-    let mut reader = tar::Archive::new(Budgeted { inner: gzip, budget: budget.clone() });
+    let mut reader = tar::Archive::new(Budgeted { inner: tarball, budget: budget.clone() });
     let mut done = Unpacked { entries: 0, skipped: 0, bytes: 0 };
     let (mut written, mut buffer) = (0u64, vec![0u8; 256 * 1024]);
     let damaged = |e: io::Error| UnpackError::Damaged(e.to_string());
@@ -288,6 +308,11 @@ fn unpack_at_most(
             _ => done.skipped += 1,
         }
     }
+    // tar stops at its end-of-archive blocks, and a writer pads past them (GNU tar to 10 KiB):
+    // the codec's checksum lies after that padding, and is checked only once it is read. So the
+    // rest is read through, within the same bound, and a wrong checksum or a cut is damage.
+    budget.allow(MAX_METADATA_BYTES);
+    io::copy(&mut reader.into_inner(), &mut io::sink()).map_err(damaged)?;
     chown_tree(dest, owner)?;
     Ok(done)
 }
@@ -324,7 +349,7 @@ impl<R: Read> Read for Budgeted<R> {
         let left = self.budget.limit.get().saturating_sub(self.budget.read.get());
         if left == 0 && !buf.is_empty() {
             return Err(io::Error::other(format!(
-                "a member's headers, or the data of an entry that isn't unpacked, run past {MAX_METADATA_BYTES} bytes"
+                "a member's headers, the data of an entry that isn't unpacked, or what follows the archive's end run past {MAX_METADATA_BYTES} bytes"
             )));
         }
         let most = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
@@ -518,6 +543,94 @@ mod tests {
             assert_eq!(done.entries, 2, "split at {at}");
             assert_eq!(fs::read(dest.join("level.dat")).unwrap(), b"level", "split at {at}");
             assert_eq!(fs::read(dest.join("world/r.0.0.mca")).unwrap(), [7u8; 3000], "split at {at}");
+        }
+    }
+
+    /// A world's tarball, uncompressed, padded with zeros past its end as GNU tar pads to its
+    /// 10 KiB record: tar is done reading before the codec's last bytes.
+    fn padded_tarball() -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, data) in [("level.dat", &b"level"[..]), ("world/r.0.0.mca", &[7u8; 3000][..])] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            builder.append_data(&mut header, name, data).unwrap();
+        }
+        let mut tar = builder.into_inner().unwrap();
+        tar.resize(tar.len().next_multiple_of(10_240), 0);
+        tar
+    }
+
+    fn gzipped(data: &[u8]) -> Vec<u8> {
+        let mut gz = GzEncoder::new(Vec::new(), Compression::fast());
+        gz.write_all(data).unwrap();
+        gz.finish().unwrap()
+    }
+
+    /// `data` as zstd frames, one per chunk, each with its content checksum, as zstd -T writes.
+    fn zstd_frames(data: &[u8], chunk: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        for part in data.chunks(chunk) {
+            let mut encoder = zstd::stream::write::Encoder::new(Vec::new(), 3).unwrap();
+            encoder.include_checksum(true).unwrap();
+            encoder.write_all(part).unwrap();
+            out.extend(encoder.finish().unwrap());
+        }
+        out
+    }
+
+    fn unpacked_from(bytes: &[u8]) -> (tempfile::TempDir, Result<Unpacked, UnpackError>) {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        fs::write(&archive, bytes).unwrap();
+        let done = unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(()));
+        (dir, done)
+    }
+
+    #[test]
+    fn a_zstd_archive_unpacks_whole_in_one_frame_or_several() {
+        let tar = padded_tarball();
+        // One frame; frames split in the first file's padding; and at the second file's header.
+        for (compressed, how) in [
+            (zstd_frames(&tar, tar.len()), "one frame"),
+            (zstd_frames(&tar, 700), "700-byte frames"),
+            (zstd_frames(&tar, 1024), "1024-byte frames"),
+        ] {
+            assert!(compressed.starts_with(&ZSTD_MAGIC), "{how}");
+            let (dir, done) = unpacked_from(&compressed);
+            let done = done.unwrap_or_else(|e| panic!("{how}: {e}"));
+            assert_eq!(done.entries, 2, "{how}");
+            assert_eq!(fs::read(dir.path().join("out/level.dat")).unwrap(), b"level", "{how}");
+            assert_eq!(fs::read(dir.path().join("out/world/r.0.0.mca")).unwrap(), [7u8; 3000], "{how}");
+        }
+    }
+
+    #[test]
+    fn a_wrong_checksum_or_a_cut_past_tar_s_end_is_damaged_in_either_codec() {
+        let tar = padded_tarball();
+        for (name, whole) in [("gzip", gzipped(&tar)), ("zstd", zstd_frames(&tar, tar.len()))] {
+            let (_dir, done) = unpacked_from(&whole);
+            done.unwrap_or_else(|e| panic!("{name}, whole: {e}"));
+            // gzip's CRC-32 is the trailer's first four bytes; zstd's checksum is the frame's last four.
+            let mut sum = whole.clone();
+            let at = if name == "gzip" { sum.len() - 8 } else { sum.len() - 1 };
+            sum[at] ^= 0xff;
+            let cut = whole[..whole.len() - 3].to_vec();
+            for (how, bytes) in [("its checksum wrong", sum), ("cut short", cut)] {
+                let (_dir, done) = unpacked_from(&bytes);
+                assert!(matches!(done, Err(UnpackError::Damaged(_))), "{name}, {how}: {done:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn bytes_that_are_neither_gzip_nor_zstd_are_damaged() {
+        for bytes in [&b""[..], b"\x1f", b"PK\x03\x04 a zip", b"\x28\xb5\x2f"] {
+            let (_dir, done) = unpacked_from(bytes);
+            assert!(
+                matches!(&done, Err(UnpackError::Damaged(m)) if m.contains("neither gzip's nor zstd's")),
+                "{bytes:?}: {done:?}"
+            );
         }
     }
 
