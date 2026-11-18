@@ -316,6 +316,26 @@ async fn an_archive_too_large_for_one_upload_is_refused_with_its_sizes() {
 }
 
 #[tokio::test]
+async fn an_unpack_that_fails_early_lets_go_of_the_download_and_the_workload() {
+    // Far more than the frames waiting for the unpack: a download that outlives an unpack which
+    // gave up on its first bytes, with no checksum to read it through for.
+    let f = fixture("").await;
+    let made = f.manager.ensure(id("w"), spec(), Precondition::None, Some(1)).await.unwrap();
+    let data = std::path::PathBuf::from(&made.workload.locate.data_dir);
+    std::fs::write(data.join("keep.txt"), b"mine").unwrap();
+    let (url, go) = halting(noise(8 * MIB, 3), 0).await;
+    go.send(()).unwrap();
+    let restoring = f.manager.restore(id("w"), restore_from(url, None), Some(1));
+    let err = tokio::time::timeout(std::time::Duration::from_secs(20), restoring)
+        .await
+        .expect("the restore held on to its download after the unpack failed")
+        .unwrap_err();
+    assert!(matches!(err, NodeError::InvalidArchive(_)), "{err:?}");
+    assert_eq!(std::fs::read(data.join("keep.txt")).unwrap(), b"mine");
+    left_nothing(&f.manager, "w");
+}
+
+#[tokio::test]
 async fn a_wrong_checksum_changes_nothing() {
     let f = fixture("").await;
     let (base, objects) = store().await;

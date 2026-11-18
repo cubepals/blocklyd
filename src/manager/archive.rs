@@ -311,16 +311,16 @@ impl Manager {
                         other => other,
                     };
                     if let Err(e) = rest {
-                        return (unpacked.and(Err(e)), download.finish());
+                        return (unpacked.and(Err(e)), heard(download));
                     }
                 }
-                (unpacked, download.finish())
+                (unpacked, heard(download))
             })
         };
         let (received, unpacked) = tokio::join!(self.receive(response.into_body(), frames), unpacking);
         // A download that broke says so, before the unpack it cut short says the archive was damaged.
         received?;
-        let (unpacked, (_, sha256, size_bytes)) = unpacked?;
+        let (unpacked, (sha256, size_bytes)) = unpacked?;
         if let Some(expected) = expected
             && !expected.eq_ignore_ascii_case(&sha256)
         {
@@ -426,6 +426,15 @@ fn one_put(size_bytes: u64, limit_bytes: u64) -> Result<(), NodeError> {
 /// Downloaded frames waiting for the unpack: a few, so the network runs ahead of the disk only a
 /// little.
 const DOWNLOAD_FRAMES: usize = 16;
+
+/// What the unpack read of a download: its sha256 and size. The download itself is dropped here,
+/// in the unpack, so the receiver stops at once: a frame it is still sending finds nobody waiting
+/// rather than a queue that never empties, which would hold the workload's lock for good.
+fn heard(download: crate::tarball::Hashing<Landed>) -> (String, u64) {
+    let (landed, sha256, size_bytes) = download.finish();
+    drop(landed);
+    (sha256, size_bytes)
+}
 
 /// A download as the unpack reads it: its frames as they land, blocking until the next one comes,
 /// and its end once the receiver has handed over the last.
