@@ -108,7 +108,12 @@ impl Manager {
             else {
                 continue;
             };
-            let held = if self.confined(&container).await { self.hold_to_size(&id, size_gb).await } else { None };
+            // A first walk only while nothing runs in the container: a process can hold a file
+            // it unlinked, which no walk reaches. A start walks it, before the process exists.
+            let held = match self.confinement(&container).await {
+                Some(stopped) if stopped || self.walked(&id).await => self.hold_to_size(&id, size_gb).await,
+                _ => None,
+            };
             let used = match held {
                 Some(project) => self.quotas.as_ref().and_then(|q| q.used(project).ok()),
                 None => {
@@ -225,11 +230,29 @@ impl Manager {
     /// project. One made before it (an older blocklyd's) isn't held, and is measured by walking,
     /// until a start makes it again (`power.rs`).
     async fn confined(&self, container: &str) -> bool {
-        let info = self.runtime.inspect(container).await.ok().flatten();
-        info.is_some_and(|i| {
-            i.labels.get(crate::labels::LABEL_CONFINED).map(String::as_str)
-                == Some(crate::runtime::seccomp::CONFINEMENT)
-        })
+        self.confinement(container).await.is_some()
+    }
+
+    /// `confined`'s answer, and whether nothing runs in the container (it exited or never
+    /// started): Some(stopped) for a confined container, None for any other or none.
+    async fn confinement(&self, container: &str) -> Option<bool> {
+        let info = self.runtime.inspect(container).await.ok().flatten()?;
+        let confined = info.labels.get(crate::labels::LABEL_CONFINED).map(String::as_str)
+            == Some(crate::runtime::seccomp::CONFINEMENT);
+        let stopped = matches!(info.status, ContainerStatus::Exited | ContainerStatus::Dead | ContainerStatus::Created);
+        confined.then_some(stopped)
+    }
+
+    /// Whether the workload's data was walked into its project whole, and is still there.
+    async fn walked(&self, id: &WorkloadId) -> bool {
+        let done = self.store.workload_dir(id).join(QUOTA_DONE);
+        let Some(project) = std::fs::read_to_string(&done).ok().and_then(|t| t.trim().parse::<u32>().ok()) else {
+            return false;
+        };
+        let dir = self.store.data_dir(id);
+        tokio::task::spawn_blocking(move || crate::quota::assigned(&dir, project, &done))
+            .await
+            .is_ok_and(|a| a.unwrap_or(false))
     }
 
     /// Where quotas were turned off, takes each workload's data out of the project an earlier run
