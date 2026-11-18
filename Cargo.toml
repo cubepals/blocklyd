@@ -45,9 +45,11 @@ thiserror = "2"
 anyhow = "1"
 clap = { version = "4.6", features = ["derive"] }
 sha2 = "0.11"
-# Archives in Blockly's existing format: a gzip tarball of the data directory.
+# Archives in Blockly's existing format: a tarball of the data directory, gzip or zstd. A restore
+# reads either, told by their first bytes; zstd builds libzstd from source with cc, as ring does.
 tar = { version = "0.4", default-features = false }
 flate2 = "1"
+zstd = { version = "0.14", default-features = false }
 hex = "0.4"
 # The join token is base64url JSON. rcgen's pem already brings this version in; bollard brings 0.22,
 # so the lock holds both whichever this names.

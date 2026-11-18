@@ -99,7 +99,7 @@ the container label `blocklyd.epoch`). Each verb checks it against the copy's ow
   "features": ["exec-idempotency-key", "logs-follow-across-restarts", "conditional-put",
                "placement-epochs", "data-transfer", "local-snapshots", "export-exclude",
                "execution-lease", "certificate-renewal", "resume-after-reboot", "multipart-upload",
-               "self-upgrade", "suspend", "signed-upgrade"],
+               "self-upgrade", "suspend", "signed-upgrade", "restore-zstd"],
   "nodeId": "fra-box-1",
   "deploymentId": "staging"
 }
@@ -477,7 +477,12 @@ Body: `{ "url": "…", "sha256": "…" }` or `{ "snapshot": "<snapshot id>" }`, 
   are skipped and counted); no absolute paths or `..`; files opened with `O_NOFOLLOW`; modes masked
   to 0755; owned by the workload's user; at most 256 GiB and 2 million entries; at most 1 MiB of
   any member's long name, long link and PAX records, or of a skipped entry's data. Anything else is
-  `422 invalid_archive`. An archive of several gzip members is read whole, as `gzip -d` reads it.
+  `422 invalid_archive`. The archive is a gzip or a zstd tarball, told by its first bytes; zstd
+  is announced as the feature `restore-zstd`, and anything else is `422 invalid_archive`. An
+  archive of several gzip members or zstd frames is read whole, as `gzip -d` and `zstd -d` read
+  it, and read to its end once tar has its last entry, so the codec's own checksum is checked
+  however far past tar's end it lies: a wrong one, or an archive cut short, is `422
+  invalid_archive`.
 - **From a snapshot** this node holds of the workload (`404 snapshot_not_found` otherwise), it
   copies the snapshot beside the data, sharing blocks where the filesystem can.
 - **Disk.** A restore from a URL is refused up front (`507 insufficient_disk`) when free disk is

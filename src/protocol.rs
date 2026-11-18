@@ -72,6 +72,7 @@ pub(crate) const FEATURES: &[&str] = &[
     "self-upgrade",
     "suspend",
     "signed-upgrade",
+    "restore-zstd",
 ];
 
 impl ProtocolVersions {

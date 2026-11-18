@@ -28,6 +28,11 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+# libzstd, which zstd-sys builds for reading zstd archives, is BSD-3-Clause with some files under
+# BSD-2-Clause: as permissive as the list, a notice and nothing more. Granted to that crate alone.
+exceptions = [
+    { allow = ["BSD-2-Clause"], crate = "zstd-sys" },
+]
 
 [licenses.private]
 # blocklyd itself (FSL-1.1-ALv2, LICENSE.md; publish = false) isn't checked against the list above.
