@@ -668,7 +668,12 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     let used = view["storage"]["usedBytes"].as_u64().unwrap();
     assert!(used > GIB - (64 << 20) && used <= GIB, "{used}");
     assert!(view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"), "{view}");
-    cleanup(&m, &["q"]).await;
+    // Deleted, its data waits in the trash outside any project, so no workload's limit counts it.
+    let deleted = m.delete(id("q"), DataDisposition::Delete, Some("q".to_owned()), None).await.unwrap();
+    m.measure_disk().await;
+    let fill = std::path::Path::new(&deleted.trash_path.unwrap()).join("data/fill");
+    let lsproj = std::process::Command::new("xfs_io").args(["-r", "-c", "lsproj"]).arg(&fill).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&lsproj.stdout).trim(), "projid = 0", "{lsproj:?}");
 }
 
 #[tokio::test]

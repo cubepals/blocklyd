@@ -51,8 +51,13 @@ use crate::protocol::{Proto, SpecRecord};
 
 pub(crate) mod leftovers;
 mod quarantine;
+
 pub mod restore;
 mod snapshots;
+
+/// The directory inside a workload's that holds its data, and that a deleted workload keeps in the
+/// trash.
+pub(crate) const DATA_DIR: &str = "data";
 
 pub(crate) const RECORD_VERSION: u32 = 1;
 
@@ -238,7 +243,7 @@ impl Store {
     }
 
     pub fn data_dir(&self, id: &WorkloadId) -> PathBuf {
-        self.workload_dir(id).join("data")
+        self.workload_dir(id).join(DATA_DIR)
     }
 
     fn record_path(&self, id: &WorkloadId) -> PathBuf {

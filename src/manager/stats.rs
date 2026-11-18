@@ -198,18 +198,20 @@ impl Manager {
             return;
         }
         let trash = self.store.trash_dir();
-        let released = tokio::task::spawn_blocking(move || -> std::io::Result<()> {
-            let Ok(entries) = std::fs::read_dir(&trash) else { return Ok(()) };
-            for entry in entries.flatten() {
-                if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                    crate::quota::release(&entry.path())?;
+        // An entry is either data a restore replaced or a deleted workload's whole directory, whose
+        // own root was never in a project but whose data is.
+        let _ = tokio::task::spawn_blocking(move || {
+            let Ok(entries) = std::fs::read_dir(&trash) else { return };
+            for entry in entries.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_dir())) {
+                let data = entry.path().join(crate::store::DATA_DIR);
+                let dirs = std::iter::once(entry.path()).chain(data.is_dir().then_some(data));
+                for dir in dirs {
+                    if let Err(e) = crate::quota::release(&dir) {
+                        tracing::warn!(dir = %dir.display(), error = %e, "couldn't take the trash out of its projects");
+                    }
                 }
             }
-            Ok(())
         })
         .await;
-        if let Ok(Err(e)) = released {
-            tracing::warn!(error = %e, "couldn't take the trash out of its projects");
-        }
     }
 }
