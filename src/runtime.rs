@@ -9,10 +9,13 @@
 //! Parts (`runtime/`):
 //! - `docker.rs`: the Docker Engine API, over the local unix socket.
 //! - `fake.rs`: an in-memory runtime for tests, with the Docker behaviour blocklyd depends on.
+//! - `seccomp.rs`: the seccomp profile workloads run under, from Docker's default and
+//!   `seccomp/moby-default.json`.
 
 pub mod docker;
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
+mod seccomp;
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;

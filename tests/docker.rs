@@ -644,7 +644,9 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     let m = daemon(&xfs.mount, &dep);
     m.reconcile(Records::FromDisk).await;
     // Writes past its 1 GB, and says what the disk looks like from inside.
-    let fill = "dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; df -k /data > /data/df; \
+    // It tries to take its data out of the project first, as its owner may: refused.
+    let fill = "chattr -p 0 /data 2> /data/chattr.err; \
+                dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; df -k /data > /data/df; \
                 while true; do sleep 1; done";
     m.ensure(id("q"), shell(fill, 256), Precondition::None, None).await.unwrap();
     m.start(id("q"), None).await.unwrap();
@@ -656,6 +658,8 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     }
     tokio::time::sleep(Duration::from_millis(250)).await;
     const GIB: u64 = 1 << 30;
+    let chattr = std::fs::read_to_string(data.join("chattr.err")).unwrap();
+    assert!(chattr.contains("setting project ID") && chattr.contains("Operation not permitted"), "{chattr}");
     assert!(std::fs::read_to_string(data.join("dd.err")).unwrap().contains("quota exceeded"));
     let written = std::fs::metadata(data.join("fill")).unwrap().len();
     assert!(written <= GIB && written > GIB - (64 << 20), "stopped at its size: {written}");
