@@ -298,8 +298,12 @@ fn set_attrs(fd: BorrowedFd<'_>, mut attrs: fsxattr, project: u32, inherit: bool
 /// FS_IOC_FSGETXATTR fills `attrs`, FS_IOC_FSSETXATTR reads it.
 #[expect(unsafe_code, reason = "the fsxattr ioctls, which rustix doesn't wrap")]
 fn fsxattr_ioctl(fd: BorrowedFd<'_>, request: u32, attrs: &mut fsxattr) -> io::Result<()> {
+    // The syscall, not libc's ioctl, whose request is a c_ulong in glibc and a c_int in musl; the
+    // kernel reads the low 32 bits either way.
     // SAFETY: the descriptor is open, both requests take a pointer to one fsxattr, and `attrs` is one.
-    let done = unsafe { libc::ioctl(fd.as_raw_fd(), libc::Ioctl::from(request), std::ptr::from_mut(attrs)) };
+    let done = unsafe {
+        libc::syscall(libc::SYS_ioctl, fd.as_raw_fd(), libc::c_ulong::from(request), std::ptr::from_mut(attrs))
+    };
     if done == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
 }
 
