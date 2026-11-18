@@ -92,6 +92,8 @@ pub(crate) fn recorded(text: &str) -> Option<u32> {
     text.trim().trim_start_matches(PENDING).trim().parse().ok()
 }
 
+/// The mode of a workload's project record: blocklyd's alone, beside the data, out of its reach.
+pub(crate) const RECORD_MODE: u32 = 0o600;
 /// How a project taken but not yet walked is recorded.
 pub(crate) const PENDING: &str = "pending";
 
@@ -167,7 +169,8 @@ pub(crate) fn assign(dir: &Path, project: u32, done: &Path) -> io::Result<()> {
     // The root first, so what is created during the walk inherits; the rest after.
     set_attrs(root.as_fd(), attrs, project, true)?;
     whole(walk_setting(root, project, true, 0)?)?;
-    std::fs::write(done, project.to_string())
+    // Replaced whole: a reservation read while this is written finds the old record or the new one.
+    crate::durable::write_atomic(done, project.to_string().as_bytes(), RECORD_MODE).map_err(io::Error::other)
 }
 
 /// Whether `dir` is wholly in `project`: its walk finished (`done` names it) and its root still

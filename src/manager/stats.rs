@@ -146,7 +146,9 @@ impl Manager {
         }
         let taken = taken_projects(&self.store.workloads_dir(), &self.store.workload_dir(id))?;
         let project = crate::quota::first_free(id, &taken);
-        std::fs::write(done, format!("{} {project}", crate::quota::PENDING))?;
+        let pending = format!("{} {project}", crate::quota::PENDING);
+        crate::durable::write_atomic(done, pending.as_bytes(), crate::quota::RECORD_MODE)
+            .map_err(std::io::Error::other)?;
         Ok(project)
     }
 
