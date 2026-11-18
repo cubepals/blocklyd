@@ -34,7 +34,7 @@ use flate2::write::GzEncoder;
 use sha2::{Digest, Sha256};
 
 use crate::priority::Idle;
-use crate::tree::{Kind, Progress};
+use crate::tree::{Kind, MAX_DEPTH, Progress};
 
 /// Unpacked bytes an archive may expand to. A world is a few GB; this stops a gzip bomb.
 pub(crate) const MAX_UNPACKED_BYTES: u64 = crate::tree::MAX_BYTES;
@@ -270,6 +270,16 @@ fn unpack_at_most(
         }
         let raw = entry.path().map_err(damaged)?.into_owned();
         let Some(relative) = clean(&raw)? else { continue };
+        // What nests deeper than a walk reaches couldn't be measured, snapshotted or held to the
+        // workload's quota afterwards (`tree::MAX_DEPTH`).
+        if relative.components().count() >= MAX_DEPTH {
+            return Err(UnpackError::TooLarge(format!(
+                "{} is nested {} folders deep, and a world may nest at most {}",
+                raw.display(),
+                relative.components().count(),
+                MAX_DEPTH - 1
+            )));
+        }
         let target = dest.join(&relative);
         let mode = entry.header().mode().unwrap_or(0o644);
         match entry.header().entry_type() {
@@ -501,6 +511,30 @@ mod tests {
             assert!(matches!(err, UnpackError::Unsafe(_)), "{name}: {err}");
             assert!(!dir.path().join("escape").exists());
         }
+    }
+
+    #[test]
+    fn a_tree_nested_deeper_than_a_walk_reaches_is_refused() {
+        let nested = |depth: usize| format!("{}level.dat", "d/".repeat(depth - 1));
+        let archive_at = |depth: usize| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.tar.gz");
+            let mut builder = tar::Builder::new(GzEncoder::new(File::create(&path).unwrap(), Compression::fast()));
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o644);
+            // Long names as GNU tar writes them, past the header's 100 bytes.
+            builder.append_data(&mut header, nested(depth), &b"x"[..]).unwrap();
+            builder.into_inner().unwrap().finish().unwrap();
+            (dir, path)
+        };
+        let (dir, archive) = archive_at(129);
+        let err = unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(())).unwrap_err();
+        assert!(matches!(err, UnpackError::TooLarge(_)), "{err}");
+        assert!(err.to_string().contains("nested 129 folders deep"), "{err}");
+        let (dir, archive) = archive_at(MAX_DEPTH - 1);
+        unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(())).unwrap();
+        assert!(dir.path().join("out").join(nested(MAX_DEPTH - 1)).exists());
     }
 
     #[test]
