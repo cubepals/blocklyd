@@ -196,21 +196,27 @@ pub(crate) fn release(dir: &Path) -> io::Result<()> {
     set_attrs(root.as_fd(), attrs, 0, false)
 }
 
-/// Fails a walk that left files out, so it isn't recorded as done and is taken up again: a file
-/// left in another project grows past this one's limit.
-fn whole(leased: usize) -> io::Result<()> {
-    if leased == 0 {
+/// Fails a walk that left something out, so it isn't recorded as done and is taken up again: a
+/// file left in another project grows past this one's limit.
+fn whole(left_out: usize) -> io::Result<()> {
+    if left_out == 0 {
         Ok(())
     } else {
-        Err(io::Error::other(format!("{leased} file(s) under a lease were left out; the walk is taken up again")))
+        Err(io::Error::other(format!(
+            "left out {left_out} (files under a lease, or directories nested deeper than {MAX_DEPTH}); the walk is \
+             taken up again"
+        )))
     }
 }
 
 /// Sets `project` on everything under `dir`; directories inherit it when `inherit` says so.
-/// Returns how many regular files it left out because a lease held them.
+/// Returns how many entries it left out: regular files a lease held, and directories nested
+/// deeper than it goes.
 fn walk_setting(dir: OwnedFd, project: u32, inherit: bool, depth: usize) -> io::Result<usize> {
+    // A directory nested deeper than the walk goes is left out, and counted: the rest of the tree
+    // still comes in.
     if depth >= MAX_DEPTH {
-        return Err(io::Error::other(format!("a tree nests deeper than {MAX_DEPTH} directories")));
+        return Ok(1);
     }
     let mut entries = Dir::new(dir)?;
     let mut leased = 0;

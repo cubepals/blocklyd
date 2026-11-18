@@ -184,15 +184,15 @@ impl Manager {
         if walks && let Err(e) = quotas.limit(project, 0) {
             tracing::warn!(workload = %id, project, error = %e, "couldn't lift the project's limit before its walk");
         }
-        let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project, &done)).await;
-        let held = match assigned {
-            Ok(Ok(())) => self.hold(quotas, project, size_gb),
-            Ok(Err(e)) => Err(e),
-            Err(e) => Err(std::io::Error::other(e)),
-        };
-        match held {
-            Ok(()) => Some(project),
-            Err(e) => {
+        let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project, &done))
+            .await
+            .unwrap_or_else(|e| Err(std::io::Error::other(e)));
+        // Held either way: a walk that couldn't finish leaves the project with a limit, not the
+        // none it moved in with, over what did come in.
+        let held = self.hold(quotas, project, size_gb);
+        match (assigned, held) {
+            (Ok(()), Ok(())) => Some(project),
+            (Err(e), _) | (_, Err(e)) => {
                 tracing::warn!(workload = %id, project, error = %e, "couldn't hold the workload's data to its size");
                 None
             }
