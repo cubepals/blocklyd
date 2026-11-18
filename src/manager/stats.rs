@@ -7,6 +7,9 @@
 
 use super::*;
 
+const MIB: u64 = 1 << 20;
+const GIB: u64 = 1 << 30;
+
 impl Manager {
     // ─── observation ───────────────────────────────────────────────────────────────────────
 
@@ -85,7 +88,7 @@ impl Manager {
 
     /// Measures each workload's data on disk, and the snapshots beside it. Called on an interval;
     /// blocking work off-thread.
-    pub(crate) async fn measure_disk(self: &Arc<Self>) {
+    pub async fn measure_disk(self: &Arc<Self>) {
         let ids: Vec<WorkloadId> = self.state.lock().unwrap().records.keys().cloned().collect();
         let dirs: Vec<std::path::PathBuf> = ids.iter().map(|id| self.store.snapshots_dir(id)).collect();
         let snapshots = tokio::task::spawn_blocking(move || {
@@ -96,26 +99,58 @@ impl Manager {
             self.state.lock().unwrap().snapshot_bytes = Some(bytes);
         }
         for id in ids {
-            let dir = self.store.data_dir(&id);
-            let used = tokio::task::spawn_blocking(move || crate::tree::disk_usage(&dir)).await;
-            if let Ok(Ok(bytes)) = used {
+            let Some(size_gb) = self.state.lock().unwrap().records.get(&id).map(|r| r.spec.storage.size_gb) else {
+                continue;
+            };
+            let held = self.hold_to_size(&id, size_gb).await;
+            let used = match held {
+                Some(project) => self.quotas.as_ref().and_then(|q| q.used(project).ok()),
+                None => {
+                    let dir = self.store.data_dir(&id);
+                    tokio::task::spawn_blocking(move || crate::tree::disk_usage(&dir)).await.ok().and_then(Result::ok)
+                }
+            };
+            if let Some(bytes) = used {
                 let mut state = self.state.lock().unwrap();
                 if state.records.contains_key(&id) {
                     state.disk.insert(id.clone(), (bytes, now()));
                 }
-                let over = state
-                    .records
-                    .get(&id)
-                    .is_some_and(|r| bytes > u64::from(r.spec.storage.size_gb) * 1024 * 1024 * 1024);
+                // Held by a quota, data stops at its size: within a mebibyte of it is full.
+                let size = u64::from(size_gb) * GIB;
+                let over = if held.is_some() { bytes + MIB >= size } else { bytes > size };
                 drop(state);
                 if over {
                     self.set_issue(
                         &id,
-                        Issue::new(IssueCode::OverStorage, "data is larger than the size the spec promised"),
+                        Issue::new(IssueCode::OverStorage, "data has reached the size the spec promised"),
                     );
                 } else {
                     self.clear_issue(&id, IssueCode::OverStorage);
                 }
+            }
+        }
+    }
+
+    /// Puts the workload's data in its project and holds that to `size_gb`, where this host keeps
+    /// project quotas: its project, or None when it isn't held (no quotas, or they couldn't be set,
+    /// which is logged and never refuses anything; the walk measures it then).
+    pub(crate) async fn hold_to_size(self: &Arc<Self>, id: &WorkloadId, size_gb: u32) -> Option<u32> {
+        let quotas = self.quotas.as_ref()?;
+        let project = crate::quota::project_of(id);
+        let dir = self.store.data_dir(id);
+        let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project)).await;
+        let bytes = u64::from(size_gb) * GIB;
+        let held = match assigned {
+            Ok(Ok(())) if quotas.limit_of(project).ok() == Some(bytes) => Ok(()),
+            Ok(Ok(())) => quotas.limit(project, bytes),
+            Ok(Err(e)) => Err(e),
+            Err(e) => Err(std::io::Error::other(e)),
+        };
+        match held {
+            Ok(()) => Some(project),
+            Err(e) => {
+                tracing::warn!(workload = %id, project, error = %e, "couldn't hold the workload's data to its size");
+                None
             }
         }
     }

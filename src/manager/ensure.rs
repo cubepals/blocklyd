@@ -345,6 +345,8 @@ impl Manager {
             self.note(self.runtime.remove(&record.container_name).await)?;
         }
         self.store.ensure_data_dir(&id, self.config.data_owner_ids())?;
+        // Held to its size from its first start, not from the next disk pass.
+        self.hold_to_size(&id, spec.storage.size_gb).await;
         record.generation += 1;
         if epoch.is_some() && epoch != record.epoch {
             // Placed here anew: whatever superseded the old copy is older than this placement.

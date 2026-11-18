@@ -70,8 +70,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 # chown data directories to the workload user, remove trashed data it owns, kill a timed-out
-# exec by host pid.
-CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_KILL
+# exec by host pid, and set and read each workload's project quota (quotactl, src/quota.rs).
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_KILL CAP_SYS_ADMIN
 AmbientCapabilities=
 
 [Install]

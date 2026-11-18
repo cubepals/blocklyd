@@ -482,7 +482,7 @@
             "type": "string"
           },
           "sizeGb": {
-            "description": "The size the control plane promised. Reported against measured usage; not enforced in v1\n(no per-directory quota on a plain filesystem).",
+            "description": "The size the control plane promised. Enforced where the node's filesystem keeps project\nquotas (writes past it fail, and the workload sees it as its disk's size); elsewhere\nreported against measured usage.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"

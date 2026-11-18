@@ -234,6 +234,8 @@ pub struct Manager {
     boot_id: Option<String>,
     /// Whether the data's filesystem can share blocks between files (probed at startup).
     reflink: bool,
+    /// The data's filesystem's project quotas, where it keeps them and they are asked for.
+    quotas: Option<crate::quota::Quotas>,
     /// Workloads the host went down under have been looked for, once, after the first full pass.
     resume_checked: AtomicBool,
 }
@@ -395,6 +397,7 @@ impl Manager {
             fleet: Mutex::new(FleetState::default()),
             boot_id,
             reflink: crate::tree::reflink_supported(&store.workloads_dir()),
+            quotas: config.workloads.disk_quotas.then(|| crate::quota::Quotas::open(&store.workloads_dir())).flatten(),
             resume_checked: AtomicBool::new(false),
             config,
             runtime,
