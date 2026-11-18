@@ -270,13 +270,15 @@ fn unpack_at_most(
         }
         let raw = entry.path().map_err(damaged)?.into_owned();
         let Some(relative) = clean(&raw)? else { continue };
-        // What nests deeper than a walk reaches couldn't be measured, snapshotted or held to the
-        // workload's quota afterwards (`tree::MAX_DEPTH`).
-        if relative.components().count() >= MAX_DEPTH {
+        // What nests deeper than a walk enters couldn't be measured, snapshotted or held to the
+        // workload's quota afterwards (`tree::MAX_DEPTH`): the folders it lies in, and itself if
+        // it is one, as the walks count them going in. A file may sit at the deepest a folder can.
+        let parts = relative.components().count();
+        let folders = if entry.header().entry_type() == tar::EntryType::Directory { parts } else { parts - 1 };
+        if folders >= MAX_DEPTH {
             return Err(UnpackError::TooLarge(format!(
-                "{} is nested {} folders deep, and a world may nest at most {}",
+                "{} is nested {folders} folders deep, and a world may nest at most {}",
                 raw.display(),
-                relative.components().count(),
                 MAX_DEPTH - 1
             )));
         }
@@ -514,27 +516,48 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_nested_deeper_than_a_walk_reaches_is_refused() {
-        let nested = |depth: usize| format!("{}level.dat", "d/".repeat(depth - 1));
-        let archive_at = |depth: usize| {
+    fn a_tree_nested_deeper_than_a_walk_enters_is_refused() {
+        // A file under `folders` folders, or a folder `folders` deep when `file` is empty.
+        let nested = |folders: usize, file: &str| format!("{}{file}", "d/".repeat(folders));
+        let archive_of_one = |name: String, kind: tar::EntryType| {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("a.tar.gz");
             let mut builder = tar::Builder::new(GzEncoder::new(File::create(&path).unwrap(), Compression::fast()));
             let mut header = tar::Header::new_gnu();
-            header.set_size(1);
-            header.set_mode(0o644);
+            header.set_entry_type(kind);
+            let data: &[u8] = if kind == tar::EntryType::Directory { b"" } else { b"x" };
+            header.set_size(data.len() as u64);
+            header.set_mode(0o755);
             // Long names as GNU tar writes them, past the header's 100 bytes.
-            builder.append_data(&mut header, nested(depth), &b"x"[..]).unwrap();
+            builder.append_data(&mut header, name, data).unwrap();
             builder.into_inner().unwrap().finish().unwrap();
             (dir, path)
         };
-        let (dir, archive) = archive_at(129);
-        let err = unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(())).unwrap_err();
-        assert!(matches!(err, UnpackError::TooLarge(_)), "{err}");
-        assert!(err.to_string().contains("nested 129 folders deep"), "{err}");
-        let (dir, archive) = archive_at(MAX_DEPTH - 1);
-        unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(())).unwrap();
-        assert!(dir.path().join("out").join(nested(MAX_DEPTH - 1)).exists());
+        let unpacked = |name: String, kind| {
+            let (dir, archive) = archive_of_one(name, kind);
+            unpack(&archive, &dir.path().join("out"), me(), &mut |_| Ok(()))
+        };
+        let refused = unpacked(nested(MAX_DEPTH, "level.dat"), tar::EntryType::Regular).unwrap_err();
+        assert!(matches!(refused, UnpackError::TooLarge(_)), "{refused}");
+        assert!(refused.to_string().contains("nested 128 folders deep"), "{refused}");
+        let refused = unpacked(nested(MAX_DEPTH, ""), tar::EntryType::Directory).unwrap_err();
+        assert!(matches!(refused, UnpackError::TooLarge(_)), "a folder as deep: {refused}");
+        unpacked(nested(MAX_DEPTH - 1, "level.dat"), tar::EntryType::Regular).unwrap();
+        unpacked(nested(MAX_DEPTH - 1, ""), tar::EntryType::Directory).unwrap();
+    }
+
+    #[test]
+    fn what_pack_makes_at_the_deepest_unpacks() {
+        let src = tempfile::tempdir().unwrap();
+        let deepest = src.path().join("d/".repeat(MAX_DEPTH - 1));
+        fs::create_dir_all(&deepest).unwrap();
+        fs::write(deepest.join("level.dat"), b"level").unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let archive = out.path().join("w.tar.gz");
+        pack(src.path(), &archive, &[], &mut |_| Ok(())).unwrap();
+        let dest = out.path().join("back");
+        unpack(&archive, &dest, me(), &mut |_| Ok(())).unwrap();
+        assert_eq!(fs::read(dest.join("d/".repeat(MAX_DEPTH - 1)).join("level.dat")).unwrap(), b"level");
     }
 
     #[test]
