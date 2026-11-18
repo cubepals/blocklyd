@@ -166,7 +166,7 @@ pub(crate) fn assign(dir: &Path, project: u32, done: &Path) -> io::Result<()> {
     let attrs = get_attrs(root.as_fd())?;
     // The root first, so what is created during the walk inherits; the rest after.
     set_attrs(root.as_fd(), attrs, project, true)?;
-    walk_setting(root, project, true, 0)?;
+    whole(walk_setting(root, project, true, 0)?)?;
     std::fs::write(done, project.to_string())
 }
 
@@ -189,16 +189,28 @@ pub(crate) fn release(dir: &Path) -> io::Result<()> {
         return Ok(());
     }
     let again = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
-    walk_setting(again, 0, false, 0)?;
+    whole(walk_setting(again, 0, false, 0)?)?;
     set_attrs(root.as_fd(), attrs, 0, false)
 }
 
+/// Fails a walk that left files out, so it isn't recorded as done and is taken up again: a file
+/// left in another project grows past this one's limit.
+fn whole(leased: usize) -> io::Result<()> {
+    if leased == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!("{leased} file(s) under a lease were left out; the walk is taken up again")))
+    }
+}
+
 /// Sets `project` on everything under `dir`; directories inherit it when `inherit` says so.
-fn walk_setting(dir: OwnedFd, project: u32, inherit: bool, depth: usize) -> io::Result<()> {
+/// Returns how many regular files it left out because a lease held them.
+fn walk_setting(dir: OwnedFd, project: u32, inherit: bool, depth: usize) -> io::Result<usize> {
     if depth >= MAX_DEPTH {
         return Err(io::Error::other(format!("a tree nests deeper than {MAX_DEPTH} directories")));
     }
     let mut entries = Dir::new(dir)?;
+    let mut leased = 0;
     while let Some(entry) = entries.read() {
         let entry = entry?;
         let name = entry.file_name();
@@ -213,14 +225,19 @@ fn walk_setting(dir: OwnedFd, project: u32, inherit: bool, depth: usize) -> io::
         };
         let flags = match kind {
             FileType::Directory => dir_flags(),
-            // Non-blocking, so a file under a lease is skipped rather than waited for.
+            // Non-blocking, so a file under a lease is counted and passed over rather than waited
+            // for (up to the kernel's lease-break time each).
             FileType::RegularFile => OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
             // Links, FIFOs, sockets and devices hold no blocks worth counting, and are never opened.
             _ => continue,
         };
         let opened = match rustix::fs::openat(parent, name, flags, Mode::empty()) {
             Ok(fd) => fd,
-            Err(e) if vanished(e) || e == Errno::AGAIN => continue,
+            Err(e) if vanished(e) => continue,
+            Err(Errno::AGAIN) => {
+                leased += 1;
+                continue;
+            }
             Err(e) => return Err(e.into()),
         };
         // As opened, not as looked at: an entry swapped since is taken for what it is now.
@@ -231,10 +248,10 @@ fn walk_setting(dir: OwnedFd, project: u32, inherit: bool, depth: usize) -> io::
         let attrs = get_attrs(opened.as_fd())?;
         set_attrs(opened.as_fd(), attrs, project, inherit && kind == FileType::Directory)?;
         if kind == FileType::Directory {
-            walk_setting(opened, project, inherit, depth + 1)?;
+            leased += walk_setting(opened, project, inherit, depth + 1)?;
         }
     }
-    Ok(())
+    Ok(leased)
 }
 
 fn dir_flags() -> OFlags {
