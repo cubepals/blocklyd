@@ -55,7 +55,7 @@ const UNIT_FILE: &str = include_str!("../../deploy/blocklyd.service");
 /// Where the workloads' slice (`workloads.cgroup_parent`) is installed, beside the unit.
 pub const SLICE: &str = "/etc/systemd/system/blockly.slice";
 
-pub(crate) const SLICE_FILE: &str = include_str!("../../deploy/blockly.slice");
+const SLICE_FILE: &str = include_str!("../../deploy/blockly.slice");
 
 /// How long a re-enrolling node has for its first heartbeat (reenroll.rs says what happens after):
 /// enrollment retries every 30 s at most, and a heartbeat follows within seconds.

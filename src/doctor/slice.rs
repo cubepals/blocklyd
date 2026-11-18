@@ -46,8 +46,10 @@ fn check(slice: &str, driver: Option<&str>, unit: Option<&str>) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::join::SLICE_FILE;
     use crate::doctor::Status;
+
+    /// The slice `blocklyd join` installs.
+    const SLICE_FILE: &str = include_str!("../../deploy/blockly.slice");
 
     #[test]
     fn the_installed_slice_on_systemd_passes_and_anything_short_of_it_warns() {
