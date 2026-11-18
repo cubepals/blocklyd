@@ -144,13 +144,7 @@ impl Manager {
         if let Some(project) = std::fs::read_to_string(done).ok().and_then(|t| crate::quota::recorded(&t)) {
             return Ok(project);
         }
-        let others: Vec<WorkloadId> =
-            self.state.lock().unwrap().records.keys().filter(|other| *other != id).cloned().collect();
-        let taken: std::collections::HashSet<u32> = others
-            .iter()
-            .filter_map(|other| std::fs::read_to_string(self.store.workload_dir(other).join(QUOTA_DONE)).ok())
-            .filter_map(|text| crate::quota::recorded(&text))
-            .collect();
+        let taken = taken_projects(&self.store.workloads_dir(), &self.store.workload_dir(id))?;
         let project = crate::quota::first_free(id, &taken);
         std::fs::write(done, format!("{} {project}", crate::quota::PENDING))?;
         Ok(project)
@@ -277,5 +271,38 @@ impl Manager {
             }
         })
         .await;
+    }
+}
+
+/// The projects every workload directory under `workloads` but `mine` holds or has reserved. The
+/// directories on disk, not the records: a create still on its way reserves one before its record
+/// is published.
+fn taken_projects(
+    workloads: &std::path::Path,
+    mine: &std::path::Path,
+) -> std::io::Result<std::collections::HashSet<u32>> {
+    Ok(std::fs::read_dir(workloads)?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|dir| dir != mine)
+        .filter_map(|dir| std::fs::read_to_string(dir.join(QUOTA_DONE)).ok())
+        .filter_map(|text| crate::quota::recorded(&text))
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reservation_still_on_its_way_is_taken() {
+        let workloads = tempfile::tempdir().unwrap();
+        for (name, record) in [("a", "pending 1048600"), ("b", "1048601"), ("mine", "1048602")] {
+            std::fs::create_dir(workloads.path().join(name)).unwrap();
+            std::fs::write(workloads.path().join(name).join(QUOTA_DONE), record).unwrap();
+        }
+        std::fs::create_dir(workloads.path().join("none")).unwrap();
+        let taken = taken_projects(workloads.path(), &workloads.path().join("mine")).unwrap();
+        assert_eq!(taken, std::collections::HashSet::from([1_048_600, 1_048_601]));
     }
 }
