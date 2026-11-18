@@ -17,9 +17,9 @@ use bollard::container::LogOutput;
 use bollard::errors::Error as BollardError;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::models::{
-    ContainerCreateBody, ContainerInspectResponse, ContainerStateStatusEnum, ContainerUpdateBody, HealthStatusEnum,
-    HostConfig, HostConfigLogConfig, Mount, MountType, NetworkCreateRequest, PortBinding as DockerPortBinding,
-    RestartPolicy as DockerRestartPolicy, RestartPolicyNameEnum,
+    ContainerCreateBody, ContainerInspectResponse, ContainerStateStatusEnum, ContainerUpdateBody, HealthConfig,
+    HealthStatusEnum, HostConfig, HostConfigLogConfig, Mount, MountType, NetworkCreateRequest,
+    PortBinding as DockerPortBinding, RestartPolicy as DockerRestartPolicy, RestartPolicyNameEnum,
 };
 use bollard::query_parameters::{
     CreateContainerOptionsBuilder, CreateImageOptionsBuilder, EventsOptionsBuilder, InspectNetworkOptions,
@@ -210,6 +210,10 @@ fn info_from(inspect: ContainerInspectResponse) -> ContainerInfo {
     }
 }
 
+/// The healthcheck test that turns off one the image declares (Docker Engine API, `HealthConfig.Test`:
+/// `["NONE"]` disables the image's healthcheck).
+const NO_HEALTH_CHECK: &str = "NONE";
+
 fn body_of(spec: &ContainerSpec) -> ContainerCreateBody {
     let mut exposed = Vec::new();
     let mut bindings: HashMap<String, Option<Vec<DockerPortBinding>>> = HashMap::new();
@@ -275,6 +279,11 @@ fn body_of(spec: &ContainerSpec) -> ContainerCreateBody {
         exposed_ports: Some(exposed),
         stop_signal: Some(spec.stop_signal.clone()),
         stop_timeout: Some(i64::from(spec.stop_timeout_secs)),
+        // The image's own check is off: Cubepals' status ping says whether a server answers, and
+        // nothing reads Docker's verdict. itzg's `mc-health` runs every 30 s inside the workload
+        // and sources `/data/.mc-health.env`, a file the server's own mods can write, and a frozen
+        // workload, which Docker can't exec into, would only read as unhealthy.
+        healthcheck: Some(HealthConfig { test: Some(vec![NO_HEALTH_CHECK.into()]), ..Default::default() }),
         host_config: Some(host_config),
         ..Default::default()
     }
@@ -702,6 +711,12 @@ mod tests {
             host.restart_policy,
             Some(DockerRestartPolicy { name: Some(RestartPolicyNameEnum::NO), maximum_retry_count: None })
         );
+    }
+
+    #[test]
+    fn the_images_own_health_check_never_runs() {
+        let check = body_of(&spec()).healthcheck.unwrap();
+        assert_eq!(check.test, Some(vec!["NONE".to_owned()]));
     }
 
     #[test]
