@@ -654,7 +654,9 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     // `done` holds no data: the full project takes nothing more.
     let fill = "chattr -p 0 /data 2> /data/chattr.err; \
                 head -c 65536 /dev/zero > /data/dd.err; head -c 65536 /dev/zero > /data/df; \
+                head -c 65536 /dev/zero > /data/dfi; \
                 dd if=/dev/zero of=/data/fill bs=1M count=1300 2<> /data/dd.err; df -k /data 1<> /data/df; \
+                df -i /data 1<> /data/dfi; \
                 touch /data/done; while true; do sleep 1; done";
     m.ensure(id("q"), shell(fill, LOOP_WRITER_MB), Precondition::None, None).await.unwrap();
     m.start(id("q"), None).await.unwrap();
@@ -673,6 +675,10 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     let written = std::fs::metadata(data.join("fill")).unwrap().len();
     assert!(written <= GIB && written > GIB - (64 << 20), "stopped at its size: {written}");
     // statfs inside reports the project's limit as the disk, which the control plane reads.
+    // And its files to the size's share of inodes, 1 GiB at 16 KiB each.
+    let dfi = std::fs::read_to_string(data.join("dfi")).unwrap();
+    let inodes: u64 = dfi.lines().nth(1).unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
+    assert_eq!(inodes, 65_536, "{dfi}");
     let df = std::fs::read_to_string(data.join("df")).unwrap();
     let size_kb: u64 = df.lines().nth(1).unwrap().split_whitespace().nth(1).unwrap().parse().unwrap();
     assert_eq!(size_kb, GIB / 1024, "{df}");

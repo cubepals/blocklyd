@@ -64,6 +64,25 @@ pub(crate) fn limit_for(size_gb: u32, used: u64, current: u64) -> Option<u64> {
     Some(if used > size { (used + GIB).next_multiple_of(GIB) } else { size })
 }
 
+/// What mke2fs gives each inode by default (`inode_ratio` in mke2fs.conf's `[defaults]`): a
+/// workload's share of a filesystem's inodes is its share of the space, at this ratio.
+const BYTES_PER_INODE: u64 = 16 * 1024;
+
+/// The files (inodes) `project` may hold at `size_gb`: its share of the space at mke2fs's ratio,
+/// and no more than a walk takes (`tree::MAX_ENTRIES`), so no workload uses up the filesystem's
+/// inodes while it has blocks left. Like `limit_for`, never below what it already holds: data found
+/// past it keeps as much room again above it, and that stays. No size, no limit.
+pub(crate) fn files_for(size_gb: u32, used: u64, current: u64) -> Option<u64> {
+    let share = (u64::from(size_gb) * GIB / BYTES_PER_INODE).min(crate::tree::MAX_ENTRIES);
+    if share == 0 {
+        return None;
+    }
+    if current != 0 {
+        return Some(share.max(current));
+    }
+    Some(if used > share { used + share } else { share })
+}
+
 /// The project a workload's data is first offered: from its key, so the same workload is offered the
 /// same one anywhere. FNV-1a, folded into the range. Two keys can share one, so the manager takes
 /// the next free one where it is taken here (`next_project`), and keeps what it took.
@@ -124,12 +143,24 @@ impl Quotas {
         Ok(self.get(project)?.dqb_curspace)
     }
 
-    /// Holds `project` to `bytes`, rounded up to the quota's unit.
-    pub(crate) fn limit(&self, project: u32, bytes: u64) -> io::Result<()> {
+    /// The files (inodes) `project` holds.
+    pub(crate) fn files(&self, project: u32) -> io::Result<u64> {
+        Ok(self.get(project)?.dqb_curinodes)
+    }
+
+    /// Holds `project` to `bytes`, rounded up to the quota's unit, and to `files` inodes; 0 lifts
+    /// either.
+    pub(crate) fn limit(&self, project: u32, bytes: u64, files: u64) -> io::Result<()> {
         let mut quota = no_quota();
         quota.dqb_bhardlimit = bytes.div_ceil(QUOTA_BLOCK_BYTES);
-        quota.dqb_valid = libc::QIF_BLIMITS;
+        quota.dqb_ihardlimit = files;
+        quota.dqb_valid = libc::QIF_LIMITS;
         self.quotactl(libc::Q_SETQUOTA, project, &mut quota)
+    }
+
+    /// The files (inodes) `project` is held to now; 0 for none.
+    pub(crate) fn files_limit_of(&self, project: u32) -> io::Result<u64> {
+        Ok(self.get(project)?.dqb_ihardlimit)
     }
 
     /// The limit `project` is held to now, in bytes; 0 for none.
@@ -362,6 +393,16 @@ mod tests {
         assert_eq!(project_of(&a), project_of(&b), "the pair found in review");
         let taken = std::collections::HashSet::from([first_free(&a, &Default::default())]);
         assert_ne!(first_free(&b, &taken), project_of(&a));
+    }
+
+    #[test]
+    fn files_are_held_to_the_size_s_share_of_inodes() {
+        // 1 GiB at 16 KiB an inode.
+        assert_eq!(files_for(1, 0, 0), Some(65_536));
+        assert_eq!(files_for(1, 70_000, 0), Some(70_000 + 65_536), "what it holds keeps room");
+        assert_eq!(files_for(1, 0, 200_000), Some(200_000), "a limit set before stays");
+        assert_eq!(files_for(4096, 0, 0), Some(crate::tree::MAX_ENTRIES), "no more than a walk takes");
+        assert_eq!(files_for(0, 10, 0), None);
     }
 
     #[test]

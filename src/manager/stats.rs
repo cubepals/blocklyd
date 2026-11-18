@@ -155,10 +155,13 @@ impl Manager {
     /// Sets `project`'s limit where it differs from what `quota::limit_for` says it should be.
     fn hold(&self, quotas: &crate::quota::Quotas, project: u32, size_gb: u32) -> std::io::Result<()> {
         let (used, current) = (quotas.used(project)?, quotas.limit_of(project)?);
-        match crate::quota::limit_for(size_gb, used, current) {
-            Some(limit) if limit != current => quotas.limit(project, limit),
-            _ => Ok(()),
+        let (files, files_current) = (quotas.files(project)?, quotas.files_limit_of(project)?);
+        let bytes = crate::quota::limit_for(size_gb, used, current).unwrap_or(0);
+        let files_limit = crate::quota::files_for(size_gb, files, files_current).unwrap_or(0);
+        if bytes == current && files_limit == files_current {
+            return Ok(());
         }
+        quotas.limit(project, bytes, files_limit)
     }
 
     /// Puts the workload's data in its project and holds that to `size_gb`, where this host keeps
@@ -181,7 +184,7 @@ impl Manager {
         let walks = tokio::task::spawn_blocking(move || crate::quota::assigned(&to_check, project, &done_check))
             .await
             .map_or(true, |a| !a.unwrap_or(false));
-        if walks && let Err(e) = quotas.limit(project, 0) {
+        if walks && let Err(e) = quotas.limit(project, 0, 0) {
             tracing::warn!(workload = %id, project, error = %e, "couldn't lift the project's limit before its walk");
         }
         let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project, &done))
@@ -241,7 +244,7 @@ impl Manager {
             let dir = self.store.data_dir(id);
             let released = tokio::task::spawn_blocking(move || crate::quota::release(&dir)).await;
             let let_go = match released {
-                Ok(Ok(())) => lapsed.limit(project, 0).and_then(|()| std::fs::remove_file(&done)),
+                Ok(Ok(())) => lapsed.limit(project, 0, 0).and_then(|()| std::fs::remove_file(&done)),
                 Ok(Err(e)) => Err(e),
                 Err(e) => Err(std::io::Error::other(e)),
             };
