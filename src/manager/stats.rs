@@ -103,10 +103,12 @@ impl Manager {
         self.release_trash().await;
         self.let_go_of_quotas(&ids).await;
         for id in ids {
-            let Some(size_gb) = self.state.lock().unwrap().records.get(&id).map(|r| r.spec.storage.size_gb) else {
+            let Some((size_gb, container)) =
+                self.state.lock().unwrap().records.get(&id).map(|r| (r.spec.storage.size_gb, r.container_name.clone()))
+            else {
                 continue;
             };
-            let held = self.hold_to_size(&id, size_gb).await;
+            let held = if self.confined(&container).await { self.hold_to_size(&id, size_gb).await } else { None };
             let used = match held {
                 Some(project) => self.quotas.as_ref().and_then(|q| q.used(project).ok()),
                 None => {
@@ -201,14 +203,34 @@ impl Manager {
         }
     }
 
-    /// Holds a workload about to start: what the trash keeps leaves its project first, so data a
-    /// restore swapped in since the last pass is held to its size, and not counted with the copy
-    /// it replaced.
-    pub(crate) async fn hold_for_start(&self, id: &WorkloadId, size_gb: u32) {
+    /// Holds data for a container about to be made: what the trash keeps leaves its project first,
+    /// so a workload made again under the same id isn't sized with the copy it deleted.
+    pub(crate) async fn hold_for_new(&self, id: &WorkloadId, size_gb: u32) {
         if self.quotas.is_some() {
             self.release_trash().await;
             self.hold_to_size(id, size_gb).await;
         }
+    }
+
+    /// Holds a workload about to start in the container it has, where that container can't take
+    /// its data out of the project: data a restore swapped in since the last pass is held to its
+    /// size, and not counted with the copy it replaced.
+    pub(crate) async fn hold_for_start(&self, record: &WorkloadRecord) {
+        if self.quotas.is_some() && self.confined(&record.container_name).await {
+            self.release_trash().await;
+            self.hold_to_size(&record.id, record.spec.storage.size_gb).await;
+        }
+    }
+
+    /// Whether `container` was made under the seccomp profile that keeps a workload's data in its
+    /// project. One made before it (an older blocklyd's) isn't held, and is measured by walking,
+    /// until a start makes it again (`power.rs`).
+    async fn confined(&self, container: &str) -> bool {
+        let info = self.runtime.inspect(container).await.ok().flatten();
+        info.is_some_and(|i| {
+            i.labels.get(crate::labels::LABEL_CONFINED).map(String::as_str)
+                == Some(crate::runtime::seccomp::CONFINEMENT)
+        })
     }
 
     /// Where quotas were turned off, takes each workload's data out of the project an earlier run

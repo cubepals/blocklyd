@@ -14,7 +14,7 @@ use std::time::Duration;
 use blocklyd::fleet::heartbeat::heartbeat_report;
 use blocklyd::manager::{ConflictCode, NodeError, Precondition, Records};
 use blocklyd::protocol::{DataDisposition, DataOutcome, EnsureOutcome, ExecRequest, IssueCode, WorkloadState};
-use blocklyd::runtime::{DIED, exit_by};
+use blocklyd::runtime::{ContainerStatus, DIED, exit_by};
 use blocklyd::store::Phase;
 use support::{fixture, id, spec, spec_with};
 use tokio_util::sync::CancellationToken;
@@ -29,6 +29,21 @@ async fn duplicate_create_makes_one_workload() {
     assert_eq!(second.outcome, EnsureOutcome::Unchanged);
     assert_eq!(f.fake.count_calls("create "), 1, "one container, however often it's asked for");
     assert_eq!(first.workload.ports, second.workload.ports);
+}
+
+#[tokio::test]
+async fn a_container_made_before_the_seccomp_profile_is_made_again_on_start() {
+    let f = fixture("").await;
+    f.manager.ensure(id("w"), spec(), Precondition::None, None).await.unwrap();
+    f.fake.unlabel("blockly-test-w", "blocklyd.confined");
+    f.manager.start(id("w"), None).await.unwrap();
+    assert_eq!(f.fake.count_calls("create "), 2, "made again, under the profile");
+    let made = f.fake.container("blockly-test-w").unwrap();
+    assert!(made.spec.labels.contains_key("blocklyd.confined"));
+    assert_eq!(made.status, ContainerStatus::Running);
+    f.manager.stop(id("w"), None, None).await.unwrap();
+    f.manager.start(id("w"), None).await.unwrap();
+    assert_eq!(f.fake.count_calls("create "), 2, "a confined container is kept");
 }
 
 #[tokio::test]

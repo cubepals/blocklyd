@@ -64,13 +64,20 @@ impl Manager {
     /// `PUT` deferred put in place first.
     async fn boot(self: &Arc<Self>, mut record: WorkloadRecord, info: ContainerInfo) -> Result<(), NodeError> {
         let id = record.id.clone();
-        let deferred = self.boot_spec(&record, &info);
+        // A container made before the seccomp profile could take its data out of its quota: it is
+        // made again, from the spec it runs, with the secrets it holds.
+        let unconfined = info.labels.get(crate::labels::LABEL_CONFINED).map(String::as_str)
+            != Some(crate::runtime::seccomp::CONFINEMENT);
+        let deferred = self.boot_spec(&record, &info).or_else(|| {
+            unconfined.then(|| record.spec.with_secrets(&info.env, self.suspension(&id).resumes_on)).flatten()
+        });
         let memory = deferred.as_ref().map_or(record.spec.resources.memory_mb, |spec| spec.resources.memory_mb);
         self.admit(&id, u64::from(memory))?;
         match deferred {
             Some(spec) => {
                 let digest = spec.record().digest();
-                // A new generation for the deferred spec; it no longer sleeps.
+                // A new generation for the deferred spec, or the same spec in a confined
+                // container; it no longer sleeps.
                 self.replace(record, Some(info), spec, digest, None).await?;
                 record = self.record(&id)?;
             }
@@ -82,7 +89,7 @@ impl Manager {
         record.stop_requested_at = None;
         record.updated_at = now_str();
         self.save_record(&record).await?;
-        self.hold_for_start(&id, record.spec.storage.size_gb).await;
+        self.hold_for_start(&record).await;
         self.note(self.runtime.start(&record.container_name).await).map_err(|e| port_clash(&id, e))?;
         self.state.lock().unwrap().last_failure.remove(&id);
         self.clear_issue(&id, IssueCode::InsufficientCapacity);

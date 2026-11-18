@@ -22,6 +22,10 @@ use std::sync::LazyLock;
 use linux_raw_sys::ioctl::{FS_IOC_FSSETXATTR, FS_IOC_SETFLAGS, FS_IOC32_SETFLAGS};
 use serde_json::{Value, json};
 
+/// What a container made under this profile is labelled with (`labels::LABEL_CONFINED`). A change to
+/// what the profile refuses changes it, so containers made before are known.
+pub(crate) const CONFINEMENT: &str = "moby-seccomp-v0.3.0/no-fs-flags";
+
 /// Docker's default profile, moby/profiles at seccomp/v0.3.0.
 const MOBY_DEFAULT: &str = include_str!("seccomp/moby-default.json");
 

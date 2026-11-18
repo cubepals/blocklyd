@@ -15,7 +15,7 @@
 pub mod docker;
 #[cfg(any(test, feature = "fake"))]
 pub mod fake;
-mod seccomp;
+pub(crate) mod seccomp;
 
 use std::collections::BTreeMap;
 use std::net::IpAddr;

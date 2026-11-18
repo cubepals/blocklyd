@@ -160,6 +160,7 @@ impl Manager {
         labels.insert(LABEL_WORKLOAD.into(), record.id.to_string());
         labels.insert(LABEL_GENERATION.into(), record.generation.to_string());
         labels.insert(LABEL_DIGEST.into(), record.spec_digest.clone());
+        labels.insert(crate::labels::LABEL_CONFINED.into(), crate::runtime::seccomp::CONFINEMENT.into());
         if let Some(epoch) = record.epoch {
             labels.insert(LABEL_EPOCH.into(), epoch.to_string());
         }
@@ -281,7 +282,7 @@ impl Manager {
             return Err(e);
         }
         // Held to its size before its container can start.
-        self.hold_to_size(id, spec.storage.size_gb).await;
+        self.hold_for_new(id, spec.storage.size_gb).await;
         if let Err(e) = self.save_record(&record).await {
             undo(self);
             return Err(e);
@@ -348,7 +349,7 @@ impl Manager {
         }
         self.store.ensure_data_dir(&id, self.config.data_owner_ids())?;
         // Held to its size from its first start, not from the next disk pass.
-        self.hold_to_size(&id, spec.storage.size_gb).await;
+        self.hold_for_new(&id, spec.storage.size_gb).await;
         record.generation += 1;
         if epoch.is_some() && epoch != record.epoch {
             // Placed here anew: whatever superseded the old copy is older than this placement.
