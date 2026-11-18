@@ -19,6 +19,9 @@
 //! any path is absolute or climbs out with `..`. It never follows a link. It strips setuid,
 //! setgid and sticky bits and group/other write, and gives every file to the workload's user. It
 //! unpacks beside the data and swaps by rename, so a bad archive never costs the current world.
+//!
+//! Parts (`tarball/`):
+//! - `depth.rs`: how deep a restored archive may nest.
 
 use std::cell::Cell;
 use std::fs::{self, File, OpenOptions};
@@ -35,6 +38,8 @@ use sha2::{Digest, Sha256};
 
 use crate::priority::Idle;
 use crate::tree::{Kind, Progress};
+
+mod depth;
 
 /// Unpacked bytes an archive may expand to. A world is a few GB; this stops a gzip bomb.
 pub(crate) const MAX_UNPACKED_BYTES: u64 = crate::tree::MAX_BYTES;
@@ -292,6 +297,7 @@ fn unpack_at_most(
         }
         let raw = entry.path().map_err(damaged)?.into_owned();
         let Some(relative) = clean(&raw)? else { continue };
+        depth::within(&raw, &relative, entry.header().entry_type() == tar::EntryType::Directory)?;
         let target = dest.join(&relative);
         let mode = entry.header().mode().unwrap_or(0o644);
         match entry.header().entry_type() {
