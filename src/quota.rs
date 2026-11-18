@@ -159,16 +159,24 @@ impl Quotas {
 /// `project`, a walk cut short is taken up again. Does nothing where both say it is done: what is
 /// created since inherits. Blocking.
 pub(crate) fn assign(dir: &Path, project: u32, done: &Path) -> io::Result<()> {
-    let root = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
-    let attrs = get_attrs(root.as_fd())?;
-    let finished = std::fs::read_to_string(done).ok().is_some_and(|d| d.trim() == project.to_string());
-    if finished && attrs.fsx_projid == project && attrs.fsx_xflags & FS_XFLAG_PROJINHERIT != 0 {
+    if assigned(dir, project, done)? {
         return Ok(());
     }
+    let root = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
+    let attrs = get_attrs(root.as_fd())?;
     // The root first, so what is created during the walk inherits; the rest after.
     set_attrs(root.as_fd(), attrs, project, true)?;
     walk_setting(root, project, true, 0)?;
     std::fs::write(done, project.to_string())
+}
+
+/// Whether `dir` is wholly in `project`: its walk finished (`done` names it) and its root still
+/// carries it, so data swapped in since is walked again. Blocking.
+pub(crate) fn assigned(dir: &Path, project: u32, done: &Path) -> io::Result<bool> {
+    let root = rustix::fs::open(dir, dir_flags(), Mode::empty())?;
+    let attrs = get_attrs(root.as_fd())?;
+    let finished = std::fs::read_to_string(done).ok().is_some_and(|d| d.trim() == project.to_string());
+    Ok(finished && attrs.fsx_projid == project && attrs.fsx_xflags & FS_XFLAG_PROJINHERIT != 0)
 }
 
 /// Takes `dir` and everything in it out of any project (back to 0, inheriting nothing): what a

@@ -101,6 +101,7 @@ impl Manager {
             self.state.lock().unwrap().snapshot_bytes = Some(bytes);
         }
         self.release_trash().await;
+        self.let_go_of_quotas(&ids).await;
         for id in ids {
             let Some(size_gb) = self.state.lock().unwrap().records.get(&id).map(|r| r.spec.storage.size_gb) else {
                 continue;
@@ -176,6 +177,15 @@ impl Manager {
             }
         };
         let dir = self.store.data_dir(id);
+        // A tree not yet in its project moves in with no limit, so data larger than the limit
+        // the project had (a restore) isn't refused on the way; the limit follows below.
+        let (to_check, done_check) = (dir.clone(), done.clone());
+        let walks = tokio::task::spawn_blocking(move || crate::quota::assigned(&to_check, project, &done_check))
+            .await
+            .map_or(true, |a| !a.unwrap_or(false));
+        if walks && let Err(e) = quotas.limit(project, 0) {
+            tracing::warn!(workload = %id, project, error = %e, "couldn't lift the project's limit before its walk");
+        }
         let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project, &done)).await;
         let held = match assigned {
             Ok(Ok(())) => self.hold(quotas, project, size_gb),
@@ -198,6 +208,28 @@ impl Manager {
         if self.quotas.is_some() {
             self.release_trash().await;
             self.hold_to_size(id, size_gb).await;
+        }
+    }
+
+    /// Where quotas were turned off, takes each workload's data out of the project an earlier run
+    /// held it in and lifts that project's limit, so nothing stays held to a size no one enforces.
+    async fn let_go_of_quotas(&self, ids: &[WorkloadId]) {
+        let Some(lapsed) = self.lapsed_quotas.as_ref() else { return };
+        for id in ids {
+            let done = self.store.workload_dir(id).join(QUOTA_DONE);
+            let Some(project) = std::fs::read_to_string(&done).ok().and_then(|t| crate::quota::recorded(&t)) else {
+                continue;
+            };
+            let dir = self.store.data_dir(id);
+            let released = tokio::task::spawn_blocking(move || crate::quota::release(&dir)).await;
+            let let_go = match released {
+                Ok(Ok(())) => lapsed.limit(project, 0).and_then(|()| std::fs::remove_file(&done)),
+                Ok(Err(e)) => Err(e),
+                Err(e) => Err(std::io::Error::other(e)),
+            };
+            if let Err(e) = let_go {
+                tracing::warn!(workload = %id, project, error = %e, "couldn't let go of the workload's quota");
+            }
         }
     }
 

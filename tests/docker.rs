@@ -606,7 +606,7 @@ impl Xfs {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let image = dir.path().join("fs.img");
-        std::fs::File::create(&image).unwrap().set_len(1536 << 20).unwrap();
+        std::fs::File::create(&image).unwrap().set_len(3 << 30).unwrap();
         let host = std::process::Command::new("mkfs.xfs").arg("-q").arg(&image).status();
         let made = host.unwrap_or_else(|_| {
             std::process::Command::new("docker")
@@ -742,5 +742,17 @@ async fn data_already_past_its_size_when_quotas_arrive_keeps_running() {
         view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"),
         "the owner is told: {view}"
     );
+    m.stop(id("o"), None, None).await.unwrap();
+    drop(m);
+
+    // Quotas turned off again: the data leaves its project, whose limit is lifted.
+    let m =
+        manager_probed(&xfs.mount, docker(), &before, blocklyd::ports::bind_probe(vec!["127.0.0.1".parse().unwrap()]));
+    m.reconcile(Records::FromDisk).await;
+    m.measure_disk().await;
+    let lsproj =
+        std::process::Command::new("xfs_io").args(["-r", "-c", "lsproj"]).arg(data.join("fill")).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&lsproj.stdout).trim(), "projid = 0", "{lsproj:?}");
+    assert!(!m.store.workload_dir(&id("o")).join("quota-project").exists(), "nothing records a project");
     cleanup(&m, &["o"]).await;
 }
