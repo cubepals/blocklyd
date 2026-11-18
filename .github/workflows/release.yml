@@ -81,7 +81,7 @@ jobs:
           mkdir -p dist
           id=$(docker create "$IMAGE:$version")
           for f in blocklyd openapi/node-reads.openapi.json openapi/node-writes.openapi.json \
-                   deploy/daemon.json deploy/blocklyd.service LICENSE.md; do
+                   deploy/daemon.json deploy/blocklyd.service deploy/blockly.slice LICENSE.md; do
             docker cp "$id:/$f" "dist/$(basename "$f")"
           done
           docker rm "$id" > /dev/null

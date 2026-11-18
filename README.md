@@ -67,8 +67,8 @@ blocklyd --version
 ```
 
 [`examples/blocklyd.toml`](examples/blocklyd.toml) lists every setting with its default;
-[`deploy/`](deploy/) has the systemd unit and Docker's `daemon.json`. The unit runs
-`doctor --preflight` before each start: it refuses only an invalid config or a state directory
+[`deploy/`](deploy/) has the systemd unit, the workloads' slice and Docker's `daemon.json`. The
+unit runs `doctor --preflight` before each start: it refuses only an invalid config or a state directory
 blocklyd can't own, and logs the rest (Docker down, live-restore off, no reflink) as warnings,
 since blocklyd runs through all of them. With a `[fleet]` section the
 node enrolls and takes its identity from the control plane, and upgrades itself when a heartbeat's
@@ -149,7 +149,8 @@ on it and publishes:
 
 - a GitHub Release, immutable, with the static `blocklyd` binary (x86_64, musl), `blocklyd.sig`,
   `SHA256SUMS`, `node-reads.openapi.json` and `node-writes.openapi.json`, `deploy/daemon.json`,
-  `deploy/blocklyd.service` and `LICENSE.md`, each with a build-provenance attestation;
+  `deploy/blocklyd.service`, `deploy/blockly.slice` and `LICENSE.md`, each with a build-provenance
+  attestation;
 - `ghcr.io/cubepals/blocklyd:<version>`, a `FROM scratch` image of the same files, attested.
 
 `blocklyd.sig` is what nodes check before they upgrade: the release key's signature of the version
