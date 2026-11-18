@@ -131,6 +131,15 @@ impl Manager {
         }
     }
 
+    /// Sets `project`'s limit where it differs from what `quota::limit_for` says it should be.
+    fn hold(&self, quotas: &crate::quota::Quotas, project: u32, size_gb: u32) -> std::io::Result<()> {
+        let (used, current) = (quotas.used(project)?, quotas.limit_of(project)?);
+        match crate::quota::limit_for(size_gb, used, current) {
+            Some(limit) if limit != current => quotas.limit(project, limit),
+            _ => Ok(()),
+        }
+    }
+
     /// Puts the workload's data in its project and holds that to `size_gb`, where this host keeps
     /// project quotas: its project, or None when it isn't held (no quotas, or they couldn't be set,
     /// which is logged and never refuses anything; the walk measures it then).
@@ -139,10 +148,8 @@ impl Manager {
         let project = crate::quota::project_of(id);
         let dir = self.store.data_dir(id);
         let assigned = tokio::task::spawn_blocking(move || crate::quota::assign(&dir, project)).await;
-        let bytes = u64::from(size_gb) * GIB;
         let held = match assigned {
-            Ok(Ok(())) if quotas.limit_of(project).ok() == Some(bytes) => Ok(()),
-            Ok(Ok(())) => quotas.limit(project, bytes),
+            Ok(Ok(())) => self.hold(quotas, project, size_gb),
             Ok(Err(e)) => Err(e),
             Err(e) => Err(std::io::Error::other(e)),
         };

@@ -46,6 +46,24 @@ const FIRST_PROJECT: u32 = 1 << 20;
 /// Above this, 16-bit project ids (old XFS) can't hold them; XFS made since 2013 and ext4 take 32.
 const LAST_PROJECT: u32 = i32::MAX as u32;
 
+const GIB: u64 = 1 << 30;
+
+/// The limit a project is held to: the spec's size, never below what the data already holds.
+/// `current` is the limit the filesystem keeps for it now (0: none yet). Data found larger than its
+/// size the first time it is held keeps a gibibyte of room above it, rounded to whole gibibytes,
+/// and that limit stays until the size grows past it: nothing that ran before is broken by the
+/// limit arriving. No size, no limit.
+pub(crate) fn limit_for(size_gb: u32, used: u64, current: u64) -> Option<u64> {
+    let size = u64::from(size_gb) * GIB;
+    if size == 0 {
+        return None;
+    }
+    if current != 0 {
+        return Some(size.max(current));
+    }
+    Some(if used > size { (used + GIB).next_multiple_of(GIB) } else { size })
+}
+
 /// The project a workload's data is counted in: from its key alone, so every node and every
 /// restart agrees, and no file of the host's can drift from it. FNV-1a, folded into the range.
 pub(crate) fn project_of(id: &WorkloadId) -> u32 {
@@ -224,6 +242,30 @@ mod tests {
         for id in [&a, &b] {
             assert!((FIRST_PROJECT..LAST_PROJECT).contains(&project_of(id)));
         }
+    }
+
+    #[test]
+    fn the_limit_is_the_size_and_never_below_what_the_data_holds() {
+        // A new workload: its size.
+        assert_eq!(limit_for(5, 0, 0), Some(5 * GIB));
+        // Data within its size when the limit first comes: its size, however full.
+        assert_eq!(limit_for(5, 5 * GIB, 0), Some(5 * GIB));
+        // Larger than its size: kept, with a gibibyte of room, in whole gibibytes.
+        assert_eq!(limit_for(5, 7 * GIB + 1, 0), Some(9 * GIB));
+        // Once set, that limit stays while the size is smaller, and follows the size past it.
+        assert_eq!(limit_for(5, 9 * GIB, 9 * GIB), Some(9 * GIB));
+        assert_eq!(limit_for(12, 9 * GIB, 9 * GIB), Some(12 * GIB));
+        // A size that grows raises the limit.
+        assert_eq!(limit_for(8, GIB, 5 * GIB), Some(8 * GIB));
+    }
+
+    #[test]
+    fn no_size_no_limit() {
+        assert_eq!(limit_for(0, 3 * GIB, 0), None);
+        // And the protocol never lets a spec come without one.
+        let spec = serde_json::json!({ "image": "alpine:3.22", "resources": { "memoryMb": 256 },
+            "storage": { "mountPath": "/data" } });
+        assert!(serde_json::from_value::<crate::protocol::WorkloadSpec>(spec).is_err());
     }
 
     #[test]

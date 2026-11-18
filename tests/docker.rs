@@ -670,3 +670,53 @@ async fn data_is_held_to_its_size_by_the_filesystem() {
     assert!(view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"), "{view}");
     cleanup(&m, &["q"]).await;
 }
+
+#[tokio::test]
+#[ignore = "needs Docker, root and a kernel with XFS quotas"]
+async fn data_already_past_its_size_when_quotas_arrive_keeps_running() {
+    const GIB: u64 = 1 << 30;
+    let xfs = Xfs::new();
+    let dep = deployment();
+    let _cleanup = Cleanup(dep.clone());
+    // A node from before quotas: 1.3 GB written into a workload sized 1 GB.
+    let before = format!("{}disk_quotas = false\n", extra(&dep));
+    let m =
+        manager_probed(&xfs.mount, docker(), &before, blocklyd::ports::bind_probe(vec!["127.0.0.1".parse().unwrap()]));
+    m.reconcile(Records::FromDisk).await;
+    let fill = "[ -f /data/fill ] || dd if=/dev/zero of=/data/fill bs=1M count=1300 2> /data/dd.err; \
+                dd if=/dev/zero of=/data/more bs=1M count=100 2> /data/more.err; echo $? > /data/more.exit; \
+                while true; do sleep 1; done";
+    m.ensure(id("o"), shell(fill, 256), Precondition::None, None).await.unwrap();
+    m.start(id("o"), None).await.unwrap();
+    let data = m.store.data_dir(&id("o"));
+    let waited = |path: std::path::PathBuf| async move {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !path.exists() {
+            assert!(Instant::now() < deadline, "{} never appeared", path.display());
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    waited(data.join("more.exit")).await;
+    m.stop(id("o"), None, None).await.unwrap();
+    std::fs::remove_file(data.join("more.exit")).unwrap();
+    drop(m);
+
+    // The same node with quotas: nothing it holds is lost, it starts, and it can still write.
+    let m = daemon(&xfs.mount, &dep);
+    m.reconcile(Records::FromDisk).await;
+    m.measure_disk().await;
+    assert_eq!(std::fs::metadata(data.join("fill")).unwrap().len(), 1300 << 20, "nothing it held was touched");
+    m.start(id("o"), None).await.unwrap();
+    waited(data.join("more.exit")).await;
+    assert_eq!(std::fs::read_to_string(data.join("more.exit")).unwrap().trim(), "0", "it still writes");
+    m.measure_disk().await;
+    let view = serde_json::to_value(m.view(&id("o")).unwrap()).unwrap();
+    let used = view["storage"]["usedBytes"].as_u64().unwrap();
+    assert!(used > 1300 << 20 && used < 3 * GIB, "measured from the quota: {used}");
+    assert!(
+        view["issues"].as_array().unwrap().iter().any(|i| i["code"] == "over_storage"),
+        "the owner is told: {view}"
+    );
+    cleanup(&m, &["o"]).await;
+}
